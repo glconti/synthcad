@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-if(NOT DEFINED TBB_DIR)
+if(APPLE AND NOT DEFINED TBB_DIR)
   if(EXISTS "/opt/homebrew/opt/tbb/lib/cmake/TBB")
     set(TBB_DIR "/opt/homebrew/opt/tbb/lib/cmake/TBB" CACHE PATH "" FORCE)
   elseif(EXISTS "/opt/homebrew/Cellar/tbb/2022.2.0/lib/cmake/TBB")
@@ -13,10 +13,12 @@ if(NOT DEFINED TBB_DIR)
   endif()
 endif()
 
-list(APPEND CMAKE_PREFIX_PATH
-  /opt/homebrew/opt/tbb
-  /opt/homebrew/Cellar/tbb/2022.2.0
-)
+if(APPLE)
+  list(APPEND CMAKE_PREFIX_PATH
+    /opt/homebrew/opt/tbb
+    /opt/homebrew/Cellar/tbb/2022.2.0
+  )
+endif()
 
 set(MANIFOLD_TEST OFF CACHE BOOL "" FORCE)
 set(MANIFOLD_PYBIND OFF CACHE BOOL "" FORCE)

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <cstdlib>
@@ -18,6 +19,7 @@
 #include <sstream>
 #include <string>
 #include <system_error>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 #include <utility>
@@ -29,12 +31,38 @@ extern "C" {
 #include "manifold/manifold.h"
 #include "manifold/polygon.h"
 #include "js_bindings.h"
+#include "dimensions.h"
+#include "camera_controls.h"
 
 namespace {
 const Color kBaseColor = {210, 210, 220, 255};
 const char *kBrandText = "dingcad";
 constexpr float kBrandFontSize = 28.0f;
-constexpr float kSceneScale = 0.1f;  // convert mm scene units to renderer units
+using dingcad::kSceneScale;
+using FrameClock = std::chrono::steady_clock;
+constexpr int kFocusedFps = 60;
+constexpr int kBackgroundFps = 15;
+constexpr int kMinimizedFps = 5;
+constexpr auto kSceneCheckInterval = std::chrono::milliseconds(250);
+
+// The post-processing pipeline works on the original macOS target, but the
+// vcpkg raylib/OpenGL stack on Windows can hang in its first custom-shader
+// draw.  Keep the Windows viewer responsive with raylib's default material
+// while retaining the higher-fidelity pipeline on macOS.
+#if defined(_WIN32)
+constexpr bool kUsePostProcessing = false;
+#else
+constexpr bool kUsePostProcessing = true;
+#endif
+
+std::optional<std::filesystem::path> GetHomeDirectory() {
+  for (const char *variable : {"HOME", "USERPROFILE"}) {
+    if (const char *value = std::getenv(variable); value && *value) {
+      return std::filesystem::path(value);
+    }
+  }
+  return std::nullopt;
+}
 
 // GLSL 330 core (desktop). Uses raylib's default attribute/uniform names.
 const char* kOutlineVS = R"glsl(
@@ -551,8 +579,8 @@ void DrawXZGrid(int halfLines, float spacing, Color color) {
 std::optional<std::filesystem::path> FindDefaultScene() {
   auto cwdCandidate = std::filesystem::current_path() / "scene.js";
   if (std::filesystem::exists(cwdCandidate)) return cwdCandidate;
-  if (const char *home = std::getenv("HOME")) {
-    std::filesystem::path homeCandidate = std::filesystem::path(home) / "scene.js";
+  if (const auto home = GetHomeDirectory()) {
+    std::filesystem::path homeCandidate = *home / "scene.js";
     if (std::filesystem::exists(homeCandidate)) return homeCandidate;
   }
   return std::nullopt;
@@ -605,6 +633,7 @@ struct LoadResult {
   std::shared_ptr<manifold::Manifold> manifold;
   std::string message;
   std::vector<std::filesystem::path> dependencies;
+  std::vector<dingcad::Dimension> dimensions;
 };
 
 LoadResult LoadSceneFromFile(JSRuntime *runtime, const std::filesystem::path &path) {
@@ -684,6 +713,7 @@ LoadResult LoadSceneFromFile(JSRuntime *runtime, const std::filesystem::path &pa
     JS_FreeContext(ctx);
     return result;
   }
+  auto annotations = dingcad::ReadDimensions(ctx, moduleNamespace);
   JS_FreeValue(ctx, moduleNamespace);
 
   if (JS_IsUndefined(sceneVal)) {
@@ -706,6 +736,13 @@ LoadResult LoadSceneFromFile(JSRuntime *runtime, const std::filesystem::path &pa
   result.manifold = sceneHandle;
   result.success = true;
   result.message = "Loaded " + absolutePath.string();
+  result.dimensions = std::move(annotations.entries);
+  for (const auto &diagnostic : annotations.diagnostics) {
+    TraceLog(LOG_WARNING, "%s", diagnostic.c_str());
+  }
+  if (!annotations.diagnostics.empty()) {
+    result.message += " (" + std::to_string(annotations.diagnostics.size()) + " dimension warning(s))";
+  }
   assignDependencies();
   JS_FreeValue(ctx, sceneVal);
   JS_FreeContext(ctx);
@@ -723,10 +760,29 @@ bool ReplaceScene(Model &model,
 
 }  // namespace
 
-int main() {
-  SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_WINDOW_RESIZABLE);
+int main(int argc, char *argv[]) {
+  // Validate scene code and annotations without opening a window, useful for
+  // agents and automated checks before replacing the live scene.
+  if (argc == 3 && std::string(argv[1]) == "--check-scene") {
+    JSRuntime *runtime = JS_NewRuntime();
+    EnsureManifoldClass(runtime);
+    JS_SetModuleLoaderFunc(runtime, nullptr, FilesystemModuleLoader, &g_module_loader_data);
+    auto load = LoadSceneFromFile(runtime, argv[2]);
+    std::cout << load.message << '\n';
+    if (load.success) {
+      const auto bounds = load.manifold->BoundingBox();
+      std::cout << "Bounds (mm): " << bounds.Size().x << " x " << bounds.Size().y << " x " << bounds.Size().z << '\n';
+      for (const auto &dimension : load.dimensions) std::cout << dingcad::FormatDimension(dimension) << '\n';
+    }
+    load.manifold.reset();
+    JS_FreeRuntime(runtime);
+    return load.success ? 0 : 1;
+  }
+  // Keep event polling nonblocking while minimized so live reload still runs.
+  SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_WINDOW_RESIZABLE | FLAG_WINDOW_ALWAYS_RUN);
   InitWindow(1280, 720, "dingcad");
-  SetTargetFPS(60);
+  // Pace frames ourselves: this raylib build's WaitTime() spins a CPU core.
+  SetTargetFPS(0);
 
   Font brandingFont = GetFontDefault();
   bool brandingFontCustom = false;
@@ -757,10 +813,17 @@ int main() {
   JS_SetModuleLoaderFunc(runtime, nullptr, FilesystemModuleLoader, &g_module_loader_data);
 
   std::shared_ptr<manifold::Manifold> scene = nullptr;
+  std::vector<dingcad::Dimension> dimensions;
+  dingcad::DimensionControls dimensionControls;
   std::string statusMessage;
   std::filesystem::path scriptPath;
   std::unordered_map<std::filesystem::path, WatchedFile> watchedFiles;
-  auto defaultScript = FindDefaultScene();
+  std::optional<std::filesystem::path> defaultScript;
+  if (argc > 1) {
+    defaultScript = std::filesystem::path(argv[1]);
+  } else {
+    defaultScript = FindDefaultScene();
+  }
   auto reportStatus = [&](const std::string &message) {
     statusMessage = message;
     TraceLog(LOG_INFO, "%s", statusMessage.c_str());
@@ -784,6 +847,7 @@ int main() {
     auto load = LoadSceneFromFile(runtime, scriptPath);
     if (load.success) {
       scene = load.manifold;
+      dimensions = std::move(load.dimensions);
       reportStatus(load.message);
     } else {
       reportStatus(load.message);
@@ -916,15 +980,34 @@ int main() {
   int prevScreenHeight = GetScreenHeight();
   const float zNear = 0.01f;
   const float zFar = 1000.0f;
+  auto nextSceneCheck = FrameClock::now();
 
   while (!WindowShouldClose()) {
+    const auto frameStarted = FrameClock::now();
+    const bool minimized = IsWindowMinimized();
+    const int targetFps = minimized ? kMinimizedFps : (IsWindowFocused() ? kFocusedFps : kBackgroundFps);
+    const auto frameBudget = std::chrono::duration_cast<FrameClock::duration>(
+        std::chrono::duration<double>(1.0 / targetFps));
+    auto finishFrame = [&]() {
+#if defined(_WIN32)
+      // Custom frame control leaves event pumping to the application.
+      PollInputEvents();
+#else
+      // Visible frames already poll in EndDrawing(); minimized frames skip it.
+      if (minimized) PollInputEvents();
+#endif
+      // Includes rendering/reload time and never spins or catches up missed frames.
+      std::this_thread::sleep_until(frameStarted + frameBudget);
+    };
     const Vector2 mouseDelta = GetMouseDelta();
+    bool reloadRequested = IsKeyPressed(KEY_R);
 
     auto reloadScene = [&]() {
       auto load = LoadSceneFromFile(runtime, scriptPath);
       if (load.success) {
         scene = load.manifold;
         ReplaceScene(model, scene);
+        dimensions = std::move(load.dimensions);
         reportStatus(load.message);
       } else {
         reportStatus(load.message);
@@ -934,7 +1017,8 @@ int main() {
       }
     };
 
-    if (!scriptPath.empty()) {
+    if (!scriptPath.empty() && frameStarted >= nextSceneCheck) {
+      nextSceneCheck = frameStarted + kSceneCheckInterval;
       bool changed = false;
       for (const auto &entry : watchedFiles) {
         std::error_code ec;
@@ -951,13 +1035,11 @@ int main() {
         }
       }
       if (changed) {
-        reloadScene();
+        reloadRequested = true;
       }
     }
 
-    if (IsKeyPressed(KEY_R) && !scriptPath.empty()) {
-      reloadScene();
-    }
+    bool cycleDimensionsRequested = IsKeyPressed(KEY_M);
 
     static bool prevPDown = false;
     bool exportRequested = false;
@@ -968,6 +1050,8 @@ int main() {
       if (key == KEY_P) {
         exportRequested = true;
       }
+      if (key == KEY_M) cycleDimensionsRequested = true;
+      if (key == KEY_R) reloadRequested = true;
     }
 
     for (int ch = GetCharPressed(); ch != 0; ch = GetCharPressed()) {
@@ -976,7 +1060,15 @@ int main() {
       if (ch == 'p' || ch == 'P') {
         exportRequested = true;
       }
+      if (ch == 'm' || ch == 'M') cycleDimensionsRequested = true;
+      if (ch == 'r' || ch == 'R') reloadRequested = true;
     }
+
+    if (reloadRequested && !scriptPath.empty()) reloadScene();
+
+    dingcad::UpdateDimensionControls(dimensionControls,
+        dingcad::DimensionButtonBounds(GetScreenWidth(), GetScreenHeight()), GetMousePosition(),
+        cycleDimensionsRequested, IsMouseButtonPressed(MOUSE_BUTTON_LEFT), IsMouseButtonDown(MOUSE_BUTTON_LEFT));
 
     const bool pDown = IsKeyDown(KEY_P);
     if (pDown && !prevPDown) {
@@ -995,8 +1087,8 @@ int main() {
       std::cout << "Export trigger detected" << std::endl;
       if (scene) {
         std::filesystem::path downloads;
-        if (const char *home = std::getenv("HOME")) {
-          downloads = std::filesystem::path(home) / "Downloads";
+        if (const auto home = GetHomeDirectory()) {
+          downloads = *home / "Downloads";
         } else {
           downloads = std::filesystem::current_path();
         }
@@ -1021,7 +1113,7 @@ int main() {
       }
     }
 
-    if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+    if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && !dimensionControls.buttonGesture) {
       orbitYaw -= mouseDelta.x * 0.01f;
       orbitPitch += mouseDelta.y * 0.01f;
       const float limit = DEG2RAD * 89.0f;
@@ -1037,13 +1129,9 @@ int main() {
     const Vector3 forward = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
     const Vector3 worldUp = {0.0f, 1.0f, 0.0f};
     const Vector3 right = Vector3Normalize(Vector3CrossProduct(worldUp, forward));
-    const Vector3 camUp = Vector3CrossProduct(forward, right);
-
     if (IsMouseButtonDown(MOUSE_BUTTON_RIGHT)) {
       camera.target = Vector3Add(camera.target,
-                                 Vector3Scale(right, mouseDelta.x * 0.01f * orbitDistance));
-      camera.target = Vector3Add(camera.target,
-                                 Vector3Scale(camUp, -mouseDelta.y * 0.01f * orbitDistance));
+                                dingcad::PanCameraOffset(camera, mouseDelta, GetScreenHeight()));
     }
 
     if (IsKeyPressed(KEY_SPACE)) {
@@ -1067,6 +1155,11 @@ int main() {
         orbitDistance * cosf(orbitPitch) * cosf(orbitYaw)};
     camera.position = Vector3Add(camera.target, offsets);
     camera.up = worldUp;
+
+    if (minimized) {
+      finishFrame();
+      continue;
+    }
 
     const int screenWidth = std::max(GetScreenWidth(), 1);
     const int screenHeight = std::max(GetScreenHeight(), 1);
@@ -1108,46 +1201,60 @@ int main() {
     SetShaderValue(normalDepthShader, locNear, &zNear, SHADER_UNIFORM_FLOAT);
     SetShaderValue(normalDepthShader, locFar, &zFar, SHADER_UNIFORM_FLOAT);
 
-    BeginTextureMode(rtColor);
-    ClearBackground(RAYWHITE);
-    BeginMode3D(camera);
-    DrawXZGrid(40, 0.5f, Fade(LIGHTGRAY, 0.4f));
-    DrawAxes(2.0f);
+    if (kUsePostProcessing) {
+      BeginTextureMode(rtColor);
+      ClearBackground(RAYWHITE);
+      BeginMode3D(camera);
+      DrawXZGrid(40, 0.5f, Fade(LIGHTGRAY, 0.4f));
+      DrawAxes(2.0f);
 
-    rlDisableBackfaceCulling();
-    for (int i = 0; i < model.meshCount; ++i) {
-      DrawMesh(model.meshes[i], outlineMat, model.transform);
+      rlDisableBackfaceCulling();
+      for (int i = 0; i < model.meshCount; ++i) {
+        DrawMesh(model.meshes[i], outlineMat, model.transform);
+      }
+      rlEnableBackfaceCulling();
+
+      for (int i = 0; i < model.meshCount; ++i) {
+        DrawMesh(model.meshes[i], toonMat, model.transform);
+      }
+      EndMode3D();
+      EndTextureMode();
+
+      BeginTextureMode(rtNormalDepth);
+      ClearBackground({127, 127, 255, 0});
+      BeginMode3D(camera);
+      for (int i = 0; i < model.meshCount; ++i) {
+        DrawMesh(model.meshes[i], normalDepthMat, model.transform);
+      }
+      EndMode3D();
+      EndTextureMode();
+
+      BeginDrawing();
+      ClearBackground(RAYWHITE);
+      const float texel[2] = {
+          1.0f / static_cast<float>(rtNormalDepth.texture.width),
+          1.0f / static_cast<float>(rtNormalDepth.texture.height)};
+      SetShaderValue(edgeShader, locTexel, texel, SHADER_UNIFORM_VEC2);
+
+      BeginShaderMode(edgeShader);
+      const Rectangle srcRect = {0.0f, 0.0f, static_cast<float>(rtColor.texture.width),
+                                 -static_cast<float>(rtColor.texture.height)};
+      DrawTextureRec(rtColor.texture, srcRect, {0.0f, 0.0f}, WHITE);
+      EndShaderMode();
+    } else {
+      BeginDrawing();
+      ClearBackground(RAYWHITE);
+      BeginMode3D(camera);
+      DrawXZGrid(40, 0.5f, Fade(LIGHTGRAY, 0.4f));
+      DrawAxes(2.0f);
+      DrawModel(model, {0.0f, 0.0f, 0.0f}, 1.0f, kBaseColor);
+      EndMode3D();
     }
-    rlEnableBackfaceCulling();
 
-    for (int i = 0; i < model.meshCount; ++i) {
-      DrawMesh(model.meshes[i], toonMat, model.transform);
-    }
-    EndMode3D();
-    EndTextureMode();
-
-    BeginTextureMode(rtNormalDepth);
-    ClearBackground({127, 127, 255, 0});
-    BeginMode3D(camera);
-    for (int i = 0; i < model.meshCount; ++i) {
-      DrawMesh(model.meshes[i], normalDepthMat, model.transform);
-    }
-    EndMode3D();
-    EndTextureMode();
-
-    BeginDrawing();
-    ClearBackground(RAYWHITE);
-
-    const float texel[2] = {
-        1.0f / static_cast<float>(rtNormalDepth.texture.width),
-        1.0f / static_cast<float>(rtNormalDepth.texture.height)};
-    SetShaderValue(edgeShader, locTexel, texel, SHADER_UNIFORM_VEC2);
-
-    BeginShaderMode(edgeShader);
-    const Rectangle srcRect = {0.0f, 0.0f, static_cast<float>(rtColor.texture.width),
-                               -static_cast<float>(rtColor.texture.height)};
-    DrawTextureRec(rtColor.texture, srcRect, {0.0f, 0.0f}, WHITE);
-    EndShaderMode();
+    dingcad::DrawDimensions(dimensions, dimensionControls.mode, camera, brandingFont, GetMousePosition(),
+                           dimensionControls.overButton || IsMouseButtonDown(MOUSE_BUTTON_LEFT) ||
+                           IsMouseButtonDown(MOUSE_BUTTON_RIGHT));
+    dingcad::DrawDimensionButton(dimensionControls.mode, brandingFont);
 
     const float margin = 20.0f;
     const Vector2 textSize = MeasureTextEx(brandingFont, kBrandText, kBrandFontSize, 0.0f);
@@ -1163,6 +1270,13 @@ int main() {
     }
 
     EndDrawing();
+#if defined(_WIN32)
+    // vcpkg's raylib is built with SUPPORT_CUSTOM_FRAME_CONTROL. In that
+    // configuration EndDrawing() only flushes draw commands; presenting the
+    // frame is the application's job. finishFrame() pumps events in every state.
+    SwapScreenBuffer();
+#endif
+    finishFrame();
   }
 
   UnloadRenderTexture(rtColor);

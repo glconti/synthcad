@@ -1,0 +1,12 @@
+{
+  "name": "dingcad",
+  "version-string": "0.1.0",
+  "dependencies": [
+    "assimp",
+    "raylib",
+    {
+      "name": "tbb",
+      "default-features": false
+    }
+  ]
+}

@@ -54,3 +54,36 @@
 - decompose polygons back to JS with slice/project return [[x,y],...] loops
 
 Assign your final solid to `scene` to render, e.g. `scene = cube({...});`.
+
+## Dimension annotations
+
+Modules can also export an optional `dimensions` array. Coordinates use the same
+millimetres and Z-up XYZ axes as the geometry. The viewer does not infer values
+from the mesh; use your geometry parameters for both values and anchors.
+
+```javascript
+const width = 120;
+export const scene = cube({ size: [width, 80, 10], center: false });
+export const dimensions = [{
+  type: 'linear', // 'linear', 'diameter', or 'radius'
+  label: 'Width',
+  value: width,   // positive finite number, millimetres
+  start: [0, -8, 0],
+  end: [width, -8, 0],
+  marker: [width / 2, -8, 0], // optional; defaults to the endpoints' midpoint
+}];
+```
+
+Labels are nonempty strings; anchors must contain exactly three finite numbers.
+Malformed entries are skipped with console diagnostics. A missing export means
+no annotations. Diameters display with `Ø`, radii with `R`, and values with at
+most two decimal places. Dimensions are informational and are not exported to STL.
+
+The **Dimensions** button or **M** cycles **Hover → All → Off → Hover**. Hover is
+the startup mode: move within 10 pixels of a small marker to see its measurement.
+The closest marker wins when several overlap. All displays every annotation whose
+anchors are in front of the camera and whose marker is within the viewport. The
+overlays do not perform surface occlusion tests, so markers can describe holes
+and hidden features. Off hides the overlays. The mode is retained during reload;
+successful reloads replace annotations, and failed scene loads retain the last
+valid geometry and annotations.
