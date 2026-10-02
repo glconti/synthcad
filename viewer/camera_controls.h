@@ -5,8 +5,30 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace dingcad {
+
+inline float ZoomCameraDistance(float distance, float wheel) {
+  if (!std::isfinite(wheel)) return distance;
+  // Exponential steps support fractional/fast scrolling without crossing zero.
+  const double next = static_cast<double>(distance) * std::pow(1.1, -static_cast<double>(wheel));
+  if (!std::isfinite(next) || next > std::numeric_limits<float>::max()) return distance;
+  return static_cast<float>(std::max(1.0, next));
+}
+
+inline float CameraFarClip(Vector3 position, BoundingBox bounds, double defaultFar) {
+  // The farthest AABB corner bounds every point's view depth, even after panning.
+  // Work in double precision so squaring distant float coordinates cannot overflow.
+  const double x = std::max(std::abs(static_cast<double>(position.x) - bounds.min.x),
+                            std::abs(static_cast<double>(position.x) - bounds.max.x));
+  const double y = std::max(std::abs(static_cast<double>(position.y) - bounds.min.y),
+                            std::abs(static_cast<double>(position.y) - bounds.max.y));
+  const double z = std::max(std::abs(static_cast<double>(position.z) - bounds.min.z),
+                            std::abs(static_cast<double>(position.z) - bounds.max.z));
+  const double far = std::max(defaultFar, 1.1 * std::hypot(x, y, z));
+  return static_cast<float>(std::min(far, static_cast<double>(std::numeric_limits<float>::max())));
+}
 
 inline Vector3 PanCameraOffset(const Camera3D &camera, Vector2 mouseDelta, int viewportHeight) {
   const Vector3 forward = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
