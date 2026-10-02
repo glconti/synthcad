@@ -44,6 +44,9 @@ constexpr int kFocusedFps = 60;
 constexpr int kBackgroundFps = 15;
 constexpr int kMinimizedFps = 5;
 constexpr auto kSceneCheckInterval = std::chrono::milliseconds(250);
+constexpr int kGridHalfLines = 40;
+constexpr float kGridSpacing = 0.5f;
+constexpr float kAxesLength = 2.0f;
 
 // The post-processing pipeline works on the original macOS target, but the
 // vcpkg raylib/OpenGL stack on Windows can hang in its first custom-shader
@@ -576,6 +579,18 @@ void DrawXZGrid(int halfLines, float spacing, Color color) {
   }
 }
 
+BoundingBox SceneRenderBounds(const Model &model) {
+  // Include the grid and the full axis geometry even for an empty scene.
+  constexpr float extent = kGridHalfLines * kGridSpacing;
+  BoundingBox bounds{{-extent, -0.1f, -extent}, {extent, kAxesLength, extent}};
+  if (model.meshCount > 0) {
+    const BoundingBox modelBounds = GetModelBoundingBox(model);
+    bounds.min = Vector3Min(bounds.min, modelBounds.min);
+    bounds.max = Vector3Max(bounds.max, modelBounds.max);
+  }
+  return bounds;
+}
+
 std::optional<std::filesystem::path> FindDefaultScene() {
   auto cwdCandidate = std::filesystem::current_path() / "scene.js";
   if (std::filesystem::exists(cwdCandidate)) return cwdCandidate;
@@ -867,6 +882,7 @@ int main(int argc, char *argv[]) {
   }
 
   Model model = CreateRaylibModelFrom(scene->GetMeshGL());
+  BoundingBox renderBounds = SceneRenderBounds(model);
 
   Shader outlineShader = LoadShaderFromMemory(kOutlineVS, kOutlineFS);
   Shader toonShader = LoadShaderFromMemory(kToonVS, kToonFS);
@@ -978,8 +994,8 @@ int main(int argc, char *argv[]) {
 
   int prevScreenWidth = GetScreenWidth();
   int prevScreenHeight = GetScreenHeight();
-  const float zNear = 0.01f;
-  const float zFar = 1000.0f;
+  const float zNear = static_cast<float>(rlGetCullDistanceNear());
+  const double defaultFar = rlGetCullDistanceFar();
   auto nextSceneCheck = FrameClock::now();
 
   while (!WindowShouldClose()) {
@@ -1007,6 +1023,7 @@ int main(int argc, char *argv[]) {
       if (load.success) {
         scene = load.manifold;
         ReplaceScene(model, scene);
+        renderBounds = SceneRenderBounds(model);
         dimensions = std::move(load.dimensions);
         reportStatus(load.message);
       } else {
@@ -1122,8 +1139,7 @@ int main(int argc, char *argv[]) {
 
     const float wheel = GetMouseWheelMove();
     if (wheel != 0.0f) {
-      orbitDistance *= (1.0f - wheel * 0.1f);
-      orbitDistance = Clamp(orbitDistance, 1.0f, 50.0f);
+      orbitDistance = dingcad::ZoomCameraDistance(orbitDistance, wheel);
     }
 
     const Vector3 forward = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
@@ -1198,6 +1214,8 @@ int main(int argc, char *argv[]) {
     }
     setOutlineUniforms(outlineThickness, outlineColor);
 
+    const float zFar = dingcad::CameraFarClip(camera.position, renderBounds, defaultFar);
+    rlSetClipPlanes(zNear, zFar);
     SetShaderValue(normalDepthShader, locNear, &zNear, SHADER_UNIFORM_FLOAT);
     SetShaderValue(normalDepthShader, locFar, &zFar, SHADER_UNIFORM_FLOAT);
 
@@ -1205,8 +1223,8 @@ int main(int argc, char *argv[]) {
       BeginTextureMode(rtColor);
       ClearBackground(RAYWHITE);
       BeginMode3D(camera);
-      DrawXZGrid(40, 0.5f, Fade(LIGHTGRAY, 0.4f));
-      DrawAxes(2.0f);
+      DrawXZGrid(kGridHalfLines, kGridSpacing, Fade(LIGHTGRAY, 0.4f));
+      DrawAxes(kAxesLength);
 
       rlDisableBackfaceCulling();
       for (int i = 0; i < model.meshCount; ++i) {
@@ -1245,8 +1263,8 @@ int main(int argc, char *argv[]) {
       BeginDrawing();
       ClearBackground(RAYWHITE);
       BeginMode3D(camera);
-      DrawXZGrid(40, 0.5f, Fade(LIGHTGRAY, 0.4f));
-      DrawAxes(2.0f);
+      DrawXZGrid(kGridHalfLines, kGridSpacing, Fade(LIGHTGRAY, 0.4f));
+      DrawAxes(kAxesLength);
       DrawModel(model, {0.0f, 0.0f, 0.0f}, 1.0f, kBaseColor);
       EndMode3D();
     }
