@@ -39,7 +39,8 @@ json Snapshot(const char* status, const FileSnapshot& attempted,
 }
 void ErrorCode(const json& response, const char* code) {
     Check(!response.at("ok").get<bool>(), "expected error response");
-    Check(response.at("error").at("code") == code, "unexpected error code");
+    if(response.at("error").at("code") != code)
+      throw std::runtime_error(std::string("expected error ")+code+", response: "+response.dump());
 }
 std::vector<std::shared_ptr<AgentAction>> AwaitActions(AgentBridge& bridge) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
@@ -68,6 +69,25 @@ int main() {
         contextSnapshot["manufacturing"] = {{"current",true},{"checks",json::array({{{"id","bed"},{"result","passed"}}})}};
         contextSnapshot["overview"]["generatedChecksCurrent"]=true;
         bridge.Publish(contextSnapshot, first);
+        contextSnapshot["exportHistory"]={{"records",json::array({{{"id","retained"},{"path","not-read-from-filesystem.3mf"}}})},{"diagnostics",json::array({"cached diagnostic"})}};
+        bridge.Publish(contextSnapshot, first);
+        Check(bridge.Handle(Request("export-history"))["data"]==contextSnapshot["exportHistory"] && bridge.Drain().empty(),"history reads published cache without queued or filesystem export work");
+        auto guardedHistory=Request("export-history");guardedHistory["expectRevision"]="old";
+        ErrorCode(bridge.Handle(guardedHistory),"stale_revision");
+        for(const auto& args:std::vector<json>{json::array(),json{{"path",12},{"format","3mf"}},json{{"path","x.3mf"},{"format",true}},json{{"path","x.3mf"},{"format","obj"}},json{{"path","x.3mf"},{"format","3mf"},{"dryRun","yes"}},json{{"path","x.3mf"},{"format","3mf"},{"unknown",true}},json{{"path",std::string("x\0.3mf",6)},{"format","3mf"}}})
+          ErrorCode(bridge.Handle(Request("export",args)),"invalid_argument");
+        auto malformedExport=Request("export",{{"path","x.3mf"},{"format","3mf"}});malformedExport["timeoutMs"]="bad";
+        ErrorCode(bridge.Handle(malformedExport),"invalid_argument");malformedExport["timeoutMs"]=1000;malformedExport["expectRevision"]=true;
+        ErrorCode(bridge.Handle(malformedExport),"invalid_argument");
+        Check(bridge.Drain().empty(),"invalid direct export RPCs never queue writes");
+        for(const bool dryRun:{false,true}) {
+          const json payload={{"path","x.3mf"},{"format","3mf"},{"dryRun",dryRun},{"allowWarnings",false},{"visibleOnly",true},{"replace",false}};
+          auto exporting=std::async(std::launch::async,[&]{return bridge.Handle(Request("export",payload));});
+          auto exportActions=AwaitActions(bridge);
+          Check(exportActions.size()==1 && exportActions[0]->request["arguments"]==payload,"real and dry-run exports queue exact arguments for viewer owner");
+          exportActions[0]->result.set_value(Success("export",{{"dryRun",dryRun}},"test-session",firstRevision));
+          Check(exporting.get()["data"]["dryRun"]==dryRun,"export waits for viewer owner result");
+        }
         const auto overview = bridge.Handle(Request("overview"));
         Check(overview["data"] == contextSnapshot["overview"] && overview["revision"] == firstRevision,
               "overview returns the stored displayed context");
@@ -160,7 +180,7 @@ int main() {
         Check(bridge.Handle(Request("wait", {{"revision", plateToken}}))["ok"] == true, "new view capture acknowledges identical source graph");
 
         AgentBridge expiring("deadline-test");
-        auto expired = expiring.Handle(Request("frame", {}, 10));
+        auto expired = expiring.Handle(Request("frame", json::object(), 10));
         ErrorCode(expired, "timeout");
         auto expiredActions = expiring.Drain();
         Check(expiredActions.size() == 1 && expiredActions[0]->deadline <= std::chrono::steady_clock::now(), "expired action retains deadline for dispatcher rejection");

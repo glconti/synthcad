@@ -4,13 +4,50 @@
 once, edit its JavaScript files using your normal editor or agent, and inspect
 the resulting geometry in the same viewer session. This increment provides
 semantic review, geometric selection references, guided human selection and
-reload acknowledgement.
-It does not create or export models through the CLI.
+reload acknowledgement, guarded geometry export and retained export history.
+Model creation and edits remain ordinary source-file edits.
 
 The existing `dingcad_viewer` executable, launch scripts, standalone scene
 arguments, `--check-scene`, `--profile-scene`, `--render-scene` and `--ui-preview`
 entry points remain available. The viewer also accepts the new review commands.
 Use the `synthcad` executable for discoverable command parsing.
+
+## Export current geometry
+
+```text
+synthcad export ./local-scenes/current-plate.3mf -s bracket --dry-run --json
+synthcad export ./local-scenes/current-plate.3mf -s bracket --expect-revision TOKEN --json
+synthcad export ./local-scenes/current-plate.stl -s bracket --visible-only --allow-warnings --replace --json
+synthcad export-history -s bracket --json
+```
+
+The format defaults to the destination's case-insensitive `.3mf` or `.stl`
+extension. An explicit `--format 3mf` or `--format stl` must match that extension;
+missing or mismatched extensions are rejected.
+Relative paths become absolute before dispatch. Export defaults to all
+exportable parts; `--visible-only` restricts that set to visible parts. Group
+aliases do not add physical copies. Standard 3MF preserves current placements
+and separate objects; STL contains geometry. Choose printer, nozzle, material
+and process settings in the slicer. Exact Bambu interoperability is not required.
+
+The viewer owns both real exports and `--dry-run` validation. Dry runs perform
+the same guards and report the proposed result without writing a destination.
+Review warnings before acknowledging them with `--allow-warnings`; this does
+not turn heuristic, missing, sliced or physical evidence into verification.
+Printer and material metadata are optional for geometry export. Build dimensions
+enable placement checks when supplied, while unknown exclusions remain unchecked.
+
+`--expect-revision` binds the request to the displayed revision. `--replace`
+explicitly permits an existing destination to be replaced. No export command
+changes the selected view, geometry, user selection or export flags. Request
+timeouts use the existing session and queue; a timeout does not restart the
+viewer. The owner checks the request deadline before publishing a file.
+If a timeout occurs around the final commit, inspect the destination and
+`export-history` before retrying; a timeout is not proof that no file was saved.
+
+`export-history` returns the published cache as an object containing `records`
+and `diagnostics`; it does not scan destination files or open attachments.
+An optional `--expect-revision` rejects a stale displayed context for this read.
 
 ## Discover the interface
 
@@ -24,7 +61,7 @@ synthcad capabilities --json
 
 Help, version and capability discovery run without opening a GUI. Capabilities
 describe this implementation, including `geometryEditing: false` and
-`export: false`; they are not a roadmap of planned features.
+`export: true`, `exportFormats: ["3mf", "stl"]` and `exportHistory: true`.
 
 ## Load guidance only when needed
 
@@ -56,7 +93,7 @@ status prefix. `docs AREA --json` returns the same text in `data.content` with
 the instructions shipped with this build; runtime never looks for guide files
 on the user's disk. Unknown areas return `not_found` and suggest discovery.
 The guides distinguish current functionality from future automatic packing and
-3MF features. Reading a guide does not enable a feature absent from capabilities.
+printer preset catalogs. Reading a guide does not enable a feature absent from capabilities.
 
 ## Open, edit, wait and review
 
@@ -190,6 +227,8 @@ After source edits or load failure, unguarded reads retain prior evidence with
 | `frame --selection` | Frame visible descendants of the current human selection. |
 | `view NAME` | Switch to a named project view and evaluate it. Standalone scenes expose the `scene` view. |
 | `screenshot PATH [--replace]` | Save a `.png` image. The result contains its path; an existing destination requires `--replace`. |
+| `export PATH [--format 3mf\|stl] [--visible-only] [--replace] [--allow-warnings] [--dry-run]` | Request guarded export of the current placed geometry from the viewer. |
+| `export-history` | Read cached export records and diagnostics published by the viewer. |
 | `capabilities` | Discover the implemented command list and features. |
 | `version`, `--version` | Read application and protocol versions. |
 | `help [COMMAND]`, `COMMAND --help` | Discover usage and options without launching a viewer. |
@@ -205,7 +244,7 @@ Global options work before or after the command:
 - `--`: treat remaining positional arguments literally, including paths or IDs
   starting with a dash. Quote paths containing spaces in the shell.
 
-`snapshot`, `selection`, `reference`, `state`, `highlight`, `frame`, `view`, `screenshot` and `pick`
+`snapshot`, `selection`, `reference`, `state`, `highlight`, `frame`, `view`, `screenshot`, `export`, `export-history` and `pick`
 accept `--expect-revision TOKEN`. It requires the currently displayed revision
 to match and its consumed files to remain current on disk. A stale guard returns
 `stale_revision` before acting. Agent highlights are separate from human
@@ -399,6 +438,9 @@ with help returns the help text in a structured envelope.
 | 11 | `busy` | Initial dependencies are unavailable, an existing process is unresponsive, or a GUI modal blocks review; retry when ready. |
 | 12 | `not_found` | A requested guide, part, group, view or transport-level project path is missing. |
 | 13 | `stale_cursor` | The cursor belongs to another session or precedes retained event history; recover via request status and retained history. |
+| 14 | `warnings_present` | Review reported check warnings; use `--allow-warnings` to acknowledge them explicitly. |
+| 15 | `destination_exists` | Choose another path or use `--replace` after reviewing the existing destination. |
+| 16 | `empty_export` | The selected all/visible export set contains no geometry. |
 
 Unknown internal error categories use exit 1. No successful retained scene is
 returned as acknowledgement of a failed current edit.

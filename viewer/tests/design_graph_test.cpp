@@ -1,5 +1,8 @@
 #include "design_graph.h"
 #include "js_bindings.h"
+#include "project_contract.h"
+#include <chrono>
+#include <fstream>
 #include <cmath>
 #include <cstring>
 #include <iostream>
@@ -25,10 +28,46 @@ std::string Minimal(const std::string& extra="",const std::string& members="[{in
   return "({design:{schemaVersion:1,defaultView:'v',parts:[{id:'p',solid:cube({size:[1,1,1]})}],instances:[{id:'a',part:'p'}],views:[{id:'v',kind:'assembly',members:"+members+"}]"+extra+"}})";
 }
 void Replace(std::string& s,const std::string& a,const std::string& b){auto at=s.find(a);Require(at!=std::string::npos,"replacement exists");s.replace(at,a.size(),b);}
+void MeshDependencies(JSContext *ctx) {
+  const auto root=std::filesystem::temp_directory_path()/("synthcad-mesh-dependencies-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  std::filesystem::create_directories(root);
+  const auto path=root/"original.stl";
+  auto write=[&](int size) {
+    const double points[4][3]={{0,0,0},{double(size),0,0},{0,1,0},{0,0,1}};
+    const unsigned faces[4][3]={{0,2,1},{0,1,3},{0,3,2},{1,2,3}};
+    std::ofstream out(path);out<<"solid original\n";
+    for(const auto &face:faces){out<<"facet normal 0 0 0\nouter loop\n";for(auto v:face)out<<"vertex "<<points[v][0]<<' '<<points[v][1]<<' '<<points[v][2]<<"\n";out<<"endloop\nendfacet\n";}
+    out<<"endsolid original\n";
+  };
+  const auto source="loadMesh("+nlohmann::json(path.u8string()).dump()+")";
+  auto evaluate=[&](){return JS_Eval(ctx,source.c_str(),source.size(),"mesh-dependency-test.js",JS_EVAL_TYPE_GLOBAL);};
+  auto clearException=[&](){JSValue error=JS_GetException(ctx);JS_FreeValue(ctx,error);};
+  synthcad::FileSnapshot files;
+  RegisterBindings(ctx,[&](const std::filesystem::path &file){return synthcad::ReadTrackedFile(file,files);});
+  JSValue missing=evaluate();Require(JS_IsException(missing),"Missing imported mesh rejects evaluation");JS_FreeValue(ctx,missing);clearException();
+  const auto key=synthcad::CanonicalPath(path);
+  Require(files.at(key)=="missing","Missing imported mesh is tracked for recovery");
+  const auto missingFiles=files;
+  write(1);Require(!synthcad::MatchesDisk(missingFiles),"Creating missing imported mesh triggers recovery");
+  files.clear();
+  JSValue stable=evaluate();Require(!JS_IsException(stable),"Stable tracked mesh import succeeds");
+  const auto solid=GetManifoldHandle(ctx,stable);Require(solid && std::abs(solid->Volume()-1.0/6)<1e-8,"Tracked import preserves geometry");
+  JS_FreeValue(ctx,stable);
+  Require(files.size()==1 && synthcad::MatchesDisk(files),"Stable imported bytes enter the source snapshot");
+  const auto revision=synthcad::Revision(files);write(2);
+  Require(!synthcad::MatchesDisk(files) && synthcad::Revision(synthcad::CaptureFiles({path}))!=revision,"Imported mesh edits invalidate source revision without JS edits");
+  write(1);files.clear();int reads=0;
+  RegisterBindings(ctx,[&](const std::filesystem::path &file){auto bytes=synthcad::ReadTrackedFile(file,files);if(++reads==1)write(2);return bytes;});
+  JSValue changed=evaluate();Require(JS_IsException(changed),"Changing imported bytes between captures rejects evaluation");JS_FreeValue(ctx,changed);clearException();
+  Require(reads==2 && files.at(key)=="changed-during-read" && !synthcad::MatchesDisk(files),"Concurrent import mutation cannot acknowledge later bytes as consumed");
+  RegisterBindings(ctx); // Release callback captures before local state expires.
+  std::filesystem::remove_all(root);
+}
 }
 int main(){
   JSRuntime* rt=JS_NewRuntime();EnsureManifoldClass(rt);JSContext* ctx=JS_NewContext(rt);RegisterBindings(ctx);
   try{
+    MeshDependencies(ctx);
     Require(!Parse(ctx,"({scene:cube({size:[1,1,1]})})").specified,"legacy scene remains unspecified");
     auto assembly=Parse(ctx,Fixture());Require(assembly.diagnostic.empty(),"valid graph accepted");
     Require(assembly.appearance.parts.size()==2,"repeated paths deduplicate physical instances");

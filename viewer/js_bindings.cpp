@@ -15,6 +15,10 @@
 #include "manifold/polygon.h"
 #include "manifold/meshIO.h"
 namespace {
+JSClassID g_meshReaderClassId=0;
+void MeshReaderFinalizer(JSRuntime *,JSValue value) {
+  delete static_cast<MeshDependencyReader *>(JS_GetOpaque(value,g_meshReaderClassId));
+}
 
 void PrintLoadMeshError(const std::string &message) {
   const char esc = 0x1B;
@@ -1005,7 +1009,7 @@ JSValue JsBooleanOp(JSContext *ctx, JSValueConst, int argc, JSValueConst *argv) 
   return WrapManifold(ctx, std::move(manifold));
 }
 
-JSValue JsLoadMesh(JSContext *ctx, JSValueConst, int argc, JSValueConst *argv) {
+JSValue LoadMesh(JSContext *ctx, int argc, JSValueConst *argv, const MeshDependencyReader *reader) {
   if (argc < 1) {
     return JS_ThrowTypeError(ctx, "loadMesh expects (path[, forceCleanup])");
   }
@@ -1031,7 +1035,7 @@ JSValue JsLoadMesh(JSContext *ctx, JSValueConst, int argc, JSValueConst *argv) {
       fsPath = homePath / path.substr(1);
     }
   } else {
-    fsPath = std::filesystem::path(path);
+    fsPath = std::filesystem::u8path(path);
   }
 
   std::error_code ec;
@@ -1044,7 +1048,13 @@ JSValue JsLoadMesh(JSContext *ctx, JSValueConst, int argc, JSValueConst *argv) {
     }
     fsPath = absPath;
   }
-  const std::string resolvedPath = fsPath.string();
+  const std::string resolvedPath = fsPath.u8string();
+  std::optional<std::string> before;
+  if(reader) {
+    try {before=(*reader)(fsPath);}
+    catch(const std::exception &error) {return JS_ThrowInternalError(ctx,"loadMesh dependency capture: %s",error.what());}
+    if(!before)return JS_ThrowInternalError(ctx,"loadMesh: unable to read tracked mesh '%s'",resolvedPath.c_str());
+  }
 
   if (!std::filesystem::exists(fsPath, ec) || ec) {
     const std::string msg = "loadMesh: file not found '" + resolvedPath + "' (expected in ~/Downloads/models)";
@@ -1066,6 +1076,11 @@ JSValue JsLoadMesh(JSContext *ctx, JSValueConst, int argc, JSValueConst *argv) {
 
   try {
     manifold::MeshGL mesh = manifold::ImportMesh(fsPath.string(), forceCleanup);
+    if(reader) {
+      const auto after=(*reader)(fsPath);
+      if(!after || *before!=*after)
+        return JS_ThrowInternalError(ctx,"loadMesh: source changed during import '%s'",resolvedPath.c_str());
+    }
     if (mesh.NumTri() == 0 || mesh.NumVert() == 0) {
       const std::string msg = "loadMesh: imported mesh is empty for '" + resolvedPath + "'";
       PrintLoadMeshError(msg);
@@ -1075,10 +1090,19 @@ JSValue JsLoadMesh(JSContext *ctx, JSValueConst, int argc, JSValueConst *argv) {
     auto handle = std::make_shared<manifold::Manifold>(std::move(manifold));
     return WrapManifold(ctx, std::move(handle));
   } catch (const std::exception &e) {
+    // Even failed imports retain a missing/changed dependency for recovery.
+    if(reader) {try {(*reader)(fsPath);}catch(...) {}}
     const std::string msg = std::string("loadMesh failed: ") + e.what();
     PrintLoadMeshError(msg);
     return JS_ThrowInternalError(ctx, "loadMesh failed: %s", e.what());
   }
+}
+
+JSValue JsLoadMesh(JSContext *ctx,JSValueConst,int argc,JSValueConst *argv) {
+  return LoadMesh(ctx,argc,argv,nullptr);
+}
+JSValue JsLoadMeshTracked(JSContext *ctx,JSValueConst,int argc,JSValueConst *argv,int,JSValueConst *data) {
+  return LoadMesh(ctx,argc,argv,static_cast<MeshDependencyReader *>(JS_GetOpaque(data[0],g_meshReaderClassId)));
 }
 
 
@@ -1438,8 +1462,24 @@ void EnsureManifoldClass(JSRuntime *runtime) {
   EnsureManifoldClassInternal(runtime);
 }
 
-void RegisterBindings(JSContext *ctx) {
+void RegisterBindings(JSContext *ctx, MeshDependencyReader meshReader) {
   RegisterBindingsInternal(ctx);
+  if(meshReader) {
+    const auto runtime=JS_GetRuntime(ctx);
+    if(!g_meshReaderClassId)JS_NewClassID(runtime,&g_meshReaderClassId);
+    if(!JS_IsRegisteredClass(runtime,g_meshReaderClassId)) {
+      JSClassDef definition{};definition.class_name="MeshDependencyReader";definition.finalizer=MeshReaderFinalizer;
+      JS_NewClass(runtime,g_meshReaderClassId,&definition);
+    }
+    JSValue tracker=JS_NewObjectClass(ctx,g_meshReaderClassId);
+    if(JS_IsException(tracker))return;
+    JS_SetOpaque(tracker,new MeshDependencyReader(std::move(meshReader)));
+    JSValue function=JS_NewCFunctionData(ctx,JsLoadMeshTracked,2,0,1,&tracker);
+    JS_FreeValue(ctx,tracker);
+    JSValue global=JS_GetGlobalObject(ctx);
+    JS_SetPropertyStr(ctx,global,"loadMesh",function);
+    JS_FreeValue(ctx,global);
+  }
 }
 
 std::shared_ptr<manifold::Manifold> GetManifoldHandle(JSContext *ctx,

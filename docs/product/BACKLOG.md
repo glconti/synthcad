@@ -406,7 +406,9 @@ manufacturing results build on those profiles and shared instances; see
 [Batch 7](../batch-7-validation.md). The user deferred exact Bambu interop on
 2026-10-08. Standard current-plate 3MF in **SC16**, strengthened printing guidance
 and build-volume-only checks are verified in [Batch 8](../batch-8-validation.md).
-Next is **SC17** export provenance and shared CLI/GUI actions.
+**SC17** export provenance and shared CLI/GUI actions are verified in
+[Batch 9](../batch-9-validation.md). Next is **SC18** optional physical feedback,
+with no mandatory sample-print step.
 Start Linux CI and licensing
 resolution in parallel when resources are available; do not leave either until
 packaging. The Bambu-format spike should precede promises about exact export

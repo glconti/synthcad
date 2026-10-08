@@ -200,6 +200,13 @@ int main(){try{
   Require(dialog.threeMf,"Reopening preserves selected format");
   auto compactExport=ExportDialog::Layout(640,400);
   Require(compactExport.card.y>=12&&compactExport.card.y+compactExport.card.height<=388&&compactExport.save.y+compactExport.save.height<=compactExport.card.y+compactExport.card.height,"Compact export dialog fits viewport");
+  dialog.review={{"ok",false},{"review",nullptr},{"message","Destination is invalid"}};
+  dialog.Update(PanelInput{},640,400,2,true);
+  dialog.review={{"ok",true},{"review",{{"profile",nullptr},{"hasWarnings",true},{"risks",nlohmann::json::array()}}}};
+  for(int n=0;n<20;++n)dialog.review["review"]["risks"].push_back({{"name","Review placement"},{"result","not-checked"},{"nextActions",nlohmann::json::array({"Inspect support access and brim clearance"})}});
+  PanelInput reviewWheel;reviewWheel.mouse={compactExport.review.x+12,compactExport.review.y+12};reviewWheel.wheel=-100;
+  dialog.Update(reviewWheel,640,400,2,true);
+  Require(dialog.reviewScroll>0,"Long export risks scroll in compact review area, including missing profile context");
   dialog.overwrite=true;dialog.Update(center(ExportDialog::Layout(1280,720).cancel),1280,720,2,true);
   Require(!dialog.open&&!dialog.overwrite,"Cancel button clears confirmation");
 

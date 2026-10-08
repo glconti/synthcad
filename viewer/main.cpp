@@ -40,6 +40,8 @@ extern "C" {
 #include "brand.h"
 #include "stl_export.h"
 #include "three_mf_export.h"
+#include "export_service.h"
+#include "export_history.h"
 #include "agent_entry.h"
 #include "agent_cli.h"
 #include "agent_transport.h"
@@ -618,7 +620,7 @@ LoadResult LoadSceneFromFile(JSRuntime *runtime, const std::filesystem::path &pa
     return result;
   }
   JSContext *ctx = JS_NewContext(runtime);
-  RegisterBindings(ctx);
+  RegisterBindings(ctx,ReadTextFile);
 
   auto captureException = [&]() {
     JSValue exc = JS_GetException(ctx);
@@ -957,6 +959,10 @@ int main(int argc, char *argv[]) {
   std::map<std::string,nlohmann::json> viewDescriptions;
   nlohmann::json projectOverview;
   bool overviewDirty=true;
+  bool exportHistoryDirty=true;
+  nlohmann::json exportHistoryCache={{"records",nlohmann::json::array()},{"diagnostics",nlohmann::json::array()}}, exportHistory=exportHistoryCache;
+  nlohmann::json lastExportHistoryContext;
+  nlohmann::json unrecordedExports=nlohmann::json::array();
   dingcad::ProjectOverviewUi overviewUi;
   dingcad::PlateReviewUi plateUi;
   nlohmann::json manufacturing={{"current",false},{"checks",nlohmann::json::array()}};
@@ -1011,6 +1017,7 @@ int main(int argc, char *argv[]) {
     std::cout << statusMessage << std::endl;
   };
   auto recordLoad = [&](LoadResult& load) {
+    exportHistoryDirty=true;
     const auto modelFiles=load.files;
     if(project&&!project->standalone)load.files.insert(project->files.begin(),project->files.end());
     attemptedFiles=load.files;attemptedRevision=synthcad::Revision(attemptedFiles);
@@ -1102,7 +1109,7 @@ int main(int argc, char *argv[]) {
   tree.Reload(SceneParts(scene,appearance));
   appearance.parts.clear();
   PartModels partModels;partModels.Reload(tree);
-  if(displayedRevision.empty()&&!defaultScript)displayedRevision="builtin-v1";
+  if(displayedRevision.empty()&&!defaultScript){displayedRevision=displayedSourceRevision="builtin-v1";displayedView=activeView;loadStatus="ready";}
   dingcad::selection::GeometryPicker picker;
   picker.Reload(tree,displayedRevision);
   dingcad::SelectionUi selectionUi;
@@ -1196,8 +1203,52 @@ int main(int argc, char *argv[]) {
     }
   };
   updateBounds();frameParts(false);
+  auto exportContext=[&](bool verifyDisk=false){
+    refreshOverview();
+    auto profile=projectOverview.value("profile",nlohmann::json::object());
+    const auto basis=manufacturing.value("basis",nlohmann::json::object());
+    return nlohmann::json{{"current",exportValid&&loadStatus=="ready"&&activeView==displayedView&&(!verifyDisk||synthcad::MatchesDisk(displayedFiles))},
+      {"projectPath",project?project->path.u8string():scriptPath.u8string()},
+      {"view",displayedView},{"kind",manufacturing.value("kind","scene")},
+      {"modelRevision",basis.value("modelRevision",displayedRevision)},
+      {"sourceRevision",displayedSourceRevision},{"layoutRevision",displayedDesign.is_object()?displayedDesign.value("identity",""):displayedRevision},
+      {"profileRevision",profile.value("profileRevision",nlohmann::json(nullptr))},
+      {"profile",profile},{"checks",manufacturing.value("checks",nlohmann::json::array())},
+      {"dependencies",displayedFiles},{"revision",displayedRevision}};
+  };
+  auto refreshExportHistory=[&](){
+    const auto context=exportContext();
+    const bool changed=exportHistoryDirty||lastExportHistoryContext!=context;
+    if(exportHistoryDirty){
+      exportHistoryCache=synthcad::LoadExportHistory(std::filesystem::u8path(context.at("projectPath").get<std::string>()));
+      exportHistoryDirty=false;
+    }
+    if(changed){
+      exportHistory=synthcad::RefreshExportHistory(exportHistoryCache,context);
+      for(const auto& receipt:unrecordedExports)exportHistory["records"].push_back(receipt);
+      if(!unrecordedExports.empty())exportHistory["diagnostics"].push_back("Some files were exported but their history records could not be saved; those records are session-only.");
+      exportHistory=synthcad::PublishedExportHistory(exportHistory);
+      lastExportHistoryContext=context;
+    }
+    if(changed||!projectOverview.contains("generatedExports")){
+      projectOverview["generatedExports"]=exportHistory.value("records",nlohmann::json::array());
+      projectOverview["exportHistoryDiagnostics"]=exportHistory.value("diagnostics",nlohmann::json::array());
+    }
+  };
+  auto retainExport=[&](nlohmann::json& result){
+    if(!result.value("ok",false)||!result.contains("record")||!result["record"].is_object())return;
+    auto& record=result["record"];
+    const auto history=synthcad::SaveExportRecord(std::filesystem::u8path(record.value("projectPath","")),record);
+    result["history"]=history;
+    if(!history.value("saved",false)){
+      auto copy=record;copy["freshness"]="unknown";copy["freshnessReason"]="History could not be persisted.";
+      unrecordedExports.push_back(std::move(copy));
+    }
+    exportHistoryDirty=true;refreshExportHistory();
+  };
   auto publishAgent=[&](){
     refreshOverview();
+    refreshExportHistory();
     projectOverview["activeView"]=activeView;projectOverview["displayedView"]=displayedView;
     projectOverview["geometryStatus"]=loadStatus;projectOverview["geometryDiagnostic"]=loadDiagnostic;
     manufacturing["current"]=loadStatus=="ready"&&projectOverview.value("metadataCurrent",true)&&activeView==displayedView;
@@ -1219,6 +1270,7 @@ int main(int argc, char *argv[]) {
     snapshot["design"]=displayedDesign;
     snapshot["overview"]=projectOverview;
     snapshot["manufacturing"]=manufacturing;
+    snapshot["exportHistory"]=exportHistory;
     snapshot["diagnostic"]=loadDiagnostic;snapshot["view"]=activeView;
     snapshot["projectPath"]=project?project->path.u8string():scriptPath.u8string();
     snapshot["views"]=nlohmann::json::object();
@@ -1385,7 +1437,11 @@ int main(int argc, char *argv[]) {
     dingcad::SetUiDrawScale(uiScale);
     const auto input=dingcad::LogicalInput(dingcad::ReadPanelInput(),uiScale);
 
+    bool exportReviewInvalidated=false;
     auto reloadScene = [&](bool allowDefaultFallback=true) {
+      // A click on an older rendered review must never approve new geometry.
+      exportReviewInvalidated|=exportDialog.open;
+      exportDialog.open=false;exportDialog.overwrite=false;
       loadStatus="loading";exportValid=false;publishAgent();
       LoadResult load;
       try {
@@ -1439,6 +1495,17 @@ int main(int argc, char *argv[]) {
       const auto guard=request.value("expectRevision","");
       if(!guard.empty()&&(guard!=displayedRevision||loadStatus!="ready"||!synthcad::MatchesDisk(displayedFiles))){fail("stale_revision","Displayed revision is no longer current");continue;}
       try{
+        if(command=="export"){
+          auto result=dingcad::ExecuteExport(tree,exportContext(true),args,[&](){
+            if(std::chrono::steady_clock::now()>=action->deadline)return std::string("timeout");
+            if(!exportValid||loadStatus!="ready"||!synthcad::MatchesDisk(displayedFiles))return std::string("stale_revision");
+            return std::string{};
+          });
+          retainExport(result);publishAgent();
+          if(result.value("ok",false))action->result.set_value(synthcad::Success(command,result,agentSession,displayedRevision));
+          else action->result.set_value(synthcad::Error(command,result.value("code","io_error"),result.value("message","Export failed"),result,agentSession,displayedRevision));
+          continue;
+        }
         if(command=="pick"){
           auto result=agent->BeginPick(args,displayedRevision);
           action->result.set_value(synthcad::Success(command,result,agentSession,result.at("request").value("revision","")));
@@ -1502,8 +1569,9 @@ int main(int argc, char *argv[]) {
 
     syncGuidedPick();
     refreshOverview();
+    refreshExportHistory();
     guidedUi.canConfirm=validGuidedCandidate();
-    const bool modalWasOpen=exportDialog.open;
+    const bool modalWasOpen=exportDialog.open||exportReviewInvalidated;
     const bool keyboardWasCaptured=modalWasOpen||panel.searchFocus;
     dingcad::PanelActions actions;
     dingcad::PanelActions workspaceActions;
@@ -1559,18 +1627,27 @@ int main(int argc, char *argv[]) {
     if(workspaceActions.reload||(!captureKeyboard&&IsKeyPressed(KEY_R)))reloadRequested=true;
     if(reloadRequested&&!scriptPath.empty())reloadScene(overviewActions.view.empty());
     if(actions.openExport||(!captureKeyboard&&IsKeyPressed(KEY_P)))exportDialog.Open(defaultExportPath);
+    if(exportDialog.open){
+      try {
+        const auto reviewPath=exportDialog.path.empty()?std::string{}:std::filesystem::absolute(std::filesystem::u8path(exportDialog.path)).u8string();
+        const nlohmann::json options={{"path",reviewPath},{"format",exportDialog.threeMf?"3mf":"stl"},{"visibleOnly",exportDialog.visibleOnly}};
+        exportDialog.review=dingcad::ReviewExport(tree,exportContext(),options);
+      }catch(const std::exception& error){exportDialog.review={{"ok",false},{"message",error.what()},{"review",nullptr}};}
+    }
     if(modalWasOpen){
-      const auto dialogAction=exportDialog.Update(input,uiWidth,uiHeight,tree.ExportIndices(exportDialog.visibleOnly).size(),exportValid);
+      const auto dialogAction=exportDialog.Update(input,uiWidth,uiHeight,tree.ExportIndices(exportDialog.visibleOnly).size(),exportValid,brandingFont);
       if(dialogAction.save){
         try {
           const auto savePath=std::filesystem::u8path(exportDialog.path);
-          const auto writer=exportDialog.threeMf?dingcad::ExportParts3mf:dingcad::ExportParts;
-          const auto result=writer(tree,exportDialog.visibleOnly,exportValid,savePath,
-                                   exportDialog.overwrite,exportDialog.error);
-          if(result==dingcad::ExportResult::ConfirmOverwrite)exportDialog.overwrite=true;
-          else if(result==dingcad::ExportResult::Saved){
-            reportStatus("Saved "+savePath.u8string());workspace.Saved(savePath.filename().u8string(),GetTime());exportDialog.open=false;
+          const nlohmann::json options={{"path",std::filesystem::absolute(savePath).u8string()},{"format",exportDialog.threeMf?"3mf":"stl"},
+            {"visibleOnly",exportDialog.visibleOnly},{"replace",exportDialog.overwrite},{"allowWarnings",true}};
+          auto result=dingcad::ExecuteExport(tree,exportContext(true),options,[&](){return synthcad::MatchesDisk(displayedFiles)?std::string{}:std::string("stale_revision");});
+          if(result.value("code","")=="destination_exists")exportDialog.overwrite=true;
+          else if(result.value("ok",false)){
+            retainExport(result);publishAgent();
+            reportStatus("Saved "+savePath.u8string());workspace.Saved(savePath.filename().u8string()+(result.value("history",nlohmann::json::object()).value("saved",false)?"":" (history not saved)"),GetTime());exportDialog.open=false;
           }
+          else exportDialog.error=result.value("message","Export failed");
         }catch(const std::exception &e){exportDialog.error=e.what();}
 
       }

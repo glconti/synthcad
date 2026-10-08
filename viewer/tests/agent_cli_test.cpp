@@ -82,7 +82,9 @@ void CheckResponses() {
   Require(synthcad::Help().find("synthcad wait") != std::string::npos, "help needs wait example");
   Require(synthcad::Help("screenshot").find("--replace") != std::string::npos, "command help missing options");
   Require(synthcad::Capabilities().at("geometryEditing") == false, "discovery must not promise geometry edits");
-  Require(synthcad::Capabilities().at("export") == false, "discovery must not promise exports");
+  Require(synthcad::Capabilities().at("export") == true && synthcad::Capabilities().at("exportHistory") == true && synthcad::Capabilities().at("exportFormats") == nlohmann::json({"3mf","stl"}), "export discovery missing");
+  Require(synthcad::ExitCode("warnings_present")==14 && synthcad::ExitCode("destination_exists")==15 && synthcad::ExitCode("empty_export")==16,"export error codes missing");
+  Require(synthcad::Help().find("Exports:")!=std::string::npos && synthcad::Help("export").find("--dry-run")!=std::string::npos,"export help missing");
   Require(synthcad::Capabilities().at("printerProfiles") == true &&
           synthcad::Capabilities().at("projectOverview") == true &&
           synthcad::Capabilities().at("slicerPresetVerification") == false, "context discovery missing");
@@ -108,6 +110,25 @@ void CheckResponses() {
   const auto guide = synthcad::Success("docs", {{"content", u8"# Pièce\n\nExact instructions.\n"}});
   Require(synthcad::FormatResponse(guide, false) == u8"# Pièce\n\nExact instructions.\n", "guide stdout must be raw text");
   Require(nlohmann::json::parse(synthcad::FormatResponse(guide, true)) == guide, "guide JSON envelope changed");
+}
+void CheckExportParsing() {
+  using synthcad::ParseCli;
+  auto parsed=ParseCli({"export",u8"Piatto città 日本.3MF","--visible-only","--replace","--allow-warnings","--dry-run","--expect-revision","revision","-s","plate","--timeout","42"});
+  Require(bool(parsed) && parsed.options.arguments==nlohmann::json({{"path",u8"Piatto città 日本.3MF"},{"format","3mf"},{"visibleOnly",true},{"replace",true},{"allowWarnings",true},{"dryRun",true}}),"export payload missing");
+  Require(parsed.options.expectRevision=="revision" && parsed.options.session=="plate" && parsed.options.timeoutMs==42,"export request context missing");
+  parsed=ParseCli({"export","part.stl"});
+  Require(bool(parsed) && parsed.options.arguments["format"]=="stl" && parsed.options.arguments["replace"]==false && parsed.options.arguments["dryRun"]==false,"export defaults missing");
+  Require(bool(ParseCli({"export","destination","--format","3mf"})),"explicit format must defer destination suffix to viewer guard");
+  Require(bool(ParseCli({"export-history","--expect-revision","rev"})),"cached history permits optional revision guard");
+  for(const auto& args:std::vector<std::vector<std::string>>{
+      {"export"},{"export",""},{"export","part.obj"},{"export","noextension"},
+      {"export","a.3mf","extra"},{"export","a.3mf","--format","obj"},
+      {"export","a.3mf","--format"},{"export","a.3mf","--dry-run=true"},
+      {"export","a.3mf","--replace","--replace"},{"export",std::string("a\0b.3mf",7)},
+      {"export-history","extra"},{"export-history","--replace"},{"checks","--allow-warnings"},
+      {"snapshot","--format","3mf"},{"screenshot","x.png","--visible-only"},{"frame","--dry-run"}})
+    Require(!ParseCli(args),"invalid export option accepted");
+  Require(ParseCli({"export","--help"}).options.help,"export help must omit destination");
 }
 void CheckGuidedSelectionParsing() {
   using synthcad::ParseCli;
@@ -173,6 +194,7 @@ int main() {
   try {
     CheckParsing();
     CheckGuidedSelectionParsing();
+    CheckExportParsing();
     CheckResponses();
     std::cout << "Agent CLI tests passed\n";
     return 0;

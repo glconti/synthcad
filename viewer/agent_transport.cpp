@@ -208,22 +208,30 @@ void Close(Connection connection) { close(connection); }
 bool WriteMessage(Connection connection, const std::string& message, Clock::time_point deadline) {
   size_t offset = 0;
   do {
+    bool madeProgress = false;
 #ifdef _WIN32
     DWORD sent = 0;
-    if (!WriteFile(connection, message.data() + offset, DWORD(message.size() - offset), &sent, nullptr)) {
+    // PIPE_NOWAIT writes larger than the named-pipe buffer can repeatedly fail
+    // with ERROR_NO_DATA without transferring any bytes. Keep each attempt
+    // below the configured 64 KiB buffer so the peer can drain it.
+    const DWORD request = static_cast<DWORD>(std::min<size_t>(
+        message.size() - offset, 16 * 1024));
+    if (!WriteFile(connection, message.data() + offset, request, &sent, nullptr)) {
       DWORD error = GetLastError();
       if (error != ERROR_NO_DATA && error != ERROR_PIPE_BUSY) return false;
     }
+    madeProgress = sent > 0;
 #else
     ssize_t sent = send(connection, message.data() + offset, message.size() - offset, MSG_NOSIGNAL);
     if (sent < 0) {
       if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) return false;
       sent = 0;
     }
+    madeProgress = sent > 0;
 #endif
     offset += static_cast<size_t>(sent);
     if (offset == message.size()) return true;
-    Pause();
+    if (!madeProgress) Pause();
   } while (Clock::now() < deadline);
   return false;
 }
@@ -232,6 +240,7 @@ bool ReadMessage(Connection connection, std::string& message, Clock::time_point 
   char buffer[8192];
   do {
     if (stop && stop->load()) return false;
+    size_t received = 0;
 #ifdef _WIN32
     DWORD read = 0;
     if (!ReadFile(connection, buffer, sizeof(buffer), &read, nullptr)) {
@@ -246,11 +255,12 @@ bool ReadMessage(Connection connection, std::string& message, Clock::time_point 
       read = 0;
     }
 #endif
-    message.append(buffer, static_cast<size_t>(read));
+    received = static_cast<size_t>(read);
+    message.append(buffer, received);
     if (message.size() > kMaxMessage) return false;
     auto newline = message.find('\n');
     if (newline != std::string::npos) { message.resize(newline); return true; }
-    Pause();
+    if (received == 0) Pause();
   } while (Clock::now() < deadline);
   return false;
 }
@@ -266,7 +276,8 @@ Connection Connect(const std::string& endpoint, Clock::time_point deadline) {
       Close(result);
       return kInvalid;
     }
-    if (GetLastError() != ERROR_PIPE_BUSY && GetLastError() != ERROR_FILE_NOT_FOUND) return kInvalid;
+    DWORD error = GetLastError();
+    if (error != ERROR_PIPE_BUSY && error != ERROR_FILE_NOT_FOUND) return kInvalid;
 #else
     Connection result = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
     if (result < 0) return kInvalid;

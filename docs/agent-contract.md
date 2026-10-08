@@ -71,6 +71,15 @@ scan cannot establish what evaluation actually consumed. Failed reads record
 `missing` or `unreadable`; repeated reads of a path with different contents in
 one attempt record `changed-during-read`, which cannot match a disk snapshot.
 
+`loadMesh` also tracks its primary mesh file, including missing files, and
+compares reads before and after the third-party import. This detects ordinary
+mesh edits and triggers reload/recovery without editing JavaScript. Unlike JS
+evaluation, the importer opens the file independently: this is not an atomic
+proof of every byte it consumed, and auxiliary files resolved internally by
+an importer are not tracked. Prefer self-contained mesh assets for reproducible
+exports; do not treat a recorded primary digest as provenance for external
+materials or other auxiliary assets.
+
 The revision is SHA-256 of a deterministic serialization:
 
 1. Begin with ASCII `synthcad-revision-v1:`.

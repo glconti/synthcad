@@ -26,6 +26,14 @@
 - project{manifold}
 - levelSet{options:{sdf(point:[x,y,z])=>number, bounds:{min:[x,y,z], max:[x,y,z]}, edgeLength:number, level?:number, tolerance?:number}}
 - loadMesh{path:string, forceCleanup?:bool}
+
+  The viewer tracks the primary mesh file for reloads, revision guards, and export
+  receipts, including missing files so restoration can recover a failed load.
+  It compares binary bytes before and after import and rejects detected changes;
+  the importer opens the file independently, so this is not an atomic guarantee
+  of every byte consumed. Auxiliary files opened internally by an import library
+  (such as material files referenced by OBJ) are not tracked.
+
 - setTolerance{manifold, tolerance}
 - getTolerance{manifold}
 - simplify{manifold, tolerance?}
@@ -162,6 +170,13 @@ contains one current arrangement, not a native multi-plate slicer project or
 printer/material presets. Choose those settings in the slicer. Switching format
 updates the filename extension; the destination must match the selected format.
 See [standard 3MF export](docs/three-mf-export.md).
+
+The `synthcad export` command uses the same viewer-owned export service. A dry
+run returns the included instances, source quantities, revision basis and
+cached checks without creating files. Actual exports require explicit warning
+and replacement acknowledgement when applicable. Committed files receive
+[local export receipts](docs/export-history.md); edits never regenerate them.
+See [CLI export options](docs/agent-cli.md) for revision guards and responses.
 
 The Windows view uses soft baked lighting and sharp CAD creases. Save a PNG
 without opening a visible window with

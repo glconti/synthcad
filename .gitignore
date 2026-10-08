@@ -5,3 +5,6 @@ __pycache__/
 
 # Personal designs and exports stay local, separate from public development.
 /local-scenes/
+
+# Local export receipts contain machine-specific paths and generated history.
+.synthcad/

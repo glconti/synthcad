@@ -109,14 +109,20 @@ The CLI opens or reuses a persistent session. Agents edit model files normally;
 the viewer hot-reloads them. Capture a requested revision with `revision`, then
 use `wait --revision TOKEN` to acknowledge the loaded result. Highlights, framing,
 named project views, selection readback and PNG screenshots share that viewer.
-These commands do not edit geometry, generate print layouts or export STL.
+These commands do not edit geometry or generate print layouts. Use
+`synthcad export current-plate.3mf --session review --dry-run --json` to review
+the current arrangement before exporting. Both 3MF and STL use the viewer's
+selection rules, warning acknowledgement and overwrite protection. Successful
+exports retain revision-linked records; `synthcad export-history` reads them.
 
 For a new assembly with several layouts, export a shared `design` graph:
 source parts define geometry once, instances identify physical copies, and
 groups/views reference those instances. Plate placements can override assembly
 poses without copying the model. `synthcad docs design` prints the full contract;
 the [public shared-design fixture](viewer/tests/agent-fixtures/shared-design)
-shows four views sharing one entry. Automatic plate validation remains planned.
+shows four views sharing one entry. `synthcad checks` reports geometric plate
+fit, overlap and authored allowances against the supplied build volume;
+support generation, slicing and automatic packing remain outside this workflow.
 
 See the [agent CLI guide](docs/agent-cli.md) for commands, errors and session
 lifecycle, and the [project/revision contract](docs/agent-contract.md) for optional

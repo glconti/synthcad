@@ -387,6 +387,103 @@ struct DocumentBuilder {
     }
   }
 
+  std::string ExportFormat(const json &record) {
+    const auto format = StringField(record, "format", "unknown");
+    if (format == "3mf" || format == "core3mf") return "Core 3MF";
+    if (format == "stl") return "STL";
+    return format;
+  }
+
+  void AddGeneratedQuantities(const json *quantities) {
+    if (!quantities || !quantities->is_array() || quantities->empty()) {
+      Add("Quantities: None recorded.");
+      return;
+    }
+    for (const auto &quantity : *quantities) {
+      Add("Quantity: " + StringField(quantity, "sourcePartId") + " — " +
+          ValueText(Field(quantity, "count")) + " instances");
+    }
+  }
+
+  void AddReceiptProfile(const json *profile) {
+    if (!profile || profile->is_null()) {
+      Add("Printer context at export: None recorded.");
+      return;
+    }
+    const json *context = profile;
+    if (Field(*profile, "profile") && Field(*profile, "profile")->is_object())
+      context = Field(*profile, "profile");
+    const std::string state = StringField(*profile, "status", "unknown");
+    std::string summary = "Printer context at export (" + state + "): ";
+    summary += NamedIdentity(Field(*context, "printer"));
+    summary += " · " + BuildVolume(Field(*context, "buildVolume"));
+    const auto *nozzle = Field(*context, "nozzleDiameter");
+    summary += " · nozzle " +
+               (nozzle && nozzle->is_number() ? nozzle->dump() + " mm" : "unknown");
+    summary += " · " + NamedIdentity(Field(*context, "material"));
+    Add(std::move(summary));
+  }
+
+  void AddGeneratedExports(const json *records) {
+    Section("Generated exports");
+    Empty(records);
+    if (!records || !records->is_array()) return;
+    for (const auto &record : *records) {
+      Add(ShortIdentifier(Field(record, "id")) + " · " + ExportFormat(record));
+      Add("Path: " + StringField(record, "path"));
+      if (HasText(Field(record, "createdAt")))
+        Add("Created: " + StringField(record, "createdAt", ""));
+      Add("Artifact: " + StringField(record, "artifactStatus") + " — " +
+          StringField(record, "artifactReason"));
+      Add("Source files: " + StringField(record, "dependencyStatus") + " — " +
+          StringField(record, "dependencyReason"));
+      Add("Freshness: " + StringField(record, "freshness") + " — " +
+          StringField(record, "freshnessReason"));
+      Basis(record);
+      ArrayField("Part IDs", Field(record, "partIds"));
+      AddGeneratedQuantities(Field(record, "quantities"));
+      AddReceiptProfile(Field(record, "profile"));
+      const auto *checks = Field(record, "checks");
+      if (checks && checks->is_array()) {
+        if (checks->empty()) Add("Checks: None recorded.");
+        for (const auto &check : *checks)
+          Add("Check: " + StringField(check, "name") + " — " +
+              StringField(check, "result") + " (" + StringField(check, "scope") + ")");
+      }
+      const auto *risks = Field(record, "risks");
+      if (risks && risks->is_array()) {
+        for (const auto &risk : *risks) {
+          if (risk.is_string()) Add("Risk: " + risk.get<std::string>());
+          else if (risk.is_object()) {
+            const auto *message = Field(risk, "message");
+            if (!message) message = Field(risk, "reason");
+            if (!message) message = Field(risk, "text");
+            Add("Risk: " + ValueText(message, StringField(risk,"name",StringField(risk,"id","Check")))+
+                " ("+StringField(risk,"result","warning")+")");
+          }
+        }
+      }
+      if (Field(record, "allowWarnings") && Field(record, "allowWarnings")->is_boolean())
+        Add(std::string("Warnings allowed: ") +
+            (Field(record, "allowWarnings")->get<bool>() ? "yes" : "no"));
+    }
+  }
+
+  void AddExportHistoryDiagnostics(const json *diagnostics) {
+    Section("Generated export history diagnostics");
+    Empty(diagnostics);
+    if (!diagnostics || !diagnostics->is_array()) return;
+    for (const auto &diagnostic : *diagnostics) {
+      if (diagnostic.is_string()) {
+        Add("History: " + diagnostic.get<std::string>());
+      } else {
+        const std::string path = StringField(diagnostic, "path", "History");
+        Add(path + ": " +
+            StringField(diagnostic, "message", "History record could not be loaded."));
+      }
+    }
+  }
+
   void AddEvidence(const json *records) {
     Section("Evidence");
     Empty(records);
@@ -465,6 +562,9 @@ struct DocumentBuilder {
     AddChecks(Field(overview, "checks"));
     AddExports(Field(overview, "exports"));
     AddEvidence(Field(overview, "evidence"));
+
+    AddGeneratedExports(Field(overview, "generatedExports"));
+    AddExportHistoryDiagnostics(Field(overview, "exportHistoryDiagnostics"));
 
     Section("Metadata errors");
     const auto *errors = Field(overview, "errors");

@@ -4,7 +4,7 @@ find_package(Threads REQUIRED)
 
 include(${PROJECT_SOURCE_DIR}/cmake/embed-agent-guides.cmake)
 synthcad_embed_agent_guides(${CMAKE_CURRENT_BINARY_DIR}/agent_guides.generated.h)
-add_library(synthcad_agent STATIC agent_cli.cpp project_contract.cpp agent_transport.cpp agent_bridge.cpp agent_entry.cpp agent_knowledge.cpp guided_pick.cpp printer_profile.cpp project_overview.cpp)
+add_library(synthcad_agent STATIC agent_cli.cpp project_contract.cpp agent_transport.cpp agent_bridge.cpp agent_entry.cpp agent_knowledge.cpp guided_pick.cpp printer_profile.cpp project_overview.cpp export_history.cpp)
 target_include_directories(synthcad_agent PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(synthcad_agent PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_link_libraries(synthcad_agent PUBLIC nlohmann_json::nlohmann_json Threads::Threads)
@@ -77,6 +77,7 @@ add_executable(dingcad_viewer
   brand.cpp
   stl_export.cpp
   three_mf_export.cpp
+  export_service.cpp
   agent_scene.cpp
 )
 
@@ -107,7 +108,7 @@ if(SYNTHCAD_CUSTOM_FRAME_CONTROL)
   target_compile_definitions(dingcad_viewer PRIVATE SYNTHCAD_CUSTOM_FRAME_CONTROL)
 endif()
 
-foreach(test project_contract agent_cli agent_transport agent_bridge agent_knowledge guided_pick printer_profile project_overview)
+foreach(test project_contract agent_cli agent_transport agent_bridge agent_knowledge guided_pick printer_profile project_overview export_history)
   add_executable(synthcad_${test}_tests EXCLUDE_FROM_ALL tests/${test}_test.cpp)
   target_link_libraries(synthcad_${test}_tests PRIVATE synthcad_agent)
   target_include_directories(synthcad_${test}_tests PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
@@ -227,6 +228,16 @@ if(MSVC)
   target_compile_options(synthcad_three_mf_export_tests PRIVATE /utf-8 /UNDEBUG)
 else()
   target_compile_options(synthcad_three_mf_export_tests PRIVATE -UNDEBUG)
+endif()
+
+add_executable(synthcad_export_service_tests EXCLUDE_FROM_ALL
+  tests/export_service_test.cpp export_service.cpp stl_export.cpp three_mf_export.cpp part_tree.cpp)
+target_include_directories(synthcad_export_service_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(synthcad_export_service_tests PRIVATE manifold raylib dingcad_quickjs synthcad_agent)
+if(MSVC)
+  target_compile_options(synthcad_export_service_tests PRIVATE /utf-8 /UNDEBUG)
+else()
+  target_compile_options(synthcad_export_service_tests PRIVATE -UNDEBUG)
 endif()
 
 if(WIN32)

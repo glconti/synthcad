@@ -3,6 +3,7 @@
 #include "dimensions.h"
 #include <filesystem>
 #include <string>
+#include <nlohmann/json.hpp>
 namespace dingcad {
 // UI coordinates are logical pixels; the viewport and camera remain window-sized.
 struct PanelInput {
@@ -36,13 +37,15 @@ struct PartsPanel {
   bool CapturesMouse(const PartTree &tree,const PanelInput &input,int width,int height) const;
   void Draw(const PartTree &tree,Font font,int width,int height) const;
 };
-struct ExportLayout {Rectangle card,threeMf,stl,all,visible,path,cancel,save;};
+struct ExportLayout {Rectangle card,threeMf,stl,all,visible,path,review,cancel,save;};
 struct ExportDialog {
   bool open=false,visibleOnly=false,pathFocus=false,overwrite=false,threeMf=true;
   std::string path,error;TextEdit editor;
+  nlohmann::json review=nlohmann::json::object();
+  float reviewScroll=0;
   static ExportLayout Layout(int width,int height);
   void Open(const std::string &defaultPath);
-  PanelActions Update(const PanelInput &input,int width,int height,size_t count,bool valid);
+  PanelActions Update(const PanelInput &input,int width,int height,size_t count,bool valid,Font font={});
   void Draw(Font font,int width,int height,size_t count,bool valid) const;
 };
 struct WorkspaceUi {

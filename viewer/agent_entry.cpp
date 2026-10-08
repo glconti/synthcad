@@ -62,7 +62,7 @@ std::vector<std::string> ProcessArguments(int argc,char** argv){
 }
 bool IsAgentCommand(const std::vector<std::string>& arguments){
   if(arguments.size()<2)return false;
-  const std::set<std::string> commands={"docs","open","sessions","snapshot","overview","profile","checks","selection","reference","pick","pick-status","pick-cancel","events","state","revision","wait","highlight","frame","view","screenshot","capabilities","version","help","--help","-h","--version","--json","--session","-s"};
+  const std::set<std::string> commands={"docs","open","sessions","snapshot","overview","profile","checks","export","export-history","selection","reference","pick","pick-status","pick-cancel","events","state","revision","wait","highlight","frame","view","screenshot","capabilities","version","help","--help","-h","--version","--json","--session","-s"};
   if(commands.count(arguments[1]))return true;
   return arguments[1].rfind("--",0)==0&&arguments[1]!="--render-scene"&&arguments[1]!="--profile-scene"&&arguments[1]!="--check-scene"&&arguments[1]!="--ui-preview"&&arguments[1]!="--agent-session";
 }
@@ -93,7 +93,7 @@ int RunAgentCli(const std::vector<std::string>& arguments,const std::string& exe
       if(const char* configured=std::getenv("SYNTHCAD_VIEWER"))viewer=std::filesystem::u8path(configured);
       response=OpenSession(project.path.u8string(),options.session,options.arguments.value("hidden",false),std::filesystem::absolute(viewer).u8string(),options.timeoutMs);
     }else{
-      if(options.command=="screenshot")options.arguments["path"]=std::filesystem::absolute(std::filesystem::u8path(options.arguments.at("path").get<std::string>())).u8string();
+      if(options.command=="screenshot"||options.command=="export")options.arguments["path"]=std::filesystem::absolute(std::filesystem::u8path(options.arguments.at("path").get<std::string>())).u8string();
       const int requestTimeout=options.command=="events"?
           std::max(options.timeoutMs,options.arguments.at("waitMs").get<int>()+1000):options.timeoutMs;
       response=Request(options.session,{{"protocolVersion",1},{"command",options.command},{"arguments",options.arguments},{"expectRevision",options.expectRevision},{"timeoutMs",requestTimeout}},requestTimeout+500);

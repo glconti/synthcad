@@ -83,7 +83,7 @@ void PartIcon(Rectangle r,bool exporting,CheckState state){
  if(state==CheckState::Mixed){DrawRectangleRec({x+2,y+3,10,8},paper);line(3,7,10,7);}
 }
 std::string IconHint(bool exp,CheckState s){
- if(exp)return s==CheckState::All?"Included in STL - click to exclude":s==CheckState::Mixed?"Mixed export - click to include all":"Excluded from STL - click to include";
+ if(exp)return s==CheckState::All?"Included in export - click to exclude":s==CheckState::Mixed?"Mixed export - click to include all":"Excluded from export - click to include";
  return s==CheckState::All?"Visible - click to hide":s==CheckState::Mixed?"Mixed visibility - click to show all":"Hidden - click to show";
 }
 Rectangle HelpRect(int w){return {std::max(12.f,w-316.f),56,304,222};}
@@ -210,13 +210,13 @@ void PartsPanel::Draw(const PartTree &tree,Font f,int w,int h) const{
  Tooltip(tip,f,w,h);
 }
 ExportLayout ExportDialog::Layout(int w,int h){
- ExportLayout l;auto &r=l.card;const float height=std::max(0.f,std::min(376.f,h-24.f));
+ ExportLayout l;auto &r=l.card;const float height=std::max(0.f,std::min(560.f,h-24.f));
  r={std::max(12.f,(w-620.f)/2),std::max(12.f,(h-height)/2),std::max(0.f,std::min(620.f,w-24.f)),height};
- const float scale=height/376.f;
- auto row=[&](float y,float width){return Rectangle{r.x+20,r.y+y*scale,width,32*scale};};
+ auto row=[&](float y,float width){return Rectangle{r.x+20,r.y+y,width,32};};
  l.threeMf=row(54,(r.width-48)/2);l.stl=l.threeMf;l.stl.x+=l.threeMf.width+8;
  l.all=row(94,r.width-40);l.visible=row(130,r.width-40);l.path=row(194,r.width-40);
- l.cancel=row(324,88);l.save=row(324,130);l.save.x=r.x+r.width-150;return l;
+ l.review={r.x+20,r.y+232,r.width-40,std::max(0.f,height-308)};
+ l.cancel=row(height-44,88);l.save=row(height-44,144);l.save.x=r.x+r.width-164;return l;
 }
 static bool ExportExtensionMatches(const std::string &path,bool threeMf){
  if(path.empty()||path.find('\0')!=std::string::npos)return false;
@@ -224,10 +224,57 @@ static bool ExportExtensionMatches(const std::string &path,bool threeMf){
  for(auto &c:extension)if(c>='A'&&c<='Z')c=char(c-'A'+'a');
  return extension==(threeMf?".3mf":".stl");
 }
-void ExportDialog::Open(const std::string &p){open=true;if(path.empty())path=p;error.clear();overwrite=false;pathFocus=false;editor.Focus(path);}
-PanelActions ExportDialog::Update(const PanelInput &i,int w,int h,size_t count,bool valid){
+static std::string ExportReviewText(const nlohmann::json& result,size_t count,bool valid){
+ auto review=result.value("review",nlohmann::json::object());
+ if(!review.is_object())review=nlohmann::json::object();
+ std::string text=valid?std::to_string(count)+(count==1?" part included":" parts included"):"Export disabled - correct the scene error";
+ if(result.contains("ok")&&!result.value("ok",false))text+="\n"+result.value("message","");
+ if(review.contains("basis"))text+="\n"+review["basis"].value("kind","scene")+": "+review["basis"].value("view","");
+ const auto context=review.value("profile",nlohmann::json::object());
+ const auto profile=context.is_object()?context.value("profile",nlohmann::json::object()):nlohmann::json::object();
+ if(profile.is_object()&&profile.contains("buildVolume"))text+="\nBuild volume (mm): "+profile["buildVolume"].dump();
+ if(profile.is_object()){
+   for(const auto* key:{"printer","material"})if(profile.contains(key)&&profile[key].is_object())
+     text+=std::string("\n")+(std::string(key)=="printer"?"Printer: ":"Material: ")+profile[key].value("name",profile[key].value("id","unspecified"));
+   if(profile.contains("nozzleDiameter")&&profile["nozzleDiameter"].is_number())text+="\nNozzle (mm): "+profile["nozzleDiameter"].dump();
+ }
+ text+="\nKeeps current placement. Choose print settings in your slicer.";
+ if(review.contains("quantities"))for(const auto& item:review["quantities"])text+="\n"+item.value("sourcePartId","")+": "+std::to_string(item.value("count",0));
+ const auto risks=review.value("risks",nlohmann::json::array());
+ if(!risks.empty())text+="\n\nReview concerns / unchecked items:";
+ for(const auto& risk:risks){
+   text+="\n"+risk.value("result","warning")+": "+risk.value("name",risk.value("id","Check"));
+   for(const auto& action:risk.value("nextActions",nlohmann::json::array()))if(action.is_string())text+="\n  "+action.get<std::string>();
+ }
+ if(!risks.empty())text+="\nChecks cover the authored scene; this export subset is not a new printability validation.";
+ return text;
+}
+static std::vector<std::string> ExportReviewLines(const std::string& text,float width,Font font){
+ std::vector<std::string> lines;std::string line;
+ auto measured=[&](const std::string& s){
+   if(font.glyphCount>0)return MeasureTextEx(font,s.c_str(),14,0).x;
+   float size=0;for(size_t p=0;p<s.size();){auto next=Next(s,p);size+=next-p>2?14.f:7.f;p=next;}return size;
+ };
+ for(size_t p=0;p<text.size();){
+   const auto next=Next(text,p);const auto c=text.substr(p,next-p);p=next;
+   if(c=="\n"){lines.push_back(line);line.clear();continue;}
+   if(!line.empty()&&measured(line+c)>width){
+     const auto space=line.find_last_of(' ');
+     if(space!=std::string::npos&&space>0){lines.push_back(line.substr(0,space));line.erase(0,space+1);}
+     else{lines.push_back(line);line.clear();}
+   }
+   line+=c;
+ }
+ lines.push_back(line);return lines;
+}
+void ExportDialog::Open(const std::string &p){open=true;if(path.empty())path=p;error.clear();overwrite=false;pathFocus=false;reviewScroll=0;editor.Focus(path);}
+PanelActions ExportDialog::Update(const PanelInput &i,int w,int h,size_t count,bool valid,Font font){
  PanelActions a;if(!open)return a;auto l=Layout(w,h);
  if(i.escape||Hit(i,l.cancel)){open=false;overwrite=false;return a;}
+ const auto lines=ExportReviewLines(ExportReviewText(review,count,valid),l.review.width-12,font);
+ const float maxScroll=std::max(0.f,lines.size()*18.f-l.review.height);
+ if(CheckCollisionPointRec(i.mouse,l.review))reviewScroll=Clamp(reviewScroll-i.wheel*40,0,maxScroll);
+ else reviewScroll=Clamp(reviewScroll,0,maxScroll);
  if(Hit(i,l.threeMf)||Hit(i,l.stl)){
   const bool format=Hit(i,l.threeMf);
   if(format!=threeMf){threeMf=format;if(!path.empty()){auto p=std::filesystem::u8path(path);p.replace_extension(threeMf?".3mf":".stl");path=p.u8string();}overwrite=false;error.clear();editor.Focus(path);}
@@ -243,17 +290,19 @@ PanelActions ExportDialog::Update(const PanelInput &i,int w,int h,size_t count,b
 }
 void ExportDialog::Draw(Font f,int w,int h,size_t count,bool valid) const{
  if(!open)return;DrawRectangle(0,0,w,h,{33,43,37,72});auto l=Layout(w,h);auto r=l.card;Card(r,paper);
- Label("Export",f,r.x+20,r.y+18,r.width-40,23);const float scale=r.height/376.f;
+ Label("Export",f,r.x+20,r.y+18,r.width-40,23);
  auto radio=[&](Rectangle a,bool active,const char *s){if(Over(a))Card(a,{226,234,220,180});DrawCircleLines(int(a.x+10),int(a.y+16),8,accent);if(active)DrawCircleV({a.x+10,a.y+16},4.5f,accent);Label(s,f,a.x+28,a.y+7,a.width-30);};
  radio(l.threeMf,threeMf,"3MF");radio(l.stl,!threeMf,"STL");
  radio(l.all,!visibleOnly,"All exportable parts");radio(l.visible,visibleOnly,"Visible exportable parts");
- Label("Destination",f,r.x+20,r.y+174*scale,r.width-40,14,muted);Field(l.path,path,threeMf?"Choose a .3mf file path":"Choose a .stl file path",editor,pathFocus,f);
- Label(valid?std::to_string(count)+(count==1?" part included":" parts included"):"Export disabled - correct the scene error",f,r.x+20,r.y+236*scale,r.width-40,16,valid?ink:MAROON);
- Label("Keeps the current arrangement.",f,r.x+20,r.y+260*scale,r.width-40,14,muted);
- Label(threeMf?"Choose printer and material settings in your slicer.":"STL contains geometry only.",f,r.x+20,r.y+278*scale,r.width-40,14,muted);
- Label(overwrite?"This file already exists. Replace it?":error,f,r.x+20,r.y+302*scale,r.width-40,14,MAROON);
- Button(l.cancel,"Cancel",f);Button(l.save,overwrite?"Replace file":"Export",f,count>0&&valid&&!path.empty(),true);
- if(!error.empty()&&Over({r.x+20,r.y+300*scale,r.width-40,24*scale}))Tooltip(error,f,w,h);
+ Label("Destination",f,r.x+20,r.y+174,r.width-40,14,muted);Field(l.path,path,threeMf?"Choose a .3mf file path":"Choose a .stl file path",editor,pathFocus,f);
+ auto lines=ExportReviewLines(ExportReviewText(review,count,valid),l.review.width-12,f);
+ Clip(l.review);for(size_t n=0;n<lines.size();++n)DrawTextEx(f,lines[n].c_str(),{l.review.x,l.review.y+n*18-reviewScroll},14,0,ink);EndScissorMode();
+ if(lines.size()*18>l.review.height)DrawRectangleRounded({l.review.x+l.review.width-4,l.review.y+reviewScroll/(lines.size()*18)*l.review.height,3,std::max(8.f,l.review.height*l.review.height/(lines.size()*18))},0.5f,4,Fade(muted,.6f));
+ Label(overwrite?"This file already exists. Replace it?":error,f,r.x+20,r.y+r.height-69,r.width-40,14,MAROON);
+ const auto detail=review.value("review",nlohmann::json::object());
+ const bool risks=detail.is_object()&&detail.value("hasWarnings",false);
+ Button(l.cancel,"Cancel",f);Button(l.save,overwrite?"Replace file":risks?"Export anyway":"Export",f,count>0&&valid&&!path.empty(),true);
+ if(!error.empty()&&Over({r.x+20,r.y+r.height-72,r.width-40,24}))Tooltip(error,f,w,h);
 }
 std::filesystem::path SuggestedExportPath(const std::filesystem::path &home,const std::filesystem::path &scene,bool threeMf){
  auto name=scene.empty()?std::filesystem::path("synthcad"):scene.stem();name+=threeMf?".3mf":".stl";return home/"Downloads"/name;
@@ -282,7 +331,7 @@ PanelActions WorkspaceUi::Update(const PanelInput &i,int w,int h,double now){
 }
 void WorkspaceUi::Draw(Font f,int w,int h,DimensionMode mode,double now) const{
  auto r=Toolbar(w);Card(r);Button({r.x+4,r.y+4,65,32},"Fit all",f);std::string dim=std::string("Dimensions: ")+DimensionModeName(mode);Button({r.x+73,r.y+4,175,32},dim.c_str(),f);Button({r.x+252,r.y+4,32,32},"?",f);
- if(help){auto b=HelpRect(w);Card(b,paper);Label("Workspace shortcuts",f,b.x+14,b.y+14,b.width-28,18);const char *lines[]={"Drag: orbit  /  Right-drag: pan","Scroll: zoom  /  Space: fit all","W A S D Q E: move camera","Ctrl+F: search parts","P: export STL  /  R: reload","M: cycle dimensions"};for(int i=0;i<6;++i)Label(lines[i],f,b.x+14,b.y+48+i*26,b.width-28,15,muted);}
+ if(help){auto b=HelpRect(w);Card(b,paper);Label("Workspace shortcuts",f,b.x+14,b.y+14,b.width-28,18);const char *lines[]={"Drag: orbit  /  Right-drag: pan","Scroll: zoom  /  Space: fit all","W A S D Q E: move camera","Ctrl+F: search parts","P: export  /  R: reload","M: cycle dimensions"};for(int i=0;i<6;++i)Label(lines[i],f,b.x+14,b.y+48+i*26,b.width-28,15,muted);}
  if(!loadError.empty()){
   auto e=ErrorCard(w,h);Card(e,{251,240,228,250});Label("Scene could not load",f,e.x+12,e.y+16,e.width-120,19,{123,65,34,255});Label("Export is disabled until the scene is corrected.",f,e.x+12,e.y+44,e.width-24,15,muted);
   Button({e.x+e.width-92,e.y+16,80,32},"Reload",f);Button({e.x+12,e.y+70,140,30},details?"Hide details":"Show details",f);

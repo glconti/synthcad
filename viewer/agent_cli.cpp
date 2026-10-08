@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <filesystem>
 #include <map>
 #include <set>
 #include <sstream>
@@ -25,6 +26,8 @@ const std::map<std::string, std::string> kUsage = {
     {"frame", "frame [PART_IDS... | --selection]"},
     {"view", "view NAME"},
     {"screenshot", "screenshot PATH [--replace]"},
+    {"export", "export PATH [--format 3mf|stl] [--visible-only] [--replace] [--allow-warnings] [--dry-run]"},
+    {"export-history", "export-history"},
     {"capabilities", "capabilities"}, {"version", "version"}};
 const std::map<std::string, std::string> kDescriptions = {
     {"docs", "List guidance areas, or print one complete guide to stdout. No viewer or skill installation required."},
@@ -47,10 +50,12 @@ const std::map<std::string, std::string> kDescriptions = {
     {"frame", "Frame the whole scene, given parts, or the current selection."},
     {"view", "Switch to a named project view."},
     {"screenshot", "Save a screenshot to PATH; --replace permits overwriting."},
+    {"export", "Export current placed geometry through the viewer. Infer format from .3mf/.stl, or select it explicitly. --dry-run validates without writing; --allow-warnings acknowledges check warnings. Build volume and printer metadata are optional; exact Bambu interoperability is not required."},
+    {"export-history", "Read the viewer's cached export records and diagnostics; this does not scan files."},
     {"capabilities", "List supported commands and protocol capabilities."},
     {"version", "Print the application and protocol versions."}};
 const std::set<std::string> kReview = {
-    "snapshot", "overview", "profile", "checks", "selection", "reference", "state", "highlight", "frame", "view", "screenshot", "pick"};
+    "snapshot", "overview", "profile", "checks", "selection", "reference", "state", "highlight", "frame", "view", "screenshot", "pick", "export", "export-history"};
 json Envelope(const std::string& command, const std::string& session,
               const std::string& revision, bool ok) {
   json result = {{"protocolVersion", 1}, {"ok", ok}, {"command", command}};
@@ -81,7 +86,7 @@ CliParseResult ParseCli(const std::vector<std::string>& arguments) {
       if (!flags.insert(flag).second) return fail("Repeated option: " + flag);
       const bool needsValue = flag == "--session" || flag == "--timeout" ||
           flag == "--revision" || flag == "--expect-revision" || flag == "--id" ||
-          flag == "--kind" || flag == "--question" || flag == "--after" || flag == "--wait";
+          flag == "--kind" || flag == "--question" || flag == "--after" || flag == "--wait" || flag == "--format";
       std::string value;
       if (needsValue) {
         if (equal != std::string::npos) value = token.substr(equal + 1);
@@ -119,6 +124,10 @@ CliParseResult ParseCli(const std::vector<std::string>& arguments) {
       else if (flag == "--frame") options.arguments["frame"] = true;
       else if (flag == "--selection") options.arguments["selection"] = true;
       else if (flag == "--replace") options.arguments["replace"] = true;
+      else if (flag == "--format") options.arguments["format"] = value;
+      else if (flag == "--visible-only") options.arguments["visibleOnly"] = true;
+      else if (flag == "--allow-warnings") options.arguments["allowWarnings"] = true;
+      else if (flag == "--dry-run") options.arguments["dryRun"] = true;
       else if (flag == "--template") options.arguments["template"] = true;
       else return fail("Unknown option: " + flag);
       continue;
@@ -146,19 +155,22 @@ CliParseResult ParseCli(const std::vector<std::string>& arguments) {
   if (!kUsage.count(options.command)) return fail("Unknown command: " + options.command);
   const std::map<std::string, std::string> owners = {
       {"--hidden", "open"}, {"--revision", "wait"}, {"--clear", "highlight"},
-      {"--frame", "highlight"}, {"--selection", "frame"}, {"--replace", "screenshot"},
+      {"--frame", "highlight"}, {"--selection", "frame"},
+      {"--format", "export"}, {"--visible-only", "export"}, {"--allow-warnings", "export"}, {"--dry-run", "export"},
       {"--id", "pick"}, {"--kind", "pick"}, {"--question", "pick"},
       {"--after", "events"}, {"--wait", "events"}, {"--template", "profile"}};
   for (const auto& entry : owners) {
     if (flags.count(entry.first) && options.command != entry.second)
       return fail(entry.first + " is only valid for " + entry.second);
   }
+  if(flags.count("--replace") && options.command!="screenshot" && options.command!="export")
+    return fail("--replace is only valid for screenshot or export");
   if (!options.expectRevision.empty() && !kReview.count(options.command))
     return fail("--expect-revision is only valid for review commands");
   if (options.arguments.value("template", false) && !options.expectRevision.empty())
     return fail("--template does not read a displayed revision; omit --expect-revision");
   if (options.help) return result;
-  if (options.command == "open" || options.command == "view" || options.command == "screenshot" || options.command == "reference") {
+  if (options.command == "open" || options.command == "view" || options.command == "screenshot" || options.command == "reference" || options.command == "export") {
     if (positional.size() != 1 || positional.front().empty())
       return fail("Usage: synthcad " + kUsage.at(options.command));
     options.arguments[options.command == "view" ? "name" : options.command == "reference" ? "reference" : "path"] = positional.front();
@@ -182,6 +194,20 @@ CliParseResult ParseCli(const std::vector<std::string>& arguments) {
   } else if (!positional.empty()) return fail("Unexpected argument: " + positional.front());
   if (options.command == "wait" && !options.arguments.contains("revision"))
     return fail("wait requires --revision TOKEN");
+  if (options.command == "export") {
+    const auto path=options.arguments.at("path").get<std::string>();
+    if(path.size()>4096 || path.find('\0')!=std::string::npos) return fail("Export path must contain 1 to 4096 bytes without NUL");
+    if(!options.arguments.contains("format")) {
+      auto extension=std::filesystem::u8path(path).extension().u8string();
+      for(auto& c:extension)if(c>='A'&&c<='Z')c=char(c-'A'+'a');
+      if(extension!=".3mf" && extension!=".stl") return fail("Infer export format from a .3mf or .stl extension, or specify --format");
+      options.arguments["format"]=extension.substr(1);
+    }
+    const auto format=options.arguments.at("format").get<std::string>();
+    if(format!="3mf" && format!="stl") return fail("--format must be 3mf or stl");
+    for(const auto* flag:{"visibleOnly","replace","allowWarnings","dryRun"})
+      if(!options.arguments.contains(flag))options.arguments[flag]=false;
+  }
   if (options.command == "pick") {
     for (const auto* required : {"id", "kind", "question"})
       if (!options.arguments.contains(required)) return fail(std::string("pick requires --") + required);
@@ -236,6 +262,7 @@ std::string Help(const std::string& command) {
         {"Reload & revision checks", {"state", "revision", "wait"}},
         {"Project context", {"overview", "profile", "checks"}},
         {"Shared review", {"snapshot", "selection", "reference", "highlight", "frame", "screenshot"}},
+        {"Exports", {"export", "export-history"}},
         {"Guided selection", {"pick", "pick-status", "pick-cancel", "events"}}}) {
       out << "\n" << area.first << ":\n";
       for (const auto& name : area.second) out << "  " << kUsage.at(name) << "\n";
@@ -262,7 +289,8 @@ std::string Help(const std::string& command) {
       << "  --                 Treat remaining arguments as literal values.\n\n"
       << "Exit codes: 0 success; 2 invalid_argument; 3 no_session; 4 ambiguous_session;\n"
       << "5 load_failed; 6 timeout; 7 stale_revision; 8 superseded; 9 cancelled;\n"
-      << "10 io_error; 11 busy; 12 not_found; 13 stale_cursor.\n";
+      << "10 io_error; 11 busy; 12 not_found; 13 stale_cursor;\n"
+      << "14 warnings_present; 15 destination_exists; 16 empty_export.\n";
   return out.str();
 }
 
@@ -274,7 +302,7 @@ json Capabilities() {
           {"revisionWait", true}, {"agentHighlights", true},
           {"screenshots", true}, {"bundledGuidance", true}, {"selectionReferences", true},
           {"projectOverview", true}, {"printerProfiles", true}, {"manufacturingChecks", true}, {"automaticPacking", false}, {"slicerPresetVerification", false},
-          {"guidedPicking", true}, {"sessionEvents", true}, {"geometryEditing", false}, {"export", false}};
+          {"guidedPicking", true}, {"sessionEvents", true}, {"geometryEditing", false}, {"export", true}, {"exportFormats", {"3mf", "stl"}}, {"exportHistory", true}};
 }
 
 json Success(const std::string& command, const json& data,
@@ -298,7 +326,8 @@ int ExitCode(const std::string& code) {
       {"invalid_argument", 2}, {"no_session", 3}, {"ambiguous_session", 4},
       {"load_failed", 5}, {"timeout", 6}, {"stale_revision", 7},
       {"superseded", 8}, {"cancelled", 9}, {"io_error", 10},
-      {"busy", 11}, {"not_found", 12}, {"stale_cursor", 13}};
+      {"busy", 11}, {"not_found", 12}, {"stale_cursor", 13},
+      {"warnings_present",14}, {"destination_exists",15}, {"empty_export",16}};
   if (code.empty() || code == "ok") return 0;
   const auto found = codes.find(code);
   return found == codes.end() ? 1 : found->second;

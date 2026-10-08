@@ -64,6 +64,18 @@ void CheckTransport(const fs::path& root) {
   auto echo = synthcad::Request("", {{"command", "echo"}, {"arguments", {{"path", u8"Pi\u00e8ce / \u96f6\u4ef6.js"}}}});
   Require(echo.at("ok") == true && echo.at("data").at("path") == u8"Pi\u00e8ce / \u96f6\u4ef6.js", "Unicode round trip failed");
   Require(echo.at("session") == u8"review-\u00e8" && echo.at("revision") == "r1", "response identity was lost");
+  const std::string largePayload(1024 * 1024 + 137, 'x');
+  auto largeEcho = synthcad::Request(
+      u8"review-\u00e8",
+      {{"command", "echo"}, {"arguments", {{"payload", largePayload}}}}, 10000);
+  if (!largeEcho.value("ok", false) ||
+      !largeEcho.value("data", json::object()).contains("payload") ||
+      largeEcho.at("data").at("payload").get<std::string>() != largePayload) {
+    std::cerr << "Large transport response: " << largeEcho.value("error", json::object()).dump() << "\n";
+  }
+  Require(largeEcho.at("ok") == true &&
+              largeEcho.at("data").at("payload").get<std::string>() == largePayload,
+          "one-megabyte request and response round trip failed");
   auto guardedTimeout = synthcad::Request(u8"review-\u00e8", {{"command", "echo"}, {"timeoutMs", 20}}, 1000);
   Require(guardedTimeout.at("ok") == true && guardedTimeout.at("data").at("timeoutMs") == 20,
           "transport grace must not extend the viewer request deadline");

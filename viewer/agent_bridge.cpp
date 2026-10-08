@@ -63,8 +63,29 @@ void AgentBridge::Close(){
   changed_.notify_all();
 }
 json AgentBridge::Handle(const json& request){
+  if(!request.is_object() || !request.contains("command") || !request["command"].is_string())
+    return Error("","invalid_argument","Expected a command string",{},session_);
   const auto command=request.value("command","");
+  if((request.contains("arguments")&&!request["arguments"].is_object()) ||
+     (request.contains("expectRevision")&&!request["expectRevision"].is_string()) ||
+     (request.contains("timeoutMs")&&(!request["timeoutMs"].is_number_integer() || request["timeoutMs"]<0 || request["timeoutMs"]>(command=="events"?301000:300000))))
+    return Error(command,"invalid_argument","Expected object arguments, string revision guard and bounded integer timeout",{},session_);
   const auto args=request.value("arguments",json::object());
+  if(command=="export") {
+    try {
+      if(!args.contains("path")||!args["path"].is_string()||!args.contains("format")||!args["format"].is_string())
+        return Error(command,"invalid_argument","Expected export path and format strings",{},session_);
+      const auto path=args["path"].get<std::string>(),format=args["format"].get<std::string>();
+      if(path.empty()||path.size()>4096||path.find('\0')!=std::string::npos||(format!="3mf"&&format!="stl"))
+        return Error(command,"invalid_argument","Expected nonempty NUL-free path and 3mf or stl format",{},session_);
+      for(auto it=args.begin();it!=args.end();++it) {
+        if(it.key()=="path"||it.key()=="format")continue;
+        if((it.key()!="visibleOnly"&&it.key()!="replace"&&it.key()!="allowWarnings"&&it.key()!="dryRun")||!it.value().is_boolean())
+          return Error(command,"invalid_argument","Export options must be known boolean fields",{},session_);
+      }
+    }catch(const std::exception& error){return Error(command,"invalid_argument",error.what(),{},session_);}
+  }
+  if(command=="export-history"&&!args.empty())return Error(command,"invalid_argument","export-history takes no arguments",{},session_);
   const auto timeout=std::clamp(request.value("timeoutMs",10000),1,command=="events"?301000:300000);
   const auto deadline=std::chrono::steady_clock::now()+std::chrono::milliseconds(timeout);
   std::unique_lock<std::mutex> lock(mutex_);
@@ -112,6 +133,11 @@ json AgentBridge::Handle(const json& request){
   const auto guard=request.value("expectRevision","");
   if(!guard.empty()&&(snapshot_.value("status","")!="ready"||guard!=snapshot_.value("displayedRevision","")||!MatchesDisk(files_)))
     return failure("stale_revision","The requested displayed revision is no longer current");
+  if(command=="export-history"){
+    auto history=snapshot_.value("exportHistory",json{{"records",json::array()},{"diagnostics",json::array()}});
+    if(!history.is_object())history={{"records",json::array()},{"diagnostics",json::array()}};
+    return Success(command,history,session_,snapshot_.value("displayedRevision",""));
+  }
   if(command=="checks"){
     auto report=snapshot_.value("manufacturing",json{{"current",false},{"checks",json::array()}});
     if(!report.is_object())report={{"current",false},{"checks",json::array()}};

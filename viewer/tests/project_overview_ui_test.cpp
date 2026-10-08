@@ -378,6 +378,92 @@ void CheckUnicodeContentAndScrolling() {
   ui.Update(overview, wheel, noFont, 640, 400, TestMeasure);
   Require(ui.scroll == 0, "Scrolling is bounded at the first line");
 }
+
+void CheckGeneratedExportHistoryIsSeparate() {
+  const Font noFont{};
+  auto overview = EmptyOverview();
+  overview["exports"].push_back(
+      {{"id", "authored-export"}, {"path", "notes/old.stl"},
+       {"format", "stl"}, {"freshness", "unknown"}, {"reason", "Authored note"}});
+  const std::string risk = "Keep the support contact away from the mating face \xc3\xa9.";
+  overview["generatedExports"] = {{
+      {"schemaVersion", 1}, {"id", "0123456789abcdef0123456789abcdef"},
+      {"createdAt", "2026-10-08T12:34:56Z"},
+      {"path", "C:/print outputs/plate-a.3mf"}, {"format", "3mf"},
+      {"artifactStatus", "current"},
+      {"artifactReason", "File contents match the recorded SHA-256."},
+      {"dependencyStatus", "current"},
+      {"dependencyReason", "Recorded source dependencies match disk."},
+      {"freshness", "stale"},
+      {"freshnessReason", "Layout revision changed since export."},
+      {"basis", {{"view", "plate-a"}, {"kind", "plate"},
+                  {"modelRevision", "model-a"}, {"sourceRevision", "source-a"},
+                  {"layoutRevision", "layout-a"}, {"profileRevision", nullptr},
+                  {"revision", "receipt-revision-a"}}},
+      {"partIds", {"part-copy-01"}},
+      {"quantities", {{{"sourcePartId", "shared-source"}, {"count", 2}}}},
+      {"profile", {{"status", "incomplete"},
+                   {"profile", {{"printer", {{"name", "Workshop printer"},
+                                               {"id", "printer-id"}}},
+                                 {"buildVolume", {220, 220, 250}},
+                                 {"nozzleDiameter", 0.4},
+                                 {"material", {{"name", "Generic PLA"}}}}}}},
+      {"checks", {{{"name", "Bed bounds"}, {"result", "passed"},
+                   {"scope", "geometry"}}}},
+      {"risks", {risk}}, {"allowWarnings", false}}};
+  overview["exportHistoryDiagnostics"] = {
+      {{"path", "broken.json"}, {"message", "Invalid receipt JSON."}},
+      "History scan stopped because the directory could not be read."};
+
+  ProjectOverviewUi ui;
+  ui.open = true;
+  const auto layout = ui.Layout(overview, 800, 600, noFont, TestMeasure);
+  const auto has = [&](const std::string &text) {
+    return std::find(layout.document.begin(), layout.document.end(), text) !=
+           layout.document.end();
+  };
+  const auto generatedHeading =
+      std::find(layout.document.begin(), layout.document.end(), "Generated exports");
+  const auto diagnosticsHeading = std::find(layout.document.begin(), layout.document.end(),
+                                             "Generated export history diagnostics");
+  const auto metadataHeading = std::find(layout.document.begin(), layout.document.end(),
+                                          "Metadata errors");
+  Require(has("Exports") && generatedHeading != layout.document.end() &&
+              diagnosticsHeading != layout.document.end() &&
+              metadataHeading != layout.document.end() &&
+              generatedHeading < diagnosticsHeading && diagnosticsHeading < metadataHeading,
+          "Generated receipts and history diagnostics have separate overview sections");
+  Require(has("authored-export · notes/old.stl · stl") &&
+              has("0123456789abcdef0123456789abcdef · Core 3MF") &&
+              has("Path: C:/print outputs/plate-a.3mf"),
+          "Authored export notes and generated artifact receipts remain distinct");
+  Require(has("Artifact: current — File contents match the recorded SHA-256.") &&
+              has("Source files: current — Recorded source dependencies match disk.") &&
+              has("Freshness: stale — Layout revision changed since export."),
+          "Artifact integrity, source dependencies, and active-context freshness are reported separately");
+  Require(has("Basis: view plate-a · model model-a · profile independent") &&
+              has("Part IDs: part-copy-01") &&
+              has("Quantity: shared-source — 2 instances"),
+          "Generated receipt context and shared-source quantity remain readable");
+  Require(has("Printer context at export (incomplete): Workshop printer (printer-id) · 220 × 220 × 250 mm · nozzle 0.4 mm · Generic PLA") &&
+              has("Check: Bed bounds — passed (geometry)") && has("Risk: " + risk) &&
+              has("Warnings allowed: no"),
+          "The receipt keeps its profile, check results, risk and warning policy visible");
+  Require(has("broken.json: Invalid receipt JSON."),
+          "Unreadable history entries appear in their own diagnostic section");
+  Require(has("History: History scan stopped because the directory could not be read."),
+          "Freeform history diagnostics remain visible");
+  for (const auto &row : layout.rows) {
+    if (row.text.rfind("Artifact:", 0) == 0 ||
+        row.text.rfind("Source files:", 0) == 0 ||
+        row.text.rfind("Freshness:", 0) == 0 ||
+        row.text.rfind("Printer context at export", 0) == 0 ||
+        row.text.rfind("Quantity:", 0) == 0)
+      Require(row.text.find('{') == std::string::npos &&
+                  row.text.find('[') == std::string::npos,
+              "Generated receipt summary avoids raw serializer output");
+  }
+}
 }  // namespace
 
 int main() {
@@ -386,6 +472,7 @@ int main() {
     CheckViewCloseAndGestures();
     CheckReadableCommonMetadata();
     CheckUnicodeContentAndScrolling();
+    CheckGeneratedExportHistoryIsSeparate();
     std::cout << "PASS project overview layout, content, input, and scrolling\n";
   } catch (const std::exception &error) {
     std::cerr << error.what() << '\n';
