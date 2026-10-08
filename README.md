@@ -60,7 +60,7 @@ Avoid force-adding personal files; `.gitignore` is a safeguard, not access contr
 ## Viewer controls
 
 - Left-drag to orbit, right-drag to pan (the model follows the mouse), and scroll to zoom.
-- **Space** resets the camera; **R** reloads the scene manually.
+- **Space** frames the current model from the front; **R** reloads the scene manually.
 - **M** or the **Dimensions** button cycles Hover, All, and Off. In Hover mode,
   hover the small blue feature markers to see measurements in millimetres.
 - **P** exports the solid to `Downloads/ding.stl`, without dimension annotations.
@@ -68,6 +68,11 @@ Avoid force-adding personal files; `.gitignore` is a safeguard, not access contr
 Saving the scene or one of its imported modules reloads the model and annotations
 together. Dimension mode survives reloads. See [API.md](API.md#dimension-annotations)
 to add labels to other scenes.
+
+Scenes can export `displayParts` for separate component colors. The Windows
+viewer uses soft lighting and preserves CAD creases instead of smoothing across
+sharp edges. Colors only affect the display; STL exports remain unchanged.
+See [display colors](API.md#display-colors) for the scene syntax and PNG preview command.
 
 The viewer targets 60 FPS while focused and 15 FPS in the background. When
 minimized, it skips drawing and processes events at 5 Hz. Scene files are checked

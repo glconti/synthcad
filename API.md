@@ -55,6 +55,33 @@
 
 Assign your final solid to `scene` to render, e.g. `scene = cube({...});`.
 
+## Display colors
+
+Export optional `displayParts` to give individual solids opaque colors in the
+viewer. This list replaces the visual model, so include everything you want to
+see. The `scene` solid still controls STL export and reported CAD bounds.
+
+```javascript
+const shelf = cube({size:[100,40,4]});
+const support = translate(cube({size:[8,40,20]}),[0,0,-20]);
+export const scene = compose(shelf,support);
+export const displayParts = [
+  {solid:shelf, color:'#478a62'},
+  {solid:support, color:'#aab6bb'},
+];
+```
+
+Colors are `#RRGGBB` strings, not material/filament assignments. Missing or empty
+lists use the default gray. Invalid entries warn and fall back to the entire
+`scene`, rather than hiding some parts. Color changes reload with the geometry.
+Display meshes preserve sharp CAD edges; they do not modify the exported solid.
+The Windows view uses soft baked lighting. Space frames the current model from
+the front; ordinary reloads preserve your camera position.
+
+Save a PNG without opening a visible window using
+`dingcad_viewer --render-scene scene.js preview.png`. This uses the same display
+colors and Windows lighting, without the interactive grid or annotations.
+
 ## Dimension annotations
 
 Modules can also export an optional `dimensions` array. Coordinates use the same

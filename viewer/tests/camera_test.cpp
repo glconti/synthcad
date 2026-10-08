@@ -63,6 +63,23 @@ void CheckZoom() {
   Require(std::abs(distance - 10) < 0.001f, "Repeated zoom in must return to the original distance");
 }
 
+void CheckFraming() {
+  for (const BoundingBox bounds : {BoundingBox{{0,-2,-4},{10,0.4f,0}},
+                                  BoundingBox{{-25,-5,-13},{25,33,0}},
+                                  BoundingBox{{100,200,300},{101,204,302}}}) {
+    for (const Vector2 size : {Vector2{1280,720},Vector2{600,1000}}) {
+      const auto camera=dingcad::FrameScene(bounds,static_cast<int>(size.x),static_cast<int>(size.y));
+      Require(camera.position.z<camera.target.z,"Frame from front, not behind wall");
+      const auto center=GetWorldToScreenEx(camera.target,camera,static_cast<int>(size.x),static_cast<int>(size.y));
+      Require(std::abs(center.x-size.x/2)<0.01f&&std::abs(center.y-size.y/2)<0.01f,"Center translated models");
+      for(float x:{bounds.min.x,bounds.max.x})for(float y:{bounds.min.y,bounds.max.y})for(float z:{bounds.min.z,bounds.max.z}) {
+        const auto point=GetWorldToScreenEx({x,y,z},camera,static_cast<int>(size.x),static_cast<int>(size.y));
+        Require(point.x>0&&point.x<size.x&&point.y>0&&point.y<size.y,"All model corners fit landscape and portrait views");
+      }
+    }
+  }
+}
+
 void CheckClipBounds() {
   constexpr double defaultFar = 4000;
   const BoundingBox bounds{{-20, -0.1f, -20}, {20, 2, 20}};
@@ -126,6 +143,7 @@ void RenderSnapshots(const std::filesystem::path &directory) {
 int main(int argc, char **argv) {
   try {
     CheckZoom();
+    CheckFraming();
     CheckClipBounds();
     const Vector3 views[] = {{0, 0, 10}, {10, 8, 10}, {-10, 8, 10},
                              {-10, -8, -10}, {10, 20, -10}, {1, 50, 1}};
@@ -144,7 +162,7 @@ int main(int argc, char **argv) {
       }
     }
     if (argc == 3 && std::string(argv[1]) == "--render") RenderSnapshots(argv[2]);
-    std::cout << "Camera zoom, clipping, pan direction, pixel tracking, resize, and distance checks passed\n";
+    std::cout << "Camera framing, zoom, clipping, pan direction, pixel tracking, resize, and distance checks passed\n";
     return 0;
   } catch (const std::exception &error) {
     std::cerr << error.what() << '\n';

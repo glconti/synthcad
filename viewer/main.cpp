@@ -33,12 +33,14 @@ extern "C" {
 #include "js_bindings.h"
 #include "dimensions.h"
 #include "camera_controls.h"
+#include "appearance.h"
 
 namespace {
 const Color kBaseColor = {210, 210, 220, 255};
 const char *kBrandText = "dingcad";
 constexpr float kBrandFontSize = 28.0f;
 using dingcad::kSceneScale;
+using dingcad::FrameScene;
 using FrameClock = std::chrono::steady_clock;
 constexpr int kFocusedFps = 60;
 constexpr int kBackgroundFps = 15;
@@ -105,12 +107,15 @@ const char* kToonVS = R"glsl(
 #version 330
 in vec3 vertexPosition;
 in vec3 vertexNormal;
+in vec4 vertexColor;
+out vec4 vColor;
 uniform mat4 mvp;
 uniform mat4 matModel;
 uniform mat4 matView;
 out vec3 vNvs;
 out vec3 vVdir; // view dir in view space
 void main() {
+    vColor = vertexColor;
     vec4 wpos = matModel * vec4(vertexPosition, 1.0);
     vec3 nvs  = mat3(matView) * mat3(matModel) * vertexNormal;
     vNvs      = normalize(nvs);
@@ -124,6 +129,7 @@ const char* kToonFS = R"glsl(
 #version 330
 in vec3 vNvs;
 in vec3 vVdir;
+in vec4 vColor;
 out vec4 finalColor;
 
 uniform vec3 lightDirVS;     // normalized, in view space
@@ -156,7 +162,7 @@ void main() {
     spec = step(0.5, spec) * specWeight;
 
     float shade = clamp(ambient + diffuseWeight*cel + rimWeight*rim + spec, 0.0, 1.0);
-    finalColor  = vec4(baseColor.rgb * shade, 1.0);
+    finalColor  = vec4(vColor.rgb * shade, 1.0);
 }
 )glsl";
 
@@ -345,7 +351,7 @@ void DestroyModel(Model &model) {
   model = Model{};
 }
 
-Model CreateRaylibModelFrom(const manifold::MeshGL &meshGL) {
+Model CreateRaylibModelFrom(const manifold::MeshGL &meshGL, bool vertexColors=false, bool bakeLighting=true) {
   Model model = {0};
   const int vertexCount = meshGL.NumVert();
   const int triangleCount = meshGL.NumTri();
@@ -393,7 +399,7 @@ Model CreateRaylibModelFrom(const manifold::MeshGL &meshGL) {
 
   std::vector<Vector3> normals(vertexCount);
   std::vector<Color> colors(vertexCount);
-  const Vector3 lightDir = Vector3Normalize({0.45f, 0.85f, 0.35f});
+  const Vector3 lightDir = Vector3Normalize({0.3f, 0.85f, -0.4f});
   for (int v = 0; v < vertexCount; ++v) {
     const Vector3 n = accum[v];
     const float length = std::sqrt(n.x * n.x + n.y * n.y + n.z * n.z);
@@ -406,18 +412,11 @@ Model CreateRaylibModelFrom(const manifold::MeshGL &meshGL) {
 
     float intensity = Vector3DotProduct(normal, lightDir);
     intensity = Clamp(intensity, 0.0f, 1.0f);
-    constexpr int toonSteps = 3;
-    int level = static_cast<int>(std::floor(intensity * toonSteps));
-    if (level >= toonSteps) level = toonSteps - 1;
-    const float toon = (toonSteps > 1)
-                           ? static_cast<float>(level) /
-                                 static_cast<float>(toonSteps - 1)
-                           : intensity;
-    const float ambient = 0.3f;
-    const float diffuse = 0.7f;
-    float finalIntensity = Clamp(ambient + diffuse * toon, 0.0f, 1.0f);
-
-    const Color base = kBaseColor;
+    const float finalIntensity = bakeLighting ? 0.55f + 0.45f * intensity : 1.0f;
+    const Color base = vertexColors ? Color{
+      static_cast<unsigned char>(meshGL.vertProperties[v*stride+3]),
+      static_cast<unsigned char>(meshGL.vertProperties[v*stride+4]),
+      static_cast<unsigned char>(meshGL.vertProperties[v*stride+5]),255} : kBaseColor;
     Color color = {0};
     color.r = static_cast<unsigned char>(
         Clamp(base.r * finalIntensity, 0.0f, 255.0f));
@@ -649,6 +648,7 @@ struct LoadResult {
   std::string message;
   std::vector<std::filesystem::path> dependencies;
   std::vector<dingcad::Dimension> dimensions;
+  dingcad::Appearance appearance;
 };
 
 LoadResult LoadSceneFromFile(JSRuntime *runtime, const std::filesystem::path &path) {
@@ -729,6 +729,7 @@ LoadResult LoadSceneFromFile(JSRuntime *runtime, const std::filesystem::path &pa
     return result;
   }
   auto annotations = dingcad::ReadDimensions(ctx, moduleNamespace);
+  result.appearance = dingcad::ReadAppearance(ctx, moduleNamespace);
   JS_FreeValue(ctx, moduleNamespace);
 
   if (JS_IsUndefined(sceneVal)) {
@@ -751,6 +752,10 @@ LoadResult LoadSceneFromFile(JSRuntime *runtime, const std::filesystem::path &pa
   result.manifold = sceneHandle;
   result.success = true;
   result.message = "Loaded " + absolutePath.string();
+  if (!result.appearance.diagnostic.empty()) {
+    TraceLog(LOG_WARNING,"%s",result.appearance.diagnostic.c_str());
+    result.message += " (appearance warning)";
+  }
   result.dimensions = std::move(annotations.entries);
   for (const auto &diagnostic : annotations.diagnostics) {
     TraceLog(LOG_WARNING, "%s", diagnostic.c_str());
@@ -764,10 +769,19 @@ LoadResult LoadSceneFromFile(JSRuntime *runtime, const std::filesystem::path &pa
   return result;
 }
 
+Model CreateSceneModel(const std::shared_ptr<manifold::Manifold> &scene,
+                       const dingcad::Appearance &appearance) {
+  if (!scene) return Model{};
+  const auto mesh=dingcad::DisplayMesh(appearance.parts.empty()?
+    std::vector<dingcad::DisplayPart>{{scene,kBaseColor}}:appearance.parts);
+  return CreateRaylibModelFrom(mesh,true,!kUsePostProcessing);
+}
+
 bool ReplaceScene(Model &model,
-                  const std::shared_ptr<manifold::Manifold> &scene) {
+                  const std::shared_ptr<manifold::Manifold> &scene,
+                  const dingcad::Appearance &appearance) {
   if (!scene) return false;
-  Model newModel = CreateRaylibModelFrom(scene->GetMeshGL());
+  Model newModel = CreateSceneModel(scene,appearance);
   DestroyModel(model);
   model = newModel;
   return true;
@@ -776,6 +790,31 @@ bool ReplaceScene(Model &model,
 }  // namespace
 
 int main(int argc, char *argv[]) {
+  // Deterministic preview using the same mesh colors, creases and default
+  // material as the interactive Windows view. Never exports or changes solids.
+  if (argc==4 && std::string(argv[1])=="--render-scene") {
+    JSRuntime *runtime=JS_NewRuntime();EnsureManifoldClass(runtime);
+    JS_SetModuleLoaderFunc(runtime,nullptr,FilesystemModuleLoader,&g_module_loader_data);
+    auto load=LoadSceneFromFile(runtime,argv[2]);
+    if (!load.success) {std::cerr<<load.message<<'\n';JS_FreeRuntime(runtime);return 1;}
+    SetConfigFlags(FLAG_WINDOW_HIDDEN|FLAG_MSAA_4X_HINT);InitWindow(1600,1000,"dingcad preview");
+    auto mesh=dingcad::DisplayMesh(load.appearance.parts.empty()?
+      std::vector<dingcad::DisplayPart>{{load.manifold,kBaseColor}}:load.appearance.parts);
+    Model model=CreateRaylibModelFrom(mesh,true,true);
+    const auto bounds=model.meshCount>0?GetModelBoundingBox(model):SceneRenderBounds(model);
+    const auto camera=FrameScene(bounds,1600,1000);
+    rlSetClipPlanes(0.01,dingcad::CameraFarClip(camera.position,bounds,1000));
+    bool saved=false;
+    for (int frame=0;frame<3;++frame){
+      BeginDrawing();ClearBackground({242,242,236,255});BeginMode3D(camera);
+      DrawModel(model,{0,0,0},1,WHITE);EndMode3D();
+      rlDrawRenderBatchActive();
+      if(frame==2){Image preview=LoadImageFromScreen();saved=ExportImage(preview,argv[3]);UnloadImage(preview);}
+      EndDrawing();
+    }
+    DestroyModel(model);CloseWindow();load.appearance.parts.clear();load.manifold.reset();JS_FreeRuntime(runtime);
+    return saved?0:1;
+  }
   // Validate scene code and annotations without opening a window, useful for
   // agents and automated checks before replacing the live scene.
   if (argc == 3 && std::string(argv[1]) == "--check-scene") {
@@ -788,6 +827,7 @@ int main(int argc, char *argv[]) {
       const auto bounds = load.manifold->BoundingBox();
       std::cout << "Bounds (mm): " << bounds.Size().x << " x " << bounds.Size().y << " x " << bounds.Size().z << '\n';
       for (const auto &dimension : load.dimensions) std::cout << dingcad::FormatDimension(dimension) << '\n';
+      std::cout << "Colored display parts: " << load.appearance.parts.size() << '\n';
     }
     load.manifold.reset();
     JS_FreeRuntime(runtime);
@@ -818,10 +858,6 @@ int main(int argc, char *argv[]) {
   float orbitYaw = atan2f(camera.position.x - camera.target.x,
                           camera.position.z - camera.target.z);
   float orbitPitch = asinf((camera.position.y - camera.target.y) / orbitDistance);
-  const Vector3 initialTarget = camera.target;
-  const float initialDistance = orbitDistance;
-  const float initialYaw = orbitYaw;
-  const float initialPitch = orbitPitch;
 
   JSRuntime *runtime = JS_NewRuntime();
   EnsureManifoldClass(runtime);
@@ -829,6 +865,7 @@ int main(int argc, char *argv[]) {
 
   std::shared_ptr<manifold::Manifold> scene = nullptr;
   std::vector<dingcad::Dimension> dimensions;
+  dingcad::Appearance appearance;
   dingcad::DimensionControls dimensionControls;
   std::string statusMessage;
   std::filesystem::path scriptPath;
@@ -863,6 +900,7 @@ int main(int argc, char *argv[]) {
     if (load.success) {
       scene = load.manifold;
       dimensions = std::move(load.dimensions);
+      appearance = std::move(load.appearance);
       reportStatus(load.message);
     } else {
       reportStatus(load.message);
@@ -881,8 +919,13 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  Model model = CreateRaylibModelFrom(scene->GetMeshGL());
+  Model model = CreateSceneModel(scene,appearance);
+  appearance.parts.clear(); // GPU mesh owns display data after loading.
   BoundingBox renderBounds = SceneRenderBounds(model);
+  camera=FrameScene(model.meshCount>0?GetModelBoundingBox(model):renderBounds,GetScreenWidth(),GetScreenHeight());
+  orbitDistance=Vector3Distance(camera.position,camera.target);
+  orbitYaw=atan2f(camera.position.x-camera.target.x,camera.position.z-camera.target.z);
+  orbitPitch=asinf((camera.position.y-camera.target.y)/orbitDistance);
 
   Shader outlineShader = LoadShaderFromMemory(kOutlineVS, kOutlineFS);
   Shader toonShader = LoadShaderFromMemory(kToonVS, kToonFS);
@@ -1022,7 +1065,7 @@ int main(int argc, char *argv[]) {
       auto load = LoadSceneFromFile(runtime, scriptPath);
       if (load.success) {
         scene = load.manifold;
-        ReplaceScene(model, scene);
+        ReplaceScene(model, scene,load.appearance);
         renderBounds = SceneRenderBounds(model);
         dimensions = std::move(load.dimensions);
         reportStatus(load.message);
@@ -1151,10 +1194,10 @@ int main(int argc, char *argv[]) {
     }
 
     if (IsKeyPressed(KEY_SPACE)) {
-      camera.target = initialTarget;
-      orbitDistance = initialDistance;
-      orbitYaw = initialYaw;
-      orbitPitch = initialPitch;
+      camera=FrameScene(model.meshCount>0?GetModelBoundingBox(model):renderBounds,GetScreenWidth(),GetScreenHeight());
+      orbitDistance=Vector3Distance(camera.position,camera.target);
+      orbitYaw=atan2f(camera.position.x-camera.target.x,camera.position.z-camera.target.z);
+      orbitPitch=asinf((camera.position.y-camera.target.y)/orbitDistance);
     }
 
     const float moveSpeed = 0.05f * orbitDistance;
@@ -1221,9 +1264,9 @@ int main(int argc, char *argv[]) {
 
     if (kUsePostProcessing) {
       BeginTextureMode(rtColor);
-      ClearBackground(RAYWHITE);
+      ClearBackground({242,242,236,255});
       BeginMode3D(camera);
-      DrawXZGrid(kGridHalfLines, kGridSpacing, Fade(LIGHTGRAY, 0.4f));
+      DrawXZGrid(kGridHalfLines, kGridSpacing, Fade(LIGHTGRAY, 0.18f));
       DrawAxes(kAxesLength);
 
       rlDisableBackfaceCulling();
@@ -1248,7 +1291,7 @@ int main(int argc, char *argv[]) {
       EndTextureMode();
 
       BeginDrawing();
-      ClearBackground(RAYWHITE);
+      ClearBackground({242,242,236,255});
       const float texel[2] = {
           1.0f / static_cast<float>(rtNormalDepth.texture.width),
           1.0f / static_cast<float>(rtNormalDepth.texture.height)};
@@ -1261,11 +1304,11 @@ int main(int argc, char *argv[]) {
       EndShaderMode();
     } else {
       BeginDrawing();
-      ClearBackground(RAYWHITE);
+      ClearBackground({242,242,236,255});
       BeginMode3D(camera);
-      DrawXZGrid(kGridHalfLines, kGridSpacing, Fade(LIGHTGRAY, 0.4f));
+      DrawXZGrid(kGridHalfLines, kGridSpacing, Fade(LIGHTGRAY, 0.18f));
       DrawAxes(kAxesLength);
-      DrawModel(model, {0.0f, 0.0f, 0.0f}, 1.0f, kBaseColor);
+      DrawModel(model, {0.0f, 0.0f, 0.0f}, 1.0f, WHITE);
       EndMode3D();
     }
 

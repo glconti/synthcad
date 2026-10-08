@@ -9,6 +9,18 @@
 
 namespace dingcad {
 
+// Pass model bounds, not grid bounds: small objects should still fill the view.
+inline Camera3D FrameScene(BoundingBox bounds, int width, int height) {
+  const Vector3 size = Vector3Subtract(bounds.max, bounds.min);
+  const Vector3 target = Vector3Scale(Vector3Add(bounds.min, bounds.max), 0.5f);
+  const float halfFov = 22.5f * DEG2RAD;
+  const float aspect = static_cast<float>(std::max(1, width)) / std::max(1, height);
+  const float limitingFov = std::min(halfFov, atanf(tanf(halfFov) * aspect));
+  const float distance = std::max(0.5f, Vector3Length(size) * 0.55f / sinf(limitingFov));
+  const Vector3 direction = Vector3Normalize({0.45f, 0.75f, -1.5f});
+  return {Vector3Add(target, Vector3Scale(direction, distance)), target, {0,1,0}, 45, CAMERA_PERSPECTIVE};
+}
+
 inline float ZoomCameraDistance(float distance, float wheel) {
   if (!std::isfinite(wheel)) return distance;
   // Exponential steps support fractional/fast scrolling without crossing zero.
