@@ -27,6 +27,7 @@ add_executable(dingcad_viewer
   appearance.cpp
   part_tree.cpp
   parts_panel.cpp
+  brand.cpp
   stl_export.cpp
 )
 
@@ -62,7 +63,7 @@ target_include_directories(dingcad_appearance_tests PRIVATE ${CMAKE_CURRENT_SOUR
 target_link_libraries(dingcad_appearance_tests PRIVATE manifold raylib dingcad_quickjs)
 
 add_executable(dingcad_parts_tests EXCLUDE_FROM_ALL
-  tests/parts_test.cpp part_tree.cpp parts_panel.cpp stl_export.cpp dimensions.cpp)
+  tests/parts_test.cpp part_tree.cpp parts_panel.cpp brand.cpp stl_export.cpp dimensions.cpp)
 target_include_directories(dingcad_parts_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
   ${PROJECT_SOURCE_DIR}/vendor/manifold/include ${PROJECT_SOURCE_DIR}/vendor/quickjs)
 target_link_libraries(dingcad_parts_tests PRIVATE manifold raylib dingcad_quickjs)
@@ -82,4 +83,15 @@ if(WIN32)
       "${dingcad_vcpkg_runtime_dir}/bin" $<TARGET_FILE_DIR:dingcad_viewer>
     COMMAND_EXPAND_LISTS
   )
+endif()
+
+if(WIN32)
+  enable_language(RC)
+  configure_file(resources/synthcad.rc.in ${CMAKE_CURRENT_BINARY_DIR}/synthcad.rc @ONLY)
+  target_sources(dingcad_viewer PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/synthcad.rc)
+endif()
+if(MSVC)
+  foreach(target dingcad_viewer dingcad_parts_tests dingcad_appearance_tests)
+    target_compile_options(${target} PRIVATE /utf-8)
+  endforeach()
 endif()

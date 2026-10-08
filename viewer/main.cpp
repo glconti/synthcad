@@ -36,12 +36,12 @@ extern "C" {
 #include "appearance.h"
 #include "part_tree.h"
 #include "parts_panel.h"
+#include "brand.h"
 #include "stl_export.h"
 
 namespace {
 const Color kBaseColor = {210, 210, 220, 255};
-const char *kBrandText = "dingcad";
-constexpr float kBrandFontSize = 28.0f;
+
 using dingcad::kSceneScale;
 using dingcad::FrameScene;
 using FrameClock = std::chrono::steady_clock;
@@ -584,7 +584,8 @@ LoadResult LoadSceneFromFile(JSRuntime *runtime, const std::filesystem::path &pa
   const auto loadStarted=std::chrono::steady_clock::now();
   const auto absolutePath = std::filesystem::absolute(path);
   if (!std::filesystem::exists(absolutePath)) {
-    result.message = "Scene file not found: " + absolutePath.string();
+    result.dependencies.push_back(absolutePath);
+    result.message = "Scene file not found: " + absolutePath.u8string();
     return result;
   }
   g_module_loader_data.baseDir = absolutePath.parent_path();
@@ -603,8 +604,11 @@ LoadResult LoadSceneFromFile(JSRuntime *runtime, const std::filesystem::path &pa
   auto captureException = [&]() {
     JSValue exc = JS_GetException(ctx);
     JSValue stack = JS_GetPropertyStr(ctx, exc, "stack");
-    const char *stackStr = JS_ToCString(ctx, JS_IsUndefined(stack) ? exc : stack);
-    result.message = stackStr ? stackStr : "JavaScript error";
+    const char *exceptionStr=JS_ToCString(ctx,exc);
+    const char *stackStr=JS_IsUndefined(stack)?nullptr:JS_ToCString(ctx,stack);
+    result.message=exceptionStr?exceptionStr:"JavaScript error";
+    if(stackStr)result.message+=std::string("\n")+stackStr;
+    JS_FreeCString(ctx,exceptionStr);
     JS_FreeCString(ctx, stackStr);
     JS_FreeValue(ctx, stack);
     JS_FreeValue(ctx, exc);
@@ -640,6 +644,13 @@ LoadResult LoadSceneFromFile(JSRuntime *runtime, const std::filesystem::path &pa
     assignDependencies();
     JS_FreeContext(ctx);
     return result;
+  }
+  // QuickJS module evaluation returns a promise, including synchronous throws.
+  // Preserve its rejection before touching uninitialized namespace exports.
+  if(JS_PromiseState(ctx,evalResult)==JS_PROMISE_REJECTED){
+    JS_Throw(ctx,JS_PromiseResult(ctx,evalResult));
+    captureException();assignDependencies();
+    JS_FreeValue(ctx,evalResult);JS_FreeContext(ctx);return result;
   }
   JS_FreeValue(ctx, evalResult);
 
@@ -705,7 +716,7 @@ LoadResult LoadSceneFromFile(JSRuntime *runtime, const std::filesystem::path &pa
 std::vector<dingcad::DisplayPart> SceneParts(const std::shared_ptr<manifold::Manifold> &scene,
                                            const dingcad::Appearance &appearance){
   if(appearance.specified)return appearance.parts;
-  return {{scene,kBaseColor,"@scene","Scena",{},true}};
+  return {{scene,kBaseColor,"@scene","Scene",{},true}};
 }
 struct PartModels {
   std::vector<Model> models;
@@ -809,8 +820,17 @@ int main(int argc, char *argv[]) {
   const bool uiPreview=argc>=4 && std::string(argv[1])=="--ui-preview";
   int previewFrames=0;
   SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_WINDOW_RESIZABLE | FLAG_WINDOW_ALWAYS_RUN | (uiPreview?FLAG_WINDOW_HIDDEN:0));
-  InitWindow(1280, 720, "dingcad");
-  SetWindowMinSize(640,400);
+  dingcad::SetApplicationIdentity();
+  InitWindow(1280, 720, "SynthCAD");
+  dingcad::SetApplicationIcons();
+  const std::string previewMode=uiPreview&&argc>4?argv[4]:"";
+  auto hasPreview=[&](const char *m){return previewMode.find(m)!=std::string::npos;};
+  const float forcedScale=hasPreview("scale200")?2.f:hasPreview("scale150")?1.5f:0.f;
+  const int previewFrameLimit=hasPreview("watch")?120:3;
+  float uiScale=forcedScale?forcedScale:std::max(1.f,GetWindowScaleDPI().x);
+  if(uiPreview)SetWindowSize(int((hasPreview("small")?720:1280)*uiScale),int((hasPreview("small")?480:720)*uiScale));
+  SetWindowMinSize(int(640*uiScale),int(400*uiScale));
+  if(!uiPreview)SetWindowSize(int(1280*uiScale),int(720*uiScale));
   // Pace frames ourselves: this raylib build's WaitTime() spins a CPU core.
   SetTargetFPS(0);
   SetExitKey(KEY_NULL);
@@ -822,12 +842,17 @@ int main(int argc, char *argv[]) {
 #else
   const std::filesystem::path uiFontPath("/System/Library/Fonts/Supplemental/Arial.ttf");
 #endif
-  if (std::filesystem::exists(uiFontPath)) {
-    int glyphs[224];for(int i=0;i<224;++i)glyphs[i]=32+i;
-    brandingFont = LoadFontEx(uiFontPath.string().c_str(),32,glyphs,224);
-    SetTextureFilter(brandingFont.texture,TEXTURE_FILTER_BILINEAR);
-    brandingFontCustom = true;
-  }
+  auto loadUiFont=[&](){
+    if(brandingFontCustom)UnloadFont(brandingFont);
+    brandingFont=GetFontDefault();brandingFontCustom=false;
+    if(std::filesystem::exists(uiFontPath)){
+      std::vector<int> glyphs;for(int c=32;c<384;++c)glyphs.push_back(c);
+      glyphs.push_back(0x2014);glyphs.push_back(0x2026);
+      brandingFont=LoadFontEx(uiFontPath.string().c_str(),int(32*uiScale),glyphs.data(),int(glyphs.size()));
+      SetTextureFilter(brandingFont.texture,TEXTURE_FILTER_BILINEAR);brandingFontCustom=true;
+    }
+  };
+  loadUiFont();
 
   Camera3D camera = {0};
   camera.position = {4.0f, 4.0f, 4.0f};
@@ -850,6 +875,7 @@ int main(int argc, char *argv[]) {
   dingcad::Appearance appearance;
   dingcad::DimensionControls dimensionControls;
   std::string statusMessage;
+  dingcad::WorkspaceUi workspace;
   bool exportValid=false;
   std::filesystem::path scriptPath;
   std::unordered_map<std::filesystem::path, WatchedFile> watchedFiles;
@@ -888,6 +914,7 @@ int main(int argc, char *argv[]) {
       reportStatus(load.message);
       TraceLog(LOG_INFO,"Scene load: %.1f ms (model evaluation %.1f ms)",load.loadMilliseconds,load.evaluationMilliseconds);
     } else {
+      workspace.Failed(load.message);
       reportStatus(load.message);
     }
     if (!load.dependencies.empty()) {
@@ -898,7 +925,8 @@ int main(int argc, char *argv[]) {
     manifold::Manifold cube = manifold::Manifold::Cube({2.0, 2.0, 2.0}, true);
     manifold::Manifold sphere = manifold::Manifold::Sphere(1.2, 0);
     manifold::Manifold combo = cube + sphere.Translate({0.0, 0.8, 0.0});
-    scene = std::make_shared<manifold::Manifold>(combo);
+    scene = std::make_shared<manifold::Manifold>(defaultScript?manifold::Manifold{}:combo);
+    if(defaultScript)appearance.specified=true;
     if (!defaultScript) exportValid=true;
     if (statusMessage.empty()) {
       reportStatus("No scene.js found. Using built-in sample.");
@@ -911,6 +939,9 @@ int main(int argc, char *argv[]) {
   PartModels partModels;partModels.Reload(tree);
   dingcad::PartsPanel panel;
   dingcad::ExportDialog exportDialog;
+  panel.scenePath=scriptPath.u8string();
+  if(!scriptPath.empty())panel.sceneName=scriptPath.filename().u8string();
+  SetWindowTitle((std::string("SynthCAD \xE2\x80\x94 ")+panel.sceneName).c_str());
   std::unordered_map<std::string,dingcad::TreeSession> sessions;
   std::string liveSceneKey=scriptPath.string();
   auto viewport=panel.Viewport(GetScreenWidth(),GetScreenHeight());
@@ -928,18 +959,21 @@ int main(int argc, char *argv[]) {
     }
   };
   updateBounds();frameParts(false);
-  const auto defaultExportPath=(GetHomeDirectory().value_or(std::filesystem::current_path())/"Downloads"/"ding.stl").u8string();
+  const auto defaultExportPath=dingcad::SuggestedExportPath(GetHomeDirectory().value_or(std::filesystem::current_path()),scriptPath).u8string();
   if(uiPreview&&argc>4){
     const std::string mode=argv[4];
     if(mode=="closed")panel.open=false;
-    if(mode=="small")SetWindowSize(720,480);
+
     if(mode=="selected"||mode=="isolated"){
       for(size_t n=0;n<tree.nodes.size();++n)if(tree.nodes[n].name=="Oggetto progettato")tree.Select(n);
       if(mode=="isolated")tree.Isolate();
     }
     if(mode=="dimensions")dimensionControls.mode=dingcad::DimensionMode::All;
-    if(mode=="export")exportDialog.Open(defaultExportPath);
+    if(hasPreview("export")){exportDialog.Open(defaultExportPath);if(hasPreview("edit")){exportDialog.pathFocus=true;exportDialog.editor.Focus(exportDialog.path,true);}}
     if(mode=="hidden")for(auto &[_,f]:tree.state.flags)f.visible=false;
+    if(hasPreview("empty")){tree.Reload({});partModels.Reload(tree);}
+    if(hasPreview("error")){workspace.Failed("Model evaluation failed\nError: displayParts[2]: duplicate id 'saddle-left'\nCheck the component IDs in assembly.js.\nLa geometria precedente resta visibile.\n\n"+scriptPath.u8string());workspace.details=true;exportValid=false;}
+    if(hasPreview("toast"))workspace.Saved("assembly.stl",GetTime());
   }
 
   Shader outlineShader = LoadShaderFromMemory(kOutlineVS, kOutlineFS);
@@ -954,6 +988,7 @@ int main(int argc, char *argv[]) {
       UnloadFont(brandingFont);
     }
     JS_FreeRuntime(runtime);
+    dingcad::UnloadApplicationIcons();
     CloseWindow();
     return 1;
   }
@@ -1075,7 +1110,11 @@ int main(int argc, char *argv[]) {
     };
     const Vector2 mouseDelta = GetMouseDelta();
     bool reloadRequested = false;
-    const auto input=dingcad::ReadPanelInput();
+    const float currentScale=forcedScale?forcedScale:std::max(1.f,GetWindowScaleDPI().x);
+    if(currentScale!=uiScale){uiScale=currentScale;loadUiFont();SetWindowMinSize(int(640*uiScale),int(400*uiScale));}
+    const int uiWidth=int(GetScreenWidth()/uiScale),uiHeight=int(GetScreenHeight()/uiScale);
+    dingcad::SetUiDrawScale(uiScale);
+    const auto input=dingcad::LogicalInput(dingcad::ReadPanelInput(),uiScale);
 
     auto reloadScene = [&]() {
       auto load = LoadSceneFromFile(runtime, scriptPath);
@@ -1086,11 +1125,11 @@ int main(int argc, char *argv[]) {
         scene = load.manifold;
         tree.Reload(SceneParts(scene,load.appearance));
         partModels.Reload(tree);updateBounds();liveSceneKey=key;
-        exportValid=true;exportDialog.overwrite=false;
+        exportValid=true;exportDialog.overwrite=false;workspace.Loaded();
         dimensions = std::move(load.dimensions);
         reportStatus(load.message);
       } else {
-        exportValid=false;exportDialog.overwrite=false;
+        exportValid=false;exportDialog.overwrite=false;workspace.Failed(load.message);
         reportStatus(load.message+" | export disabled until corrected");
       }
       if (!load.dependencies.empty()) {
@@ -1123,16 +1162,21 @@ int main(int argc, char *argv[]) {
     const bool modalWasOpen=exportDialog.open;
     const bool keyboardWasCaptured=modalWasOpen||panel.searchFocus;
     dingcad::PanelActions actions;
-    if(!modalWasOpen)actions=panel.Update(tree,input,GetScreenWidth(),GetScreenHeight());
+    dingcad::PanelActions workspaceActions;
+    if(!modalWasOpen){
+      workspaceActions=workspace.Update(input,uiWidth,uiHeight,GetTime());
+      if(!workspace.CapturesMouse(input,uiWidth,uiHeight,GetTime())||input.find)
+        actions=panel.Update(tree,input,uiWidth,uiHeight);
+    }
     viewport=panel.Viewport(GetScreenWidth(),GetScreenHeight());
     const bool captureKeyboard=keyboardWasCaptured||panel.searchFocus||exportDialog.open||
-      panel.CapturesMouse(input,GetScreenWidth(),GetScreenHeight());
-    const bool captureMouse=modalWasOpen||exportDialog.open||panel.CapturesMouse(input,GetScreenWidth(),GetScreenHeight());
-    if(!captureKeyboard&&IsKeyPressed(KEY_R))reloadRequested=true;
+      (panel.CapturesMouse(tree,input,uiWidth,uiHeight)||workspace.CapturesMouse(input,uiWidth,uiHeight,GetTime()));
+    const bool captureMouse=modalWasOpen||exportDialog.open||(panel.CapturesMouse(tree,input,uiWidth,uiHeight)||workspace.CapturesMouse(input,uiWidth,uiHeight,GetTime()));
+    if(workspaceActions.reload||(!captureKeyboard&&IsKeyPressed(KEY_R)))reloadRequested=true;
     if(reloadRequested&&!scriptPath.empty())reloadScene();
     if(actions.openExport||(!captureKeyboard&&IsKeyPressed(KEY_P)))exportDialog.Open(defaultExportPath);
     if(modalWasOpen){
-      const auto dialogAction=exportDialog.Update(input,GetScreenWidth(),GetScreenHeight(),tree.ExportIndices(exportDialog.visibleOnly).size(),exportValid);
+      const auto dialogAction=exportDialog.Update(input,uiWidth,uiHeight,tree.ExportIndices(exportDialog.visibleOnly).size(),exportValid);
       if(dialogAction.save){
         try {
           const auto savePath=std::filesystem::u8path(exportDialog.path);
@@ -1140,16 +1184,16 @@ int main(int argc, char *argv[]) {
                                                 exportDialog.overwrite,exportDialog.error);
           if(result==dingcad::ExportResult::ConfirmOverwrite)exportDialog.overwrite=true;
           else if(result==dingcad::ExportResult::Saved){
-            reportStatus("Saved "+savePath.u8string());exportDialog.open=false;
+            reportStatus("Saved "+savePath.u8string());workspace.Saved(savePath.filename().u8string(),GetTime());exportDialog.open=false;
           }
         }catch(const std::exception &e){exportDialog.error=e.what();}
 
       }
     }
-    const Vector2 localMouse{input.mouse.x-viewport.x,input.mouse.y};
-    dingcad::UpdateDimensionControls(dimensionControls,
-      dingcad::DimensionButtonBounds(static_cast<int>(viewport.width),static_cast<int>(viewport.height)),localMouse,
-      !captureKeyboard&&IsKeyPressed(KEY_M),!captureMouse&&input.pressed,input.leftDown);
+    const Vector2 localMouse=input.mouse;
+    if(workspaceActions.dimensions||(!captureKeyboard&&IsKeyPressed(KEY_M)))
+      dimensionControls.mode=dingcad::NextDimensionMode(dimensionControls.mode);
+    if(workspaceActions.fitAll)frameParts(false);
     if(actions.frame)frameParts(true);
     updateBounds();
 
@@ -1255,20 +1299,21 @@ int main(int argc, char *argv[]) {
     DrawTextureRec(rtColor.texture,{0,0,static_cast<float>(screenWidth),-static_cast<float>(screenHeight)},
       {viewport.x,viewport.y},WHITE);
     if(kUsePostProcessing)EndShaderMode();
-    // Draw overlays in viewport-local coordinates, then translate into the window.
-    BeginScissorMode(static_cast<int>(viewport.x),0,screenWidth,screenHeight);
-    rlPushMatrix();rlTranslatef(viewport.x,0,0);
+    // UI uses logical pixels; 3D projection and render targets stay full-window.
+    rlPushMatrix();rlScalef(uiScale,uiScale,1);
     if(partModels.Bounds(tree))dingcad::DrawDimensions(dimensions,dimensionControls.mode,camera,brandingFont,localMouse,
-      captureMouse||input.leftDown||input.rightDown||dimensionControls.overButton,screenWidth,screenHeight);
-    else DrawTextEx(brandingFont,"Tutte le parti sono nascoste",{panel.Bounds(screenWidth,screenHeight).width+20,64},18,0,DARKGRAY);
-    dingcad::DrawDimensionButton(dimensionControls.mode,brandingFont,screenWidth,screenHeight,localMouse);
-    const auto brandSize=MeasureTextEx(brandingFont,kBrandText,kBrandFontSize,0);
-    DrawTextEx(brandingFont,kBrandText,{screenWidth-brandSize.x-20,14},kBrandFontSize,0,DARKGRAY);
-    if(!statusMessage.empty())DrawTextEx(brandingFont,statusMessage.c_str(),{panel.Bounds(screenWidth,screenHeight).width+12,50},14,0,exportValid?DARKGRAY:MAROON);
-    rlPopMatrix();EndScissorMode();
-    panel.Draw(tree,brandingFont,GetScreenWidth(),GetScreenHeight());
-    exportDialog.Draw(brandingFont,GetScreenWidth(),GetScreenHeight(),tree.ExportIndices(exportDialog.visibleOnly).size(),exportValid);
-    if(uiPreview&&previewFrames==2){
+      captureMouse||input.leftDown||input.rightDown,uiWidth,uiHeight);
+    else {
+      const char *empty=tree.parts.empty()?"This scene has no parts":"All parts are hidden. Use Show all to restore them.";
+      const float textWidth=MeasureTextEx(brandingFont,empty,18,0).x;
+      DrawTextEx(brandingFont,empty,{std::max(12.f,(uiWidth-textWidth)/2),uiHeight-80.f},18,0,DARKGRAY);
+    }
+    panel.Draw(tree,brandingFont,uiWidth,uiHeight);
+    workspace.Draw(brandingFont,uiWidth,uiHeight,dimensionControls.mode,GetTime());
+    exportDialog.Draw(brandingFont,uiWidth,uiHeight,tree.ExportIndices(exportDialog.visibleOnly).size(),exportValid);
+    rlPopMatrix();
+    if(uiPreview&&previewFrames==previewFrameLimit-1){
+      TraceLog(LOG_INFO,"UI QA: %zu parts, export %s, error %s",tree.parts.size(),exportValid?"enabled":"disabled",workspace.loadError.empty()?"clear":"present");
       rlDrawRenderBatchActive();Image shot=LoadImageFromScreen();ExportImage(shot,argv[3]);UnloadImage(shot);
     }
     EndDrawing();
@@ -1279,7 +1324,7 @@ int main(int argc, char *argv[]) {
     SwapScreenBuffer();
 #endif
     finishFrame();
-    if(uiPreview&&++previewFrames>=3)break;
+    if(uiPreview&&++previewFrames>=previewFrameLimit)break;
   }
 
   UnloadRenderTexture(rtColor);
@@ -1293,6 +1338,7 @@ int main(int argc, char *argv[]) {
     UnloadFont(brandingFont);
   }
   JS_FreeRuntime(runtime);
+  dingcad::UnloadApplicationIcons();
   CloseWindow();
 
   return 0;

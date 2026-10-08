@@ -1,16 +1,15 @@
-## Dingcad
+## SynthCAD
 
-Dingcad is a live reloading program that is a replacement for openscad. Becuase openscad kind of really sucks. Try ./run.sh and then updating scene.js
+SynthCAD is a live-reloading CAD workspace for reviewing agent-generated models,
+inspecting named components and exporting STL geometry. It uses raylib, Manifold
+and QuickJS. The visible product name is SynthCAD; existing `dingcad_viewer`
+targets, launch scripts and model APIs remain compatible.
 
-This is dingcad. Dependencies: raylib, manifoldcad, and quickjs. Ask an LLM how to set up raylib on your system. For the quickjs and manifoldcad; you can 
+Initialize the geometry and JavaScript dependencies with:
 
-```
+```sh
 git submodule update --init --recursive
 ```
-
-This repository is mostly autonomously written by an LLM that I've lazily prompted while watching youtube and hanging out with my family.
-
-See [API.md](API.md) for the JavaScript modelling API and scene metadata.
 
 ## Windows
 
@@ -71,24 +70,42 @@ Avoid force-adding personal files; `.gitignore` is a safeguard, not access contr
 - **Space** frames all currently visible parts from the front; **R** reloads the scene manually.
 - **M** or the **Dimensions** button cycles Hover, All, and Off. In Hover mode,
   hover the small blue feature markers to see measurements in millimetres.
-- **Parti** opens/closes the left tree. Search filters rows only, keeping ancestors.
+- **Parts** opens/closes the left tree. Search filters rows only, keeping ancestors.
   Expand groups with the arrow; click a name to select a part or group. A box
-  outlines the visible selection. **V** controls visibility; **STL** controls
-  exportability independently. Group checkboxes show all/none/mixed and affect
+  outlines the visible selection. The **eye** icon controls visibility; the **export arrow** controls
+  STL inclusion independently. Green icons are on, slashed icons are off, and
+  amber icons with a minus badge indicate mixed groups. Hover for the current
+  state and action. Group icons affect
   every descendant, including rows hidden by search.
-- **Isola** temporarily shows the selection. **Esci** restores the previous
-  visibility (changes made during isolation are temporary). **Mostra tutto**
-  ends isolation and shows every part; **Inquadra** frames the visible selection.
-- **P** or **Esporta** opens the STL dialog: all exportable parts (initial mode,
+- **Isolate** temporarily shows the selection. **Exit isolation** restores the previous
+  visibility (changes made during isolation are temporary). **Show all**
+  ends isolation and shows every part; **Frame selection** frames the visible selection.
+- **P** or **Export STL** opens the STL dialog: all exportable parts (initial mode,
   including hidden parts) or only visible exportable parts. Edit the suggested
-  `Downloads/ding.stl` path; existing files require **Sostituisci** confirmation.
+  `Downloads/<scene-name>.stl` path; existing files require **Replace file** confirmation.
   No selected parts means no file is written.
 
-The parts panel is a dark translucent overlay over the full-window scene.
+The parts panel is a subtle translucent overlay over the full-window scene.
+Its background fits the visible tree rows and shrinks when groups collapse or
+search narrows the results. Long trees scroll within 75% of the window height;
+the uncovered area below remains available for camera interaction.
 Opening or closing it preserves the camera projection. Panel clicks, scrolling,
 text entry and modal interaction do not operate the camera or viewport shortcuts.
-The Dimensions button stays accessible at the bottom right. Search/path fields
-support typing, Backspace, Ctrl/Cmd+A and paste. Escape cancels the export dialog.
+The top-right toolbar provides Fit all, Dimensions and shortcut help. **Ctrl+F**
+opens and focuses search. Search/path fields support UTF-8 text, Backspace,
+Delete, arrow/Home/End caret movement, Shift selection, Ctrl/Cmd+A and paste.
+Escape cancels the export dialog. Controls use logical pixels and fonts are
+rasterized for the current display scale. Only the component tree scrolls.
+
+App-authored text is English; authored names, groups and annotations are kept
+verbatim. Successful loads are logged, without a permanent viewport message.
+Export success appears for four seconds and can be dismissed. Load errors stay
+visible with expandable, scrollable diagnostics and Reload until a valid scene
+loads. The last valid view stays visible and export remains disabled.
+
+Export preserves the current arrangement, without creating or validating a print
+layout. The suggested destination is `Downloads/<scene-name>.stl` (or
+`synthcad.stl` for the built-in sample); an edited path is retained for the session.
 Visibility, export overrides, selection and group expansion persist across reload
 within the running session, using stable IDs; they reset after closing the viewer.
 External references should start with `exportable:false`. Hiding them alone does
@@ -139,3 +156,28 @@ costs separately. Use the same scene and build configuration when comparing
 changes, without other heavy builds running at the same time. The profiler does
 not cache, simplify or change geometry. An already-running Debug viewer needs to
 be relaunched through the Release launcher to benefit from compiler optimization.
+
+### Identity assets
+
+`viewer/resources/synthcad.svg` is the editable layered-S icon source. Run
+`python scripts/generate-icons.py` with Pillow installed to regenerate the PNG
+sizes, multi-resolution Windows ICO and embedded runtime data. Normal builds do
+not require Python or Pillow. Windows executables embed the ICO as a resource;
+runtime icons and the panel mark use embedded data and work outside the repo.
+
+### UI regression previews
+
+`dingcad_viewer --ui-preview scene.js preview.png [mode]` captures the actual UI
+in a hidden window. Additional modes include `empty`, `error` (simulated error
+on the last valid model), `export-edit` (focused destination selection), `toast`,
+`scale150` and `scale200`. Combine scale suffixes, for example
+`export-scale200` or `small-scale150`. Scaling modes exercise the same logical
+layout, font rasterization and hit-coordinate conversion as monitor DPI changes;
+they do not change Windows display settings. `watch` leaves the hidden viewer
+running for reload integration tests before taking its final screenshot.
+
+On Windows, run `python scripts/test-windows-ui.py <path-to-dingcad_viewer.exe>`
+for the embedded/runtime icon, window-title and real file-watch error/recovery
+smoke test. It launches a hidden viewer from a temporary directory outside the
+repository and removes only its own temporary fixture. An optional second path
+chooses the temporary parent directory. It does not modify models or exports.

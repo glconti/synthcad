@@ -217,8 +217,7 @@ void DrawDimensions(const std::vector<Dimension> &dimensions, DimensionMode mode
   const auto hovered = suppressHover ? std::optional<size_t>{} :
       FindHoveredDimension(projected, mouse);
   const Color ink = {30, 105, 155, 255};
-  const Rectangle button = DimensionButtonBounds(width, height);
-  std::vector<Rectangle> occupied = {button};
+  std::vector<Rectangle> occupied;
   for (const auto &dimension : projected) {
     const bool active = mode == DimensionMode::All || hovered == dimension.index;
     DrawCircleV(dimension.marker, active ? 5 : 3, Fade(ink, active ? 1.0f : 0.55f));

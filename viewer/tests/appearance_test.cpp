@@ -42,9 +42,13 @@ int main(){
       Require(named.parts[0].id=="wall"&&named.parts[0].name=="Wall"&&named.parts[0].group.size()==2&&!named.parts[0].exportable,"Author metadata retained");
     }
     {
+      auto italian=Parse(ctx,u8"({displayParts:[{id:'it',name:'Piastra più stretta',group:['Riferimenti esterni','Unità'],solid:cube({size:[1,1,1]}),color:'#112233'}]})");
+      Require(italian.parts[0].name==u8"Piastra più stretta"&&italian.parts[0].group[1]==u8"Unità","Authored accented Italian remains verbatim");
+    }
+    {
       auto a=Parse(ctx,"({displayParts:[{solid:cube({size:[1,1,1]}),color:'#1A7e40'}, {solid:translate(cube({size:[1,1,1]}),[1,0,0]),color:'#aAbBcC'}]})");
       Require(a.parts.size()==2 && a.diagnostic.empty(),"Two touching colored solids");
-      Require(a.parts[0].id=="@index:0"&&a.parts[0].name=="Parte 1"&&a.parts[0].exportable,"Metadata defaults");
+      Require(a.parts[0].id=="@index:0"&&a.parts[0].name=="Part 1"&&a.parts[0].exportable,"Metadata defaults");
       auto before=a.parts[0].solid->GetMeshGL();
       const auto mesh=dingcad::DisplayMesh(a.parts);
       Require(mesh.numProp==6 && mesh.NumVert()==mesh.NumTri()*3,"Independent vertices preserve hard edges");

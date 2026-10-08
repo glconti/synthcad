@@ -1,155 +1,268 @@
 #include "parts_panel.h"
+#include "brand.h"
 #include "raymath.h"
 #include <algorithm>
+#include <cmath>
 
 namespace dingcad {
 namespace {
-const Color ink{42,57,53,255},muted{107,121,116,255},accent{59,130,94,255},paper{248,249,245,255};
-const Color overlayInk{240,244,242,255},overlayMuted{173,187,181,255},overlayAccent{119,204,162,255};
+constexpr float margin=12,pad=12,rowHeight=30,control=32;
+float Indent(int depth){return std::min(depth*14.f,84.f);}
+const Color ink{39,52,46,255},muted{91,108,98,255},accent{48,108,78,255};
+const Color paper{247,246,239,255},glass{201,211,199,190};
+float drawScale=1;
+Vector2 Mouse(){auto p=GetMousePosition();return {p.x/drawScale,p.y/drawScale};}
+bool Over(Rectangle r){return CheckCollisionPointRec(Mouse(),r);}
 bool Hit(const PanelInput &i,Rectangle r){return i.pressed&&CheckCollisionPointRec(i.mouse,r);}
-void EraseLast(std::string &s){if(s.empty())return;size_t pos=s.size()-1;while(pos>0&&(static_cast<unsigned char>(s[pos])&0xc0)==0x80)--pos;s.resize(pos);}
-void Edit(std::string &s,bool &selected,const PanelInput &i){
-  if(i.selectAll)selected=true;
-  if(i.backspace||!i.text.empty()){
-    if(selected){s.clear();selected=false;}else if(i.backspace)EraseLast(s);
-    for(char c:i.text)if(static_cast<unsigned char>(c)>=32&&c!=127&&s.size()<4096)s+=c;
-  }
-}
+size_t Prev(const std::string &s,size_t p){if(!p)return 0;--p;while(p&&(static_cast<unsigned char>(s[p])&0xc0)==0x80)--p;return p;}
+size_t Next(const std::string &s,size_t p){if(p<s.size())++p;while(p<s.size()&&(static_cast<unsigned char>(s[p])&0xc0)==0x80)++p;return p;}
+void Clip(Rectangle r){BeginScissorMode(int(r.x*drawScale),int(r.y*drawScale),std::max(0,int(r.width*drawScale)),std::max(0,int(r.height*drawScale)));}
 std::string Fit(std::string s,Font f,float size,float width){
-  if(MeasureTextEx(f,s.c_str(),size,0).x<=width)return s;
-  while(!s.empty()&&MeasureTextEx(f,(s+"...").c_str(),size,0).x>width)EraseLast(s);
-  return s.empty()?"":s+"...";
+ if(MeasureTextEx(f,s.c_str(),size,0).x<=width)return s;
+ while(!s.empty()&&MeasureTextEx(f,(s+"...").c_str(),size,0).x>width)s.resize(Prev(s,s.size()));
+ return s.empty()?"":s+"...";
 }
 void Label(const std::string &text,Font f,float x,float y,float width,float size=16,Color c=ink){
-  auto s=Fit(text,f,size,width);DrawTextEx(f,s.c_str(),{x,y},size,0,c);
+ auto s=Fit(text,f,size,width);DrawTextEx(f,s.c_str(),{x,y},size,0,c);
 }
-void Button(Rectangle r,const char *label,Font f,bool enabled=true,bool dark=false){
-  const Color fill=dark?(enabled?Color{83,104,94,170}:Color{60,72,65,100}):
-    (enabled?Color{226,234,227,255}:Color{237,239,235,255});
-  DrawRectangleRounded(r,0.16f,4,fill);
-  Label(label,f,r.x+7,r.y+6,r.width-14,13,dark?(enabled?overlayInk:overlayMuted):(enabled?ink:muted));
+void Card(Rectangle r,Color color=glass){DrawRectangleRounded(r,0.045f,8,color);}
+void Button(Rectangle r,const char *label,Font f,bool enabled=true,bool primary=false){
+ Color bg=primary?accent:Color{234,239,228,180};
+ if(Over(r)&&enabled)bg=primary?Color{37,90,63,255}:Color{222,231,214,245};
+ if(!enabled)bg={219,224,213,120};
+ DrawRectangleRounded(r,0.18f,6,bg);
+ Label(label,f,r.x+8,r.y+7,r.width-16,15,enabled?(primary?WHITE:ink):muted);
 }
-void Check(Rectangle r,CheckState s,bool dark=false){
-  DrawRectangleLinesEx(r,1,dark?overlayMuted:muted);
-  if(s!=CheckState::None)DrawRectangleRec({r.x+3,r.y+(s==CheckState::Mixed?7:3),r.width-6,s==CheckState::Mixed?3:r.height-6},dark?overlayAccent:accent);
+void Cross(Rectangle r,Color c=muted){float x=r.x+r.width/2,y=r.y+r.height/2;DrawLineEx({x-4,y-4},{x+4,y+4},1.5f,c);DrawLineEx({x+4,y-4},{x-4,y+4},1.5f,c);}
+void Chevron(float x,float y,bool closed){
+ if(closed){DrawLineEx({x-2,y-4},{x+2,y},1.5f,muted);DrawLineEx({x+2,y},{x-2,y+4},1.5f,muted);}
+ else{DrawLineEx({x-4,y-2},{x,y+2},1.5f,muted);DrawLineEx({x,y+2},{x+4,y-2},1.5f,muted);}
 }
-Rectangle DialogBounds(int width,int height){return {std::max(8.0f,(width-620.0f)/2),std::max(8.0f,(height-300.0f)/2),std::min(620.0f,width-16.0f),300};}
+void Tooltip(const std::string &s,Font f,int width,int height){
+ if(s.empty())return;
+ const float maxWidth=std::min(640.f,width-44.f);std::vector<std::string> lines;std::string line;
+ for(size_t p=0;p<s.size();){
+  auto next=Next(s,p);auto codepoint=s.substr(p,next-p);
+  if(codepoint=="\n"){lines.push_back(line);line.clear();}
+  else{
+   if(!line.empty()&&MeasureTextEx(f,(line+codepoint).c_str(),14,0).x>maxWidth){lines.push_back(line);line.clear();}
+   line+=codepoint;
+  }
+  p=next;
+ }
+ lines.push_back(line);float textWidth=0;
+ for(const auto &text:lines)textWidth=std::max(textWidth,MeasureTextEx(f,text.c_str(),14,0).x);
+ auto m=Mouse();float w=textWidth+20,h=lines.size()*18.f+12;
+ float x=Clamp(m.x+12,12,std::max(12.f,width-w-12)),y=Clamp(m.y+22,12,std::max(12.f,height-h-12));
+ Card({x,y,w,h},{39,52,46,245});
+ for(size_t n=0;n<lines.size();++n)DrawTextEx(f,lines[n].c_str(),{x+10,y+6+n*18},14,0,WHITE);
 }
+
+void Field(Rectangle r,const std::string &s,const char *placeholder,const TextEdit &e,bool focus,Font f,float reserve=0){
+ DrawRectangleRounded(r,0.15f,5,{250,251,245,220});
+ if(focus)DrawRectangleRoundedLinesEx(r,0.15f,5,1.5f,accent);
+ Rectangle inside{r.x+8,r.y+4,r.width-16-reserve,r.height-8};Clip(inside);
+ const float caretWidth=MeasureTextEx(f,s.substr(0,std::min(e.caret,s.size())).c_str(),16,0).x;
+ const float offset=focus?std::max(0.0f,caretWidth-inside.width+3):0;
+ if(focus&&e.anchor!=e.caret){
+  float a=MeasureTextEx(f,s.substr(0,std::min(e.anchor,s.size())).c_str(),16,0).x;
+  DrawRectangleRec({inside.x+std::min(a,caretWidth)-offset,r.y+6,std::abs(a-caretWidth),20},{166,202,177,200});
+ }
+ DrawTextEx(f,s.empty()?placeholder:s.c_str(),{inside.x-offset,r.y+7},16,0,s.empty()?muted:ink);
+ if(focus&&std::fmod(GetTime(),1)<0.6)DrawLineEx({inside.x+caretWidth-offset,r.y+6},{inside.x+caretWidth-offset,r.y+26},1.5f,accent);
+ EndScissorMode();
+}
+void PartIcon(Rectangle r,bool exporting,CheckState state){
+ if(Over(r))DrawRectangleRounded(r,0.25f,4,{139,176,155,70});
+ Color c=state==CheckState::All?accent:(state==CheckState::Mixed?Color{145,98,26,255}:muted);
+ const float x=r.x+r.width/2,y=r.y+r.height/2;
+ auto line=[&](float a,float b,float d,float e){DrawLineEx({x+a,y+b},{x+d,y+e},1.5f,c);};
+ if(exporting){line(-7,2,-7,7);line(-7,7,7,7);line(7,7,7,2);line(0,3,0,-7);line(0,-7,-4,-3);line(0,-7,4,-3);}
+ else{for(int i=0;i<12;++i){float t=i/12.f,u=(i+1)/12.f;float v=4.5f*std::sin(PI*t),w=4.5f*std::sin(PI*u);line(-8+16*t,-v,-8+16*u,-w);line(-8+16*t,v,-8+16*u,w);}DrawCircleV({x,y},2,c);}
+ if(state==CheckState::None)line(-8,8,8,-8);
+ if(state==CheckState::Mixed){DrawRectangleRec({x+2,y+3,10,8},paper);line(3,7,10,7);}
+}
+std::string IconHint(bool exp,CheckState s){
+ if(exp)return s==CheckState::All?"Included in STL - click to exclude":s==CheckState::Mixed?"Mixed export - click to include all":"Excluded from STL - click to include";
+ return s==CheckState::All?"Visible - click to hide":s==CheckState::Mixed?"Mixed visibility - click to show all":"Hidden - click to show";
+}
+Rectangle HelpRect(int w){return {std::max(12.f,w-316.f),56,304,222};}
+Rectangle ToastRect(int w,int h){return {std::max(12.f,w-432.f),h-60.f,std::min(420.f,w-24.f),48};}
+std::vector<std::string> DiagnosticLines(const std::string &s,float width){
+ std::vector<std::string> lines;std::string line;int n=0,limit=std::max(12,int(width/14));
+ for(size_t p=0;p<s.size();){auto q=Next(s,p);if(s[p]=='\n'||n>=limit){lines.push_back(line);line.clear();n=0;}if(s[p]!='\n'){line+=s.substr(p,q-p);++n;}p=q;}
+ lines.push_back(line);return lines;
+}
+}
+void SetUiDrawScale(float scale){drawScale=scale;}
+PanelInput LogicalInput(PanelInput i,float scale){i.mouse.x/=scale;i.mouse.y/=scale;return i;}
 PanelInput ReadPanelInput(){
-  PanelInput i;i.mouse=GetMousePosition();i.wheel=GetMouseWheelMove();
-  i.pressed=IsMouseButtonPressed(MOUSE_BUTTON_LEFT);i.leftDown=IsMouseButtonDown(MOUSE_BUTTON_LEFT);
-  i.rightPressed=IsMouseButtonPressed(MOUSE_BUTTON_RIGHT);i.rightDown=IsMouseButtonDown(MOUSE_BUTTON_RIGHT);
-  i.backspace=IsKeyPressed(KEY_BACKSPACE)||IsKeyPressedRepeat(KEY_BACKSPACE);
-  i.enter=IsKeyPressed(KEY_ENTER);i.escape=IsKeyPressed(KEY_ESCAPE);
-  const bool ctrl=IsKeyDown(KEY_LEFT_CONTROL)||IsKeyDown(KEY_RIGHT_CONTROL)||IsKeyDown(KEY_LEFT_SUPER)||IsKeyDown(KEY_RIGHT_SUPER);
-  i.selectAll=ctrl&&IsKeyPressed(KEY_A);
-  for(int c=GetCharPressed();c;c=GetCharPressed())if(!ctrl){int n=0;const char *text=CodepointToUTF8(c,&n);i.text.append(text,n);}
-  if(ctrl&&IsKeyPressed(KEY_V)){const char *text=GetClipboardText();if(text)i.text=text;}
-  return i;
+ PanelInput i;i.mouse=GetMousePosition();i.wheel=GetMouseWheelMove();
+ i.pressed=IsMouseButtonPressed(MOUSE_BUTTON_LEFT);i.leftDown=IsMouseButtonDown(MOUSE_BUTTON_LEFT);
+ i.rightPressed=IsMouseButtonPressed(MOUSE_BUTTON_RIGHT);i.rightDown=IsMouseButtonDown(MOUSE_BUTTON_RIGHT);
+ auto key=[](int k){return IsKeyPressed(k)||IsKeyPressedRepeat(k);};
+ i.backspace=key(KEY_BACKSPACE);i.deleteKey=key(KEY_DELETE);i.left=key(KEY_LEFT);i.right=key(KEY_RIGHT);i.home=key(KEY_HOME);i.end=key(KEY_END);
+ i.shift=IsKeyDown(KEY_LEFT_SHIFT)||IsKeyDown(KEY_RIGHT_SHIFT);i.enter=IsKeyPressed(KEY_ENTER);i.escape=IsKeyPressed(KEY_ESCAPE);
+ bool ctrl=IsKeyDown(KEY_LEFT_CONTROL)||IsKeyDown(KEY_RIGHT_CONTROL)||IsKeyDown(KEY_LEFT_SUPER)||IsKeyDown(KEY_RIGHT_SUPER);
+ i.selectAll=ctrl&&IsKeyPressed(KEY_A);i.find=ctrl&&IsKeyPressed(KEY_F);
+ for(int c=GetCharPressed();c;c=GetCharPressed())if(!ctrl){int n=0;auto text=CodepointToUTF8(c,&n);i.text.append(text,n);}
+ if(ctrl&&IsKeyPressed(KEY_V)){auto text=GetClipboardText();if(text)i.text=text;}
+ return i;
 }
-Rectangle PartsPanel::Viewport(int width,int height) const{
-  // The scene always occupies the complete window; toggling the overlay must
-  // not change camera projection or resize the render targets.
-  return {0,0,static_cast<float>(std::max(1,width)),static_cast<float>(std::max(1,height))};
+void TextEdit::Focus(const std::string &s,bool all){initialized=true;caret=s.size();anchor=all?0:caret;}
+void TextEdit::Update(std::string &s,const PanelInput &i){
+ if(!initialized)Focus(s);caret=std::min(caret,s.size());anchor=std::min(anchor,s.size());
+ if(i.selectAll){anchor=0;caret=s.size();}
+ if(i.left||i.right||i.home||i.end){
+  if(i.home)caret=0;else if(i.end)caret=s.size();
+  else if(!i.shift&&anchor!=caret)caret=i.left?std::min(anchor,caret):std::max(anchor,caret);
+  else caret=i.left?Prev(s,caret):Next(s,caret);
+  if(!i.shift)anchor=caret;
+ }
+ std::string inserted;for(char c:i.text)if(static_cast<unsigned char>(c)>=32&&c!=127)inserted+=c;
+ if(i.backspace||i.deleteKey||!inserted.empty()){
+  size_t a=std::min(anchor,caret),b=std::max(anchor,caret);
+  if(a==b){if(i.backspace)a=Prev(s,a);else if(i.deleteKey)b=Next(s,b);}
+  s.erase(a,b-a);caret=anchor=a;
+  if(s.size()+inserted.size()<=4096){s.insert(caret,inserted);caret+=inserted.size();anchor=caret;}
+ }
 }
-Rectangle PartsPanel::Bounds(int width,int height) const{
-  return {0,0,open?std::min(320.0f,std::max(0.0f,width-160.0f)):0,
-          static_cast<float>(std::max(1,height))};
+Rectangle PartsPanel::Viewport(int w,int h) const{return {0,0,float(std::max(1,w)),float(std::max(1,h))};}
+PartsLayout PartsPanel::Layout(const PartTree &tree,int w,int h) const{
+ PartsLayout l{};float width=std::min(360.f,std::max(248.f,w-324.f));width=std::min(width,w-24.f);
+ l.card={margin,margin,width,std::min(196+rowHeight*std::max(size_t{1},tree.Rows(search).size()),h*0.75f)};
+ if(!open){l.card={margin,margin,144,44};l.collapse=l.card;return l;}
+ float x=margin+pad,right=margin+width-pad;
+ l.collapse={right-24,24,24,control};l.exportButton={right-138,24,106,control};
+ l.file={x,65,width-24,24};l.search={x,96,width-24,control};l.clear={right-30,96,30,control};
+ float available=width-32;float first=available*0.33f,second=available*0.25f;
+ l.isolate={x,138,first,control};l.showAll={x+first+4,138,second,control};l.frame={x+first+second+8,138,available-first-second,control};
+ l.list={margin+6,200,width-12,std::max(0.f,l.card.height-196)};
+ l.visibilityX=right-52;l.exportX=right-24;
+ return l;
 }
-bool PartsPanel::CapturesMouse(const PanelInput &i,int width,int height) const{
-  return gesture||(open?CheckCollisionPointRec(i.mouse,Bounds(width,height)):CheckCollisionPointRec(i.mouse,{8,8,76,30}));
-}
-PanelActions PartsPanel::Update(PartTree &tree,const PanelInput &i,int width,int height){
-  PanelActions a;
-  if(i.pressed||i.rightPressed)gesture=CapturesMouse(i,width,height);
-  const float w=Bounds(width,height).width;
-  if(Hit(i,{8,8,76,30})){open=!open;searchFocus=false;return a;}
-  if(!open){searchFocus=false;if(!i.leftDown&&!i.rightDown&&!i.pressed&&!i.rightPressed)gesture=false;return a;}
-  if(i.pressed)searchFocus=CheckCollisionPointRec(i.mouse,{8,48,w-16,28});
-  if(searchFocus){auto before=search;Edit(search,selectText,i);if(before!=search)scroll=0;if(i.escape||i.enter)searchFocus=false;}
-  if(Hit(i,{w-95,8,87,30}))a.openExport=true;
-  if(Hit(i,{8,84,w/3-10,29})&&(tree.Selection()||tree.state.isolated))tree.Isolate();
-  if(Hit(i,{w/3+3,84,w/3-10,29}))tree.ShowAll();
-  if(Hit(i,{2*w/3-2,84,w/3-6,29}))a.frame=true;
-  auto rows=tree.Rows(search);
-  const float listTop=142,rowHeight=26;
-  const float available=std::max(0.0f,height-listTop-8);
-  if(i.mouse.x<w&&i.mouse.y>=listTop)scroll-=i.wheel*rowHeight*3;
-  scroll=Clamp(scroll,0,std::max(0.0f,rows.size()*rowHeight-available));
-  if(i.pressed&&i.mouse.x<w&&i.mouse.y>=listTop&&i.mouse.y<height-8){
-    const size_t row=static_cast<size_t>((i.mouse.y-listTop+scroll)/rowHeight);
-    if(row<rows.size()){
-      const auto &r=rows[row];auto &n=tree.nodes[r.node];
-      if(i.mouse.x>=w-30)tree.Toggle(r.node,true);
-      else if(i.mouse.x>=w-58)tree.Toggle(r.node,false);
-      else if(n.group&&i.mouse.x<25+r.depth*14){
-        if(!tree.state.collapsed.erase(n.key))tree.state.collapsed.insert(n.key);
-      }else tree.Select(r.node);
-    }
+Rectangle PartsPanel::Bounds(const PartTree &t,int w,int h) const{return Layout(t,w,h).card;}
+bool PartsPanel::CapturesMouse(const PartTree &t,const PanelInput &i,int w,int h) const{return gesture||CheckCollisionPointRec(i.mouse,Bounds(t,w,h));}
+PanelActions PartsPanel::Update(PartTree &tree,const PanelInput &i,int w,int h){
+ PanelActions a;if(i.pressed||i.rightPressed)gesture=CheckCollisionPointRec(i.mouse,Bounds(tree,w,h));
+ if(!i.leftDown&&!i.rightDown&&!i.pressed&&!i.rightPressed)gesture=false;
+ if(i.find){open=true;searchFocus=true;editor.Focus(search,true);}
+ auto l=Layout(tree,w,h);
+ if(Hit(i,l.collapse)){open=!open;searchFocus=false;return a;}
+ if(!open){searchFocus=false;return a;}
+ if(i.pressed){searchFocus=CheckCollisionPointRec(i.mouse,l.search);if(searchFocus)editor.Focus(search);}
+ if(Hit(i,l.clear)){search.clear();editor.Focus(search);scroll=0;}
+ if(searchFocus){auto before=search;editor.Update(search,i);if(before!=search)scroll=0;if(i.escape||i.enter)searchFocus=false;}
+ if(Hit(i,l.exportButton))a.openExport=true;
+ if(Hit(i,l.isolate)&&(tree.Selection()||tree.state.isolated))tree.Isolate();
+ if(Hit(i,l.showAll))tree.ShowAll();
+ if(Hit(i,l.frame))a.frame=true;
+ l=Layout(tree,w,h);auto rows=tree.Rows(search);
+ if(CheckCollisionPointRec(i.mouse,l.list))scroll-=i.wheel*rowHeight*3;
+ scroll=Clamp(scroll,0,std::max(0.f,rows.size()*rowHeight-l.list.height));
+ if(Hit(i,l.list)){
+  size_t index=size_t((i.mouse.y-l.list.y+scroll)/rowHeight);
+  if(index<rows.size()){
+   auto r=rows[index];auto &n=tree.nodes[r.node];
+   if(i.mouse.x>=l.exportX)tree.Toggle(r.node,true);
+   else if(i.mouse.x>=l.visibilityX)tree.Toggle(r.node,false);
+   else if(n.group&&i.mouse.x<margin+pad+18+Indent(r.depth)){if(!tree.state.collapsed.erase(n.key))tree.state.collapsed.insert(n.key);}
+   else tree.Select(r.node);
   }
-  if(!i.leftDown&&!i.rightDown&&!i.pressed&&!i.rightPressed)gesture=false;
-  return a;
+ }
+ auto after=Layout(tree,w,h);scroll=Clamp(scroll,0,std::max(0.f,tree.Rows(search).size()*rowHeight-after.list.height));return a;
 }
-void PartsPanel::Draw(const PartTree &tree,Font f,int width,int height) const{
-  if(!open){Button({8,8,76,30},"Parti >",f,true,true);return;}
-  const float w=Bounds(width,height).width;
-  DrawRectangle(0,0,static_cast<int>(w),height,{20,28,25,210});
-  DrawLine(static_cast<int>(w)-1,0,static_cast<int>(w)-1,height,{157,183,168,65});
-  Button({8,8,76,30},"< Parti",f,true,true);Button({w-95,8,87,30},"Esporta",f,true,true);
-  DrawRectangleRec({8,48,w-16,28},searchFocus?Color{66,92,77,210}:Color{11,18,14,130});
-  Label(search.empty()?"Cerca parti...":search,f,14,54,w-28,16,search.empty()?overlayMuted:overlayInk);
-  Button({8,84,w/3-10,29},tree.state.isolated?"Esci":"Isola",f,tree.Selection().has_value()||tree.state.isolated,true);
-  Button({w/3+3,84,w/3-10,29},"Mostra tutto",f,true,true);
-  bool canFrame=false;if(auto n=tree.Selection())for(auto p:tree.nodes[*n].parts)canFrame|=tree.Visible(p);
-  Button({2*w/3-2,84,w/3-6,29},"Inquadra",f,canFrame,true);
-  Label(std::to_string(tree.parts.size())+" parti",f,10,122,w-85,13,overlayMuted);
-  Label("V",f,w-55,122,22,13,overlayMuted);Label("STL",f,w-31,122,27,13,overlayMuted);
-  BeginScissorMode(0,142,static_cast<int>(w),std::max(0,height-150));
-  auto rows=tree.Rows(search);
-  for(size_t index=0;index<rows.size();++index){
-    float y=142+index*26-scroll;if(y+26<142||y>height)continue;
-    const auto &r=rows[index];const auto &n=tree.nodes[r.node];
-    if(n.key==tree.state.selected)DrawRectangleRec({4,y,w-8,25},{100,166,128,95});
-    const float x=9+r.depth*14;
-    if(n.group)Label(tree.state.collapsed.count(n.key)&&search.empty()?">":"v",f,x,y+5,15,16,overlayInk);
-    else DrawRectangle(static_cast<int>(x+1),static_cast<int>(y+9),8,8,tree.parts[n.parts.front()].color);
-    Label(n.name,f,x+16,y+5,w-82-x,15,tree.Checked(r.node,false)==CheckState::None?overlayMuted:overlayInk);
-    Check({w-55,y+5,17,17},tree.Checked(r.node,false),true);Check({w-27,y+5,17,17},tree.Checked(r.node,true),true);
-  }
-  EndScissorMode();
-  if(rows.empty())Label("Nessun risultato",f,12,154,w-24,16,overlayMuted);
-  const float available=std::max(0.0f,height-150.0f),total=rows.size()*26.0f;
-  if(total>available&&available>0)DrawRectangleRec({w-4,142+scroll/total*available,3,std::max(8.0f,available*available/total)},overlayMuted);
+void PartsPanel::Draw(const PartTree &tree,Font f,int w,int h) const{
+ auto l=Layout(tree,w,h);Card(l.card);
+ if(!open){DrawBrandMark({22,22,24,24});Label("Parts",f,55,26,60);Chevron(139,34,true);return;}
+ DrawBrandMark({24,26,28,28});Label("SynthCAD",f,60,29,l.exportButton.x-66,18);
+ Button(l.exportButton,"Export STL",f,true,true);if(Over(l.collapse))Card(l.collapse,{223,232,216,255});Chevron(l.collapse.x+12,40,false);
+ Label(sceneName,f,l.file.x,l.file.y+3,l.file.width,15,muted);
+ Field(l.search,search,"Search parts...",editor,searchFocus,f,24);if(!search.empty())Cross(l.clear);
+ Button(l.isolate,tree.state.isolated?"Exit isolation":"Isolate",f,tree.Selection().has_value()||tree.state.isolated);
+ Button(l.showAll,"Show all",f);bool canFrame=false;if(auto n=tree.Selection())for(auto p:tree.nodes[*n].parts)canFrame|=tree.Visible(p);
+ Button(l.frame,"Frame selection",f,canFrame);
+ Label(std::to_string(tree.parts.size())+(tree.parts.size()==1?" part":" parts"),f,24,179,160,14,muted);
+ PartIcon({l.visibilityX,173,24,24},false,CheckState::All);PartIcon({l.exportX,173,24,24},true,CheckState::All);
+ std::string tip;if(Over(l.file))tip=scenePath.empty()?sceneName:scenePath;
+ if(Over(l.frame))tip="Frame selection";if(Over(l.isolate))tip=tree.state.isolated?"Exit isolation":"Isolate selection";
+ if(Over(l.collapse))tip="Collapse parts";if(Over(l.clear)&&!search.empty())tip="Clear search";
+ if(Over({l.visibilityX,173,24,24}))tip="Visibility";if(Over({l.exportX,173,24,24}))tip="Include in STL export";
+ Clip(l.list);auto rows=tree.Rows(search);auto mouse=Mouse();
+ for(size_t n=0;n<rows.size();++n){
+  float y=l.list.y+n*rowHeight-scroll;if(y+rowHeight<l.list.y||y>=l.list.y+l.list.height)continue;
+  auto row=rows[n];auto &node=tree.nodes[row.node];Rectangle r{l.list.x,y,l.list.width-3,rowHeight};bool over=Over(r)&&CheckCollisionPointRec(mouse,l.list);
+  if(node.key==tree.state.selected)Card(r,{142,182,151,110});else if(over)Card(r,{211,224,204,160});
+  float x=24+Indent(row.depth);
+  if(node.group)Chevron(x+5,y+15,tree.state.collapsed.count(node.key)&&search.empty());
+  else DrawRectangleRounded({x+1,y+11,8,8},0.2f,3,tree.parts[node.parts.front()].color);
+  float labelWidth=l.visibilityX-x-18;Label(node.name,f,x+17,y+7,labelWidth,16,tree.Checked(row.node,false)==CheckState::None?muted:ink);
+  PartIcon({l.visibilityX,y+3,24,24},false,tree.Checked(row.node,false));PartIcon({l.exportX,y+3,24,24},true,tree.Checked(row.node,true));
+  if(over){if(mouse.x>=l.exportX)tip=IconHint(true,tree.Checked(row.node,true));else if(mouse.x>=l.visibilityX)tip=IconHint(false,tree.Checked(row.node,false));else if(MeasureTextEx(f,node.name.c_str(),16,0).x>labelWidth)tip=node.name;}
+ }
+ if(rows.empty())Label(tree.parts.empty()?"This scene has no parts":"No matching parts",f,l.list.x+6,l.list.y+7,l.list.width-12,16,muted);
+ EndScissorMode();float total=rows.size()*rowHeight;
+ if(total>l.list.height&&l.list.height>0)DrawRectangleRounded({l.card.x+l.card.width-5,l.list.y+scroll/total*l.list.height,3,std::max(8.f,l.list.height*l.list.height/total)},0.5f,4,Fade(muted,.6f));
+ Tooltip(tip,f,w,h);
 }
-void ExportDialog::Open(const std::string &defaultPath){open=true;if(path.empty())path=defaultPath;error.clear();overwrite=false;pathFocus=false;}
-PanelActions ExportDialog::Update(const PanelInput &i,int width,int height,size_t count,bool valid){
-  PanelActions a;if(!open)return a;auto r=DialogBounds(width,height);
-  if(i.escape||Hit(i,{r.x+12,r.y+252,100,30})){open=false;overwrite=false;return a;}
-  if(Hit(i,{r.x+12,r.y+48,r.width-24,28})){visibleOnly=false;overwrite=false;error.clear();}
-  if(Hit(i,{r.x+12,r.y+81,r.width-24,28})){visibleOnly=true;overwrite=false;error.clear();}
-  if(i.pressed)pathFocus=CheckCollisionPointRec(i.mouse,{r.x+12,r.y+147,r.width-24,31});
-  if(pathFocus){auto before=path;Edit(path,selectText,i);if(path!=before){overwrite=false;error.clear();}}
-  if(Hit(i,{r.x+r.width-150,r.y+252,138,30})&&count>0&&valid&&!path.empty())a.save=true;
-  return a;
+ExportLayout ExportDialog::Layout(int w,int h){
+ ExportLayout l;auto &r=l.card;r={std::max(12.f,(w-620.f)/2),std::max(12.f,(h-344.f)/2),std::min(620.f,w-24.f),344};
+ l.all={r.x+20,r.y+56,r.width-40,32};l.visible={r.x+20,r.y+92,r.width-40,32};l.path={r.x+20,r.y+164,r.width-40,32};
+ l.cancel={r.x+20,r.y+292,88,32};l.save={r.x+r.width-150,r.y+292,130,32};return l;
 }
-void ExportDialog::Draw(Font f,int width,int height,size_t count,bool valid) const{
-  if(!open)return;DrawRectangle(0,0,width,height,Fade(BLACK,0.28f));auto r=DialogBounds(width,height);DrawRectangleRec(r,paper);
-  Label("Esporta STL",f,r.x+12,r.y+13,r.width-24,21);
-  Check({r.x+12,r.y+53,17,17},!visibleOnly?CheckState::All:CheckState::None);
-  Label("Tutte le esportabili (anche nascoste)",f,r.x+38,r.y+53,r.width-50);
-  Check({r.x+12,r.y+86,17,17},visibleOnly?CheckState::All:CheckState::None);
-  Label("Solo esportabili visibili",f,r.x+38,r.y+86,r.width-50);
-  Label("Percorso file",f,r.x+12,r.y+124,r.width-24,14,muted);
-  DrawRectangleRec({r.x+12,r.y+147,r.width-24,31},pathFocus?Color{230,241,231,255}:WHITE);
-  // Keep the end visible while editing long paths.
-  std::string tail=path;while(!tail.empty()&&MeasureTextEx(f,tail.c_str(),15,0).x>r.width-38){
-    size_t next=1;while(next<tail.size()&&(static_cast<unsigned char>(tail[next])&0xc0)==0x80)++next;
-    tail.erase(0,next);
-  }
-  Label(tail,f,r.x+18,r.y+155,r.width-36,15);
-  Label(valid?std::to_string(count)+" parti incluse":"Export disabilitato: correggere la scena",f,r.x+12,r.y+191,r.width-24,16,valid?ink:MAROON);
-  Label(overwrite?"Il file esiste: confermare Sostituisci.":error,f,r.x+12,r.y+219,r.width-24,14,MAROON);
-  Button({r.x+12,r.y+252,100,30},"Annulla",f);
-  Button({r.x+r.width-150,r.y+252,138,30},overwrite?"Sostituisci":"Salva STL",f,count>0&&valid&&!path.empty());
+void ExportDialog::Open(const std::string &p){open=true;if(path.empty())path=p;error.clear();overwrite=false;pathFocus=false;editor.Focus(path);}
+PanelActions ExportDialog::Update(const PanelInput &i,int w,int h,size_t count,bool valid){
+ PanelActions a;if(!open)return a;auto l=Layout(w,h);
+ if(i.escape||Hit(i,l.cancel)){open=false;overwrite=false;return a;}
+ if(Hit(i,l.all)||Hit(i,l.visible)){visibleOnly=Hit(i,l.visible);overwrite=false;error.clear();return a;}
+ if(i.pressed){pathFocus=CheckCollisionPointRec(i.mouse,l.path);if(pathFocus)editor.Focus(path);}
+ if(pathFocus){auto before=path;editor.Update(path,i);if(before!=path){overwrite=false;error.clear();}}
+ if(Hit(i,l.save)&&count&&valid&&!path.empty())a.save=true;return a;
+}
+void ExportDialog::Draw(Font f,int w,int h,size_t count,bool valid) const{
+ if(!open)return;DrawRectangle(0,0,w,h,{33,43,37,72});auto l=Layout(w,h);auto r=l.card;Card(r,paper);
+ Label("Export STL",f,r.x+20,r.y+18,r.width-40,23);
+ auto radio=[&](Rectangle a,bool active,const char *s){if(Over(a))Card(a,{226,234,220,180});DrawCircleLines(int(a.x+10),int(a.y+16),8,accent);if(active)DrawCircleV({a.x+10,a.y+16},4.5f,accent);Label(s,f,a.x+28,a.y+7,a.width-30);};
+ radio(l.all,!visibleOnly,"All exportable parts");radio(l.visible,visibleOnly,"Visible exportable parts");
+ Label("Destination",f,r.x+20,r.y+140,r.width-40,14,muted);Field(l.path,path,"Choose an STL file path",editor,pathFocus,f);
+ Label(valid?std::to_string(count)+(count==1?" part included":" parts included"):"Export disabled - correct the scene error",f,r.x+20,r.y+209,r.width-40,16,valid?ink:MAROON);
+ Label("Keeps the current arrangement. No print layout is created.",f,r.x+20,r.y+235,r.width-40,14,muted);
+ Label(overwrite?"This file already exists. Replace it?":error,f,r.x+20,r.y+263,r.width-40,14,MAROON);
+ Button(l.cancel,"Cancel",f);Button(l.save,overwrite?"Replace file":"Export STL",f,count>0&&valid&&!path.empty(),true);
+ if(!error.empty()&&Over({r.x+20,r.y+260,r.width-40,28}))Tooltip(error,f,w,h);
+}
+std::filesystem::path SuggestedExportPath(const std::filesystem::path &home,const std::filesystem::path &scene){
+ auto name=scene.empty()?std::filesystem::path("synthcad"):scene.stem();name+=".stl";return home/"Downloads"/name;
+}
+void WorkspaceUi::Loaded(){loadError.clear();details=false;detailScroll=0;}
+void WorkspaceUi::Failed(const std::string &s){if(loadError!=s){details=false;detailScroll=0;}loadError=s;}
+void WorkspaceUi::Saved(const std::string &s,double now){toast="Exported "+s;toastUntil=now+4;}
+bool WorkspaceUi::ToastVisible(double now) const{return !toast.empty()&&now<toastUntil;}
+Rectangle WorkspaceUi::Toolbar(int w) const{return {std::max(12.f,w-300.f),12,288,40};}
+Rectangle WorkspaceUi::ErrorCard(int w,int h) const{return {std::max(12.f,w-492.f),h-12-(details?std::min(310.f,h-84.f):112.f),std::min(480.f,w-24.f),details?std::min(310.f,h-84.f):112.f};}
+bool WorkspaceUi::CapturesMouse(const PanelInput &i,int w,int h,double now) const{
+ return gesture||CheckCollisionPointRec(i.mouse,Toolbar(w))||(help&&CheckCollisionPointRec(i.mouse,HelpRect(w)))||(!loadError.empty()&&CheckCollisionPointRec(i.mouse,ErrorCard(w,h)))||(ToastVisible(now)&&CheckCollisionPointRec(i.mouse,ToastRect(w,h)));
+}
+PanelActions WorkspaceUi::Update(const PanelInput &i,int w,int h,double now){
+ PanelActions a;if(i.pressed||i.rightPressed)gesture=CapturesMouse(i,w,h,now);if(!i.leftDown&&!i.rightDown&&!i.pressed&&!i.rightPressed)gesture=false;
+ auto r=Toolbar(w);if(Hit(i,{r.x+4,r.y+4,65,32}))a.fitAll=true;if(Hit(i,{r.x+73,r.y+4,175,32}))a.dimensions=true;if(Hit(i,{r.x+252,r.y+4,32,32}))help=!help;
+ if(i.escape)help=false;
+ if(!loadError.empty()){
+  auto e=ErrorCard(w,h);if(Hit(i,{e.x+12,e.y+70,140,30})){details=!details;detailScroll=0;}
+  if(Hit(i,{e.x+e.width-92,e.y+16,80,32}))a.reload=true;
+  Rectangle content{e.x+12,e.y+112,e.width-24,std::max(0.f,e.height-124)};
+  if(details&&CheckCollisionPointRec(i.mouse,content)){detailScroll-=i.wheel*54;detailScroll=Clamp(detailScroll,0,std::max(0.f,DiagnosticLines(loadError,content.width).size()*18-content.height));}
+ }
+ auto t=ToastRect(w,h);if(ToastVisible(now)&&Hit(i,{t.x+t.width-36,t.y+8,28,32}))toast.clear();return a;
+}
+void WorkspaceUi::Draw(Font f,int w,int h,DimensionMode mode,double now) const{
+ auto r=Toolbar(w);Card(r);Button({r.x+4,r.y+4,65,32},"Fit all",f);std::string dim=std::string("Dimensions: ")+DimensionModeName(mode);Button({r.x+73,r.y+4,175,32},dim.c_str(),f);Button({r.x+252,r.y+4,32,32},"?",f);
+ if(help){auto b=HelpRect(w);Card(b,paper);Label("Workspace shortcuts",f,b.x+14,b.y+14,b.width-28,18);const char *lines[]={"Drag: orbit  /  Right-drag: pan","Scroll: zoom  /  Space: fit all","W A S D Q E: move camera","Ctrl+F: search parts","P: export STL  /  R: reload","M: cycle dimensions"};for(int i=0;i<6;++i)Label(lines[i],f,b.x+14,b.y+48+i*26,b.width-28,15,muted);}
+ if(!loadError.empty()){
+  auto e=ErrorCard(w,h);Card(e,{251,240,228,250});Label("Scene could not load",f,e.x+12,e.y+16,e.width-120,19,{123,65,34,255});Label("Export is disabled until the scene is corrected.",f,e.x+12,e.y+44,e.width-24,15,muted);
+  Button({e.x+e.width-92,e.y+16,80,32},"Reload",f);Button({e.x+12,e.y+70,140,30},details?"Hide details":"Show details",f);
+  if(details){Rectangle content{e.x+12,e.y+112,e.width-24,e.height-124};Clip(content);auto lines=DiagnosticLines(loadError,content.width);for(size_t n=0;n<lines.size();++n)DrawTextEx(f,lines[n].c_str(),{content.x,content.y+n*18-detailScroll},14,0,ink);EndScissorMode();if(lines.size()*18>content.height)Label("Scroll for more",f,e.x+e.width-120,e.y+76,108,13,muted);}
+ }else if(ToastVisible(now)){auto t=ToastRect(w,h);Card(t,{213,233,211,245});Label(toast,f,t.x+14,t.y+15,t.width-54,16);Cross({t.x+t.width-36,t.y+8,28,32});}
+ std::string tip;if(Over({r.x+4,r.y+4,65,32}))tip="Fit all visible parts (Space)";if(Over({r.x+73,r.y+4,175,32}))tip="Cycle dimensions (M)";if(Over({r.x+252,r.y+4,32,32}))tip="Keyboard and mouse shortcuts";Tooltip(tip,f,w,h);
 }
 }

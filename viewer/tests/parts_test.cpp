@@ -76,35 +76,59 @@ int main(){try{
   tree.Toggle(Node(tree,"Wall"),true);
 
   PartsPanel panel;
-  Require(panel.Viewport(1280,720).x==0&&panel.Viewport(1280,720).width==1280&&panel.Bounds(1280,720).width==320,"Overlay keeps full scene viewport");
-  panel.Update(tree,Click(50,60),1280,720);
-  PanelInput typed;typed.mouse={50,60};typed.text="Right";panel.Update(tree,typed,1280,720);
-  Require(panel.searchFocus&&panel.search=="Right"&&tree.Visible(1),"Search editing leaves geometry visible");
-  panel.Update(tree,Click(300,154),1280,720); // filtered Object group export
-  Require(tree.ExportIndices(false).empty(),"Filtered group checkbox affects all descendants");
-  PanelInput drag;drag.mouse={600,400};drag.leftDown=true;
-  Require(panel.CapturesMouse(drag,1280,720),"Panel drag cannot leak into camera");
-  panel.Update(tree,drag,1280,720);
-  drag.leftDown=false;panel.Update(tree,drag,1280,720);
-  Require(!panel.CapturesMouse(drag,1280,720),"Camera released after panel gesture");
-  panel.Update(tree,Click(25,20),1280,720);
-  Require(!panel.open&&panel.Viewport(1280,720).width==1280&&!panel.searchFocus,"Collapsed panel preserves viewport and releases focus");
-  panel.Update(tree,PanelInput{},720,480);
-  Require(panel.Viewport(720,480).height==480,"Resize viewport");
-  panel.Update(tree,Click(25,20),720,480);
-  Require(panel.open&&panel.Viewport(720,480).width==720&&panel.Bounds(720,480).width==320,"Reopening overlay preserves resized projection");
-  DimensionControls dimensions;const auto local=Vector2{700,460};
-  UpdateDimensionControls(dimensions,DimensionButtonBounds(720,480),local,false,true,true);
-  Require(dimensions.mode==DimensionMode::All&&dimensions.buttonGesture,"Dimension control stays accessible beside overlay");
+  auto center=[](Rectangle r){return Click(r.x+r.width/2,r.y+r.height/2);};
+  Require(panel.Viewport(1280,720).width==1280&&panel.Bounds(tree,1280,720).width==360,"Overlay preserves full viewport");
+  auto expandedHeight=panel.Bounds(tree,1280,720).height;
+  tree.state.collapsed.insert(tree.nodes[Node(tree,"Plates")].key);
+  Require(panel.Bounds(tree,1280,720).height<expandedHeight,"Content-sized collapsed tree");tree.state.collapsed.clear();
+  PanelInput below;below.mouse={100,expandedHeight+30};below.wheel=-1;panel.Update(tree,below,1280,720);
+  Require(!panel.CapturesMouse(tree,below,1280,720)&&panel.scroll==0,"Below card passes through");
+  Require(panel.Bounds(tree,720,400).height==300,"Height capped at 75 percent");
+  for(float scale:{1.f,1.5f,2.f}){
+    auto search=panel.Layout(tree,1280,720).search;auto physical=center(search);physical.mouse.x*=scale;physical.mouse.y*=scale;
+    panel.Update(tree,LogicalInput(physical,scale),1280,720);
+    Require(panel.searchFocus,"DPI-scaled hit target");
+  }
+  PanelInput typed;typed.text="Right";panel.Update(tree,typed,1280,720);
+  Require(panel.search=="Right"&&tree.Visible(1),"Search doesn't hide geometry");
+  auto l=panel.Layout(tree,1280,720);
+  panel.Update(tree,Click(l.exportX+12,l.list.y+15),1280,720);
+  Require(tree.ExportIndices(false).empty(),"Filtered group toggles all descendants");
+  PanelInput drag;drag.mouse={600,650};drag.leftDown=true;
+  Require(panel.CapturesMouse(tree,drag,1280,720),"Panel gesture captures dragged mouse");
+  drag.leftDown=false;panel.Update(tree,drag,1280,720);Require(!panel.CapturesMouse(tree,drag,1280,720),"Released gesture clears capture");
+  panel.Update(tree,center(panel.Layout(tree,1280,720).collapse),1280,720);
+  Require(!panel.open&&!panel.searchFocus&&panel.Viewport(1280,720).width==1280,"Collapsed preserves projection");
+  PanelInput find;find.find=true;panel.Update(tree,find,720,480);
+  Require(panel.open&&panel.searchFocus,"Ctrl+F opens and focuses search");
+  Require(panel.Layout(tree,640,400).card.x+panel.Layout(tree,640,400).card.width<WorkspaceUi{}.Toolbar(640).x,"Small window controls do not overlap");
+  std::string accented="Parete più";TextEdit edit;edit.Focus(accented);PanelInput back;back.backspace=true;edit.Update(accented,back);
+  Require(accented=="Parete pi","UTF-8 backspace removes a codepoint");
+  PanelInput all;all.selectAll=true;edit.Update(accented,all);PanelInput replace;replace.text="Flangia";edit.Update(accented,replace);
+  Require(accented=="Flangia"&&edit.anchor==7,"Selection replacement");
+  PanelInput left;left.left=true;edit.Update(accented,left);PanelInput del;del.deleteKey=true;edit.Update(accented,del);Require(accented=="Flangi","Caret delete");
+  WorkspaceUi ui;ui.Saved("assembly.stl",10);Require(ui.ToastVisible(13.99)&&!ui.ToastVisible(14),"Four-second export feedback");
+  ui.Failed("Errore: parte più larga\nFull diagnostic");ui.Update(PanelInput{},1280,720,99);Require(!ui.loadError.empty(),"Errors persist beyond toast lifetime");
+  auto errorCard=ui.ErrorCard(1280,720);Require(ui.Update(Click(errorCard.x+errorCard.width-50,errorCard.y+28),1280,720,99).reload,"Reload action");
+  ui.Loaded();Require(ui.loadError.empty()&&!ui.details,"Valid reload clears error");
+  ui.gesture=false;ui.Update(Click(1242,686),1280,720,11);Require(!ui.ToastVisible(11),"Toast can be dismissed");
+  ui.Failed(std::string(3000,'W'));auto errorBounds=ui.ErrorCard(640,400);
+  ui.Update(Click(errorBounds.x+30,errorBounds.y+85),640,400,20);Require(ui.details,"Diagnostics expand");
+  PanelInput errorScroll;auto expandedError=ui.ErrorCard(640,400);errorScroll.mouse={expandedError.x+30,expandedError.y+130};errorScroll.wheel=-100;
+  ui.Update(errorScroll,640,400,20);Require(ui.detailScroll>0&&ui.CapturesMouse(errorScroll,640,400,20),"Long diagnostics scroll and capture input");
+  PartTree longTree;std::vector<DisplayPart> many;for(int n=0;n<100;++n){auto part=a;part.id="long"+std::to_string(n);part.name=part.id;many.push_back(part);}longTree.Reload(many);
+  PartsPanel longPanel;auto longLayout=longPanel.Layout(longTree,640,400);PanelInput wheel;wheel.mouse={longLayout.list.x+30,longLayout.list.y+20};wheel.wheel=-100;
+  longPanel.Update(longTree,wheel,640,400);Require(longPanel.scroll>0,"Long tree scrolls inside capped panel");
+  longPanel.search="missing";longPanel.Update(longTree,PanelInput{},640,400);Require(longPanel.scroll==0,"Empty search resets scroll bounds");
 
-  ExportDialog dialog;dialog.Open("unused.stl");
-  auto save=Click(820,478); // 1280x720 dialog origin (330,210), save (800,462)
-  Require(!dialog.Update(save,1280,720,0,true).save,"Empty export button blocked");
-  Require(!dialog.Update(save,1280,720,2,false).save,"Invalid scene export blocked");
-  Require(dialog.Update(save,1280,720,2,true).save,"Valid export requests save");
-  dialog.overwrite=true;dialog.Update(Click(360,300),1280,720,2,true);
-  Require(dialog.visibleOnly&&!dialog.overwrite,"Mode change resets overwrite consent");
-  PanelInput esc;esc.escape=true;Require(!dialog.Update(esc,1280,720,2,true).save&&!dialog.open,"Cancel does not request a write");
+  Require(SuggestedExportPath("home","a/assembly.js").filename()=="assembly.stl"&&SuggestedExportPath("home",{}).filename()=="synthcad.stl","Scene-based destination");
+  ExportDialog dialog;dialog.Open("unused.stl");auto save=center(ExportDialog::Layout(1280,720).save);
+  Require(!dialog.Update(save,1280,720,0,true).save,"Empty export blocked");Require(!dialog.Update(save,1280,720,2,false).save,"Invalid export blocked");
+  Require(dialog.Update(save,1280,720,2,true).save,"Valid export request");
+  dialog.overwrite=true;dialog.Update(center(ExportDialog::Layout(1280,720).visible),1280,720,2,true);
+  Require(dialog.visibleOnly&&!dialog.overwrite,"Mode resets confirmation");
+  dialog.path="custom.stl";PanelInput esc;esc.escape=true;Require(!dialog.Update(esc,1280,720,2,true).save&&!dialog.open,"Cancel does not save");
+  dialog.Open("another.stl");Require(dialog.path=="custom.stl","Edited destination persists");
 
   const auto path=std::filesystem::temp_directory_path()/("dingcad-export-test-"+
       std::to_string(std::chrono::steady_clock::now().time_since_epoch().count())+".stl");

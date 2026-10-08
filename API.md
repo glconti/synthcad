@@ -81,12 +81,12 @@ Colors are display aids, not filament assignments. Optional metadata:
 | Field | Contract / default |
 | --- | --- |
 | `id` | Unique nonempty string, stable across reload and reordering. Omitted: index-based identity. The `@index:` prefix is reserved. |
-| `name` | Nonempty string. Omitted: `Parte 1`, `Parte 2`, etc. |
+| `name` | Nonempty string. Omitted: `Part 1`, `Part 2`, etc. |
 | `group` | Array of nonempty strings, outermost group first, at most 32 levels. Omitted: root-level part. Groups with the same path merge. |
 | `exportable` | Boolean, default `true`. Set `false` for external context. |
 
 Strings cannot contain NUL. The maximum list size is 10,000 entries. A missing
-`displayParts` gives one gray **Scena** node and exports the original `scene`
+`displayParts` gives one gray **Scene** node and exports the original `scene`
 solid. An explicitly empty array gives an empty tree and no exportable geometry.
 Invalid entries, duplicate IDs or throwing metadata getters reject the whole
 reload: the last valid view remains and export is disabled until a valid reload.
@@ -100,14 +100,15 @@ follows the model's latest default. Reload preserves the camera. Separate GPU
 meshes remain resident; tree visibility does not reevaluate JavaScript, booleans
 or triangulation.
 
-The **Esporta** button and **P** open the same dialog:
+The **Export STL** button and **P** open the same dialog:
 
-- **Tutte le esportabili** (initial mode) includes hidden exportable parts.
-- **Solo esportabili visibili** includes only currently visible exportable parts,
+- **All exportable parts** (initial mode) includes hidden exportable parts.
+- **Visible exportable parts** includes only currently visible exportable parts,
   including isolation's temporary visibility.
 
-The dialog shows the part count, starts at `Downloads/ding.stl`, accepts an edited
-path and requires confirmation before replacing an existing file. Cancel, an
+The dialog shows the part count, starts at `Downloads/<scene-stem>.stl`
+(`synthcad.stl` for the built-in sample), accepts an edited
+path retained during the session and requires **Replace file** confirmation before replacing an existing file. Cancel, an
 empty selection and invalid metadata produce no file and do not overwrite one.
 A non-exportable reference is included only after the user enables its STL flag.
 Selected source solids are composed in their original CAD coordinates, without
@@ -121,7 +122,9 @@ without opening a visible window with
 For viewer UI QA, `--ui-preview scene.js preview.png [mode]` captures three frames
 of the actual hidden viewer. Modes: `export`, `hidden`, `closed`, `small`,
 `selected`, `isolated`, `dimensions`; selection modes use the `Oggetto progettato`
-group in the fixture. These commands do not export STL.
+group in the fixture. Additional UI/scaling modes are documented in README.md.
+These commands do not export STL. The product UI is English; names, groups,
+annotations and model-generated diagnostic text remain exactly as authored.
 
 ## Dimension annotations
 

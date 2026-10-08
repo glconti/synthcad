@@ -72,7 +72,7 @@ Appearance ReadAppearance(JSContext *ctx, JSValueConst ns) {
     else if (!Text(ctx,id.value,part.id) || part.id.rfind("@index:",0)==0)
       return invalid("entry "+std::to_string(i)+" has invalid/reserved id");
     if (!ids.insert(part.id).second) return invalid("duplicate id "+part.id);
-    if (JS_IsUndefined(name.value)) part.name="Parte "+std::to_string(i+1);
+    if (JS_IsUndefined(name.value)) part.name="Part "+std::to_string(i+1);
     else if (!Text(ctx,name.value,part.name)) return invalid("invalid name for "+part.id);
     if (!JS_IsUndefined(exportable.value)) {
       if (!JS_IsBool(exportable.value)) return invalid("exportable must be boolean for "+part.id);
