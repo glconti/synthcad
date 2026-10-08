@@ -10,7 +10,7 @@ git submodule update --init --recursive
 
 This repository is mostly autonomously written by an LLM that I've lazily prompted while watching youtube and hanging out with my family.
 
-There are no docs. Just read the code.
+See [API.md](API.md) for the JavaScript modelling API and scene metadata.
 
 ## Windows
 
@@ -60,10 +60,29 @@ Avoid force-adding personal files; `.gitignore` is a safeguard, not access contr
 ## Viewer controls
 
 - Left-drag to orbit, right-drag to pan (the model follows the mouse), and scroll to zoom.
-- **Space** frames the current model from the front; **R** reloads the scene manually.
+- **Space** frames all currently visible parts from the front; **R** reloads the scene manually.
 - **M** or the **Dimensions** button cycles Hover, All, and Off. In Hover mode,
   hover the small blue feature markers to see measurements in millimetres.
-- **P** exports the solid to `Downloads/ding.stl`, without dimension annotations.
+- **Parti** opens/closes the left tree. Search filters rows only, keeping ancestors.
+  Expand groups with the arrow; click a name to select a part or group. A box
+  outlines the visible selection. **V** controls visibility; **STL** controls
+  exportability independently. Group checkboxes show all/none/mixed and affect
+  every descendant, including rows hidden by search.
+- **Isola** temporarily shows the selection. **Esci** restores the previous
+  visibility (changes made during isolation are temporary). **Mostra tutto**
+  ends isolation and shows every part; **Inquadra** frames the visible selection.
+- **P** or **Esporta** opens the STL dialog: all exportable parts (initial mode,
+  including hidden parts) or only visible exportable parts. Edit the suggested
+  `Downloads/ding.stl` path; existing files require **Sostituisci** confirmation.
+  No selected parts means no file is written.
+
+The panel has its own viewport. Panel clicks, scrolling, text entry and modal
+interaction do not operate the camera or viewport shortcuts. Search/path fields
+support typing, Backspace, Ctrl/Cmd+A and paste. Escape cancels the export dialog.
+Visibility, export overrides, selection and group expansion persist across reload
+within the running session, using stable IDs; they reset after closing the viewer.
+External references should start with `exportable:false`. Hiding them alone does
+not exclude them from the default export mode.
 
 Saving the scene or one of its imported modules reloads the model and annotations
 together. Dimension mode survives reloads. See [API.md](API.md#dimension-annotations)
@@ -71,8 +90,11 @@ to add labels to other scenes.
 
 Scenes can export `displayParts` for separate component colors. The Windows
 viewer uses soft lighting and preserves CAD creases instead of smoothing across
-sharp edges. Colors only affect the display; STL exports remain unchanged.
-See [display colors](API.md#display-colors) for the scene syntax and PNG preview command.
+sharp edges. With `displayParts`, the listed solids are also the source for
+selective STL export. Scenes without this list retain the original single-solid
+export. Invalid part metadata keeps the last valid view but disables export until
+corrected. See [parts and colors](API.md#parts-groups-and-display-colors) for the
+contract and PNG preview commands.
 
 The viewer targets 60 FPS while focused and 15 FPS in the background. When
 minimized, it skips drawing and processes events at 5 Hz. Scene files are checked
@@ -84,3 +106,12 @@ For a window-free scene validation, run the built viewer with
 
 
 
+
+## Viewer checks
+
+Build `dingcad_appearance_tests`, `dingcad_parts_tests`, `dingcad_camera_tests`
+and `dingcad_dimension_tests` with CMake, then run the executables in the viewer
+build directory. The parts suite covers nested trees, tri-state controls, search,
+isolation, reload/reorder/add/remove, input capture and selective STL file safety.
+Use `viewer/tests/parts_scene.js` with `--ui-preview` for visual checks of the
+panel, selection, dimensions, export dialog, hidden geometry and resized viewport.

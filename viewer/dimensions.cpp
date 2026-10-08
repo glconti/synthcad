@@ -209,9 +209,9 @@ std::optional<size_t> FindHoveredDimension(
 }
 
 void DrawDimensions(const std::vector<Dimension> &dimensions, DimensionMode mode,
-                    Camera3D camera, Font font, Vector2 mouse, bool suppressHover) {
+                    Camera3D camera, Font font, Vector2 mouse, bool suppressHover,int width,int height) {
   if (mode == DimensionMode::Off) return;
-  const int width = GetScreenWidth(), height = GetScreenHeight();
+  if(width<0)width=GetScreenWidth();if(height<0)height=GetScreenHeight();
   if (width < 32 || height < 32) return;
   const auto projected = ProjectDimensions(dimensions, camera, width, height);
   const auto hovered = suppressHover ? std::optional<size_t>{} :
@@ -255,9 +255,11 @@ void DrawDimensions(const std::vector<Dimension> &dimensions, DimensionMode mode
   }
 }
 
-void DrawDimensionButton(DimensionMode mode, Font font) {
-  const Rectangle bounds = DimensionButtonBounds(GetScreenWidth(), GetScreenHeight());
-  const bool hovered = CheckCollisionPointRec(GetMousePosition(), bounds);
+void DrawDimensionButton(DimensionMode mode, Font font,int width,int height,Vector2 mouse) {
+  if(width<0)width=GetScreenWidth();if(height<0)height=GetScreenHeight();
+  if(mouse.x==-1&&mouse.y==-1)mouse=GetMousePosition();
+  const Rectangle bounds = DimensionButtonBounds(width,height);
+  const bool hovered = CheckCollisionPointRec(mouse, bounds);
   DrawRectangleRec(bounds, hovered ? Color{220, 233, 241, 255} : Color{237, 242, 246, 255});
   DrawRectangleLinesEx(bounds, 1, Color{100, 130, 150, 255});
   const std::string text = FitLabel(std::string("Dimensions: ") + DimensionModeName(mode) + "  [M]",

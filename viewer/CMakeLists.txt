@@ -25,6 +25,9 @@ add_executable(dingcad_viewer
   js_bindings.cpp
   dimensions.cpp
   appearance.cpp
+  part_tree.cpp
+  parts_panel.cpp
+  stl_export.cpp
 )
 
 target_include_directories(dingcad_viewer
@@ -57,6 +60,12 @@ add_executable(dingcad_appearance_tests EXCLUDE_FROM_ALL
 target_include_directories(dingcad_appearance_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
   ${PROJECT_SOURCE_DIR}/vendor/manifold/include ${PROJECT_SOURCE_DIR}/vendor/quickjs)
 target_link_libraries(dingcad_appearance_tests PRIVATE manifold raylib dingcad_quickjs)
+
+add_executable(dingcad_parts_tests EXCLUDE_FROM_ALL
+  tests/parts_test.cpp part_tree.cpp parts_panel.cpp stl_export.cpp dimensions.cpp)
+target_include_directories(dingcad_parts_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+  ${PROJECT_SOURCE_DIR}/vendor/manifold/include ${PROJECT_SOURCE_DIR}/vendor/quickjs)
+target_link_libraries(dingcad_parts_tests PRIVATE manifold raylib dingcad_quickjs)
 
 if(WIN32)
   # Keep the viewer self-contained: Windows only probes the executable's

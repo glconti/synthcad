@@ -1,6 +1,7 @@
 #include "appearance.h"
 #include "js_bindings.h"
 #include <cctype>
+#include <set>
 
 namespace dingcad {
 namespace {
@@ -13,9 +14,10 @@ struct Value {
 };
 bool HexColor(JSContext *ctx, JSValueConst value, Color &color) {
   if (!JS_IsString(value)) return false;
-  const char *raw=JS_ToCString(ctx,value);
+  size_t size=0;
+  const char *raw=JS_ToCStringLen(ctx,&size,value);
   if (!raw) return false;
-  const std::string text(raw);
+  const std::string text(raw,size);
   JS_FreeCString(ctx,raw);
   if (text.size()!=7 || text[0]!='#') return false;
   unsigned rgb=0;
@@ -27,21 +29,31 @@ bool HexColor(JSContext *ctx, JSValueConst value, Color &color) {
   color={static_cast<unsigned char>(rgb>>16),static_cast<unsigned char>(rgb>>8),static_cast<unsigned char>(rgb),255};
   return true;
 }
+bool Text(JSContext *ctx, JSValueConst value, std::string &out) {
+  if (!JS_IsString(value)) return false;
+  size_t size=0;
+  const char *raw=JS_ToCStringLen(ctx,&size,value);
+  if (!raw) return false;
+  out.assign(raw,size);JS_FreeCString(ctx,raw);
+  return !out.empty() && out.find('\0')==std::string::npos;
+}
 }
 Appearance ReadAppearance(JSContext *ctx, JSValueConst ns) {
   Appearance result;
   const auto invalid=[&](const std::string &reason){
     if (JS_HasException(ctx)) JS_FreeValue(ctx,JS_GetException(ctx));
     result.parts.clear();
-    result.diagnostic="displayParts: "+reason+"; using scene appearance";
+    result.diagnostic="displayParts: "+reason+"; load rejected, export disabled";
     return result;
   };
   Value list(ctx,JS_GetPropertyStr(ctx,ns,"displayParts"));
   if (JS_IsUndefined(list.value)) return result;
+  result.specified=true;
   if (!JS_IsArray(list.value)) return invalid("expected an array");
   Value length(ctx,JS_GetPropertyStr(ctx,list.value,"length"));
   uint32_t count=0;
   if (JS_ToUint32(ctx,&count,length.value)<0 || count>10000) return invalid("invalid or excessive entry count");
+  std::set<std::string> ids;
   for (uint32_t i=0;i<count;++i) {
     Value entry(ctx,JS_GetPropertyUint32(ctx,list.value,i));
     if (!JS_IsObject(entry.value)) return invalid("invalid entry "+std::to_string(i));
@@ -51,7 +63,33 @@ Appearance ReadAppearance(JSContext *ctx, JSValueConst ns) {
     auto handle=GetManifoldHandle(ctx,solid.value);
     if (!handle || !HexColor(ctx,color.value,tint) || JS_HasException(ctx))
       return invalid("entry "+std::to_string(i)+" needs a manifold solid and #RRGGBB color");
-    result.parts.push_back({handle,tint});
+    DisplayPart part{handle,tint};
+    Value id(ctx,JS_GetPropertyStr(ctx,entry.value,"id"));
+    Value name(ctx,JS_GetPropertyStr(ctx,entry.value,"name"));
+    Value group(ctx,JS_GetPropertyStr(ctx,entry.value,"group"));
+    Value exportable(ctx,JS_GetPropertyStr(ctx,entry.value,"exportable"));
+    if (JS_IsUndefined(id.value)) part.id="@index:"+std::to_string(i);
+    else if (!Text(ctx,id.value,part.id) || part.id.rfind("@index:",0)==0)
+      return invalid("entry "+std::to_string(i)+" has invalid/reserved id");
+    if (!ids.insert(part.id).second) return invalid("duplicate id "+part.id);
+    if (JS_IsUndefined(name.value)) part.name="Parte "+std::to_string(i+1);
+    else if (!Text(ctx,name.value,part.name)) return invalid("invalid name for "+part.id);
+    if (!JS_IsUndefined(exportable.value)) {
+      if (!JS_IsBool(exportable.value)) return invalid("exportable must be boolean for "+part.id);
+      part.exportable=JS_ToBool(ctx,exportable.value)!=0;
+    }
+    if (!JS_IsUndefined(group.value)) {
+      if (!JS_IsArray(group.value)) return invalid("group must be an array for "+part.id);
+      Value size(ctx,JS_GetPropertyStr(ctx,group.value,"length"));uint32_t depth=0;
+      if (JS_ToUint32(ctx,&depth,size.value)<0 || depth>32) return invalid("invalid group depth for "+part.id);
+      for(uint32_t j=0;j<depth;++j){
+        Value label(ctx,JS_GetPropertyUint32(ctx,group.value,j));std::string text;
+        if(!Text(ctx,label.value,text))return invalid("invalid group label for "+part.id);
+        part.group.push_back(text);
+      }
+    }
+    if(JS_HasException(ctx))return invalid("metadata getter failed for "+part.id);
+    result.parts.push_back(std::move(part));
   }
   return result;
 }

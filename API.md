@@ -55,32 +55,73 @@
 
 Assign your final solid to `scene` to render, e.g. `scene = cube({...});`.
 
-## Display colors
+## Parts, groups and display colors
 
-Export optional `displayParts` to give individual solids opaque colors in the
-viewer. This list replaces the visual model, so include everything you want to
-see. The `scene` solid still controls STL export and reported CAD bounds.
+The optional `displayParts` export defines **both** the viewer's components and
+its selective STL export source. Include every component that should be viewed
+or offered for export; solids present only in `scene` are not added automatically.
+The module must still export a valid `scene` (used for legacy scenes and CLI CAD
+bounds). Use original assembly coordinates or deliberate print-layout coordinates.
 
 ```javascript
-const shelf = cube({size:[100,40,4]});
-const support = translate(cube({size:[8,40,20]}),[0,0,-20]);
-export const scene = compose(shelf,support);
+const panel = cube({size:[100,40,4]});
+const wall = translate(cube({size:[120,4,70]}),[-10,-4,0]);
+export const scene = compose(panel,wall);
 export const displayParts = [
-  {solid:shelf, color:'#478a62'},
-  {solid:support, color:'#aab6bb'},
+  {id:'wall', name:'Muro', group:['Riferimenti esterni'],
+   solid:wall, color:'#ddd8cd', exportable:false},
+  {id:'panel', name:'Piastra', group:['Oggetto progettato','Ripiani'],
+   solid:panel, color:'#628bb5', exportable:true},
 ];
 ```
 
-Colors are `#RRGGBB` strings, not material/filament assignments. Missing or empty
-lists use the default gray. Invalid entries warn and fall back to the entire
-`scene`, rather than hiding some parts. Color changes reload with the geometry.
-Display meshes preserve sharp CAD edges; they do not modify the exported solid.
-The Windows view uses soft baked lighting. Space frames the current model from
-the front; ordinary reloads preserve your camera position.
+Each entry requires a manifold `solid` and an opaque `#RRGGBB` `color` string.
+Colors are display aids, not filament assignments. Optional metadata:
 
-Save a PNG without opening a visible window using
-`dingcad_viewer --render-scene scene.js preview.png`. This uses the same display
-colors and Windows lighting, without the interactive grid or annotations.
+| Field | Contract / default |
+| --- | --- |
+| `id` | Unique nonempty string, stable across reload and reordering. Omitted: index-based identity. The `@index:` prefix is reserved. |
+| `name` | Nonempty string. Omitted: `Parte 1`, `Parte 2`, etc. |
+| `group` | Array of nonempty strings, outermost group first, at most 32 levels. Omitted: root-level part. Groups with the same path merge. |
+| `exportable` | Boolean, default `true`. Set `false` for external context. |
+
+Strings cannot contain NUL. The maximum list size is 10,000 entries. A missing
+`displayParts` gives one gray **Scena** node and exports the original `scene`
+solid. An explicitly empty array gives an empty tree and no exportable geometry.
+Invalid entries, duplicate IDs or throwing metadata getters reject the whole
+reload: the last valid view remains and export is disabled until a valid reload.
+There is no fallback export of the entire scene on a metadata error.
+
+Tree state is held only for the running session. Visibility, user overrides of
+exportability, selection and expanded groups survive reload by stable part ID or
+group path. Newly added IDs use model defaults; removed IDs are pruned. Without
+explicit IDs, reordered parts inherit state by index. Unmodified exportability
+follows the model's latest default. Reload preserves the camera. Separate GPU
+meshes remain resident; tree visibility does not reevaluate JavaScript, booleans
+or triangulation.
+
+The **Esporta** button and **P** open the same dialog:
+
+- **Tutte le esportabili** (initial mode) includes hidden exportable parts.
+- **Solo esportabili visibili** includes only currently visible exportable parts,
+  including isolation's temporary visibility.
+
+The dialog shows the part count, starts at `Downloads/ding.stl`, accepts an edited
+path and requires confirmation before replacing an existing file. Cancel, an
+empty selection and invalid metadata produce no file and do not overwrite one.
+A non-exportable reference is included only after the user enables its STL flag.
+Selected source solids are composed in their original CAD coordinates, without
+translation, scaling or automatic boolean union. Overlapping bodies remain
+separate; the tree does not arrange print plates. STL contains no colors or
+annotations. Export from a print-layout scene when a bed arrangement is needed.
+
+The Windows view uses soft baked lighting and sharp CAD creases. Save a PNG
+without opening a visible window with
+`dingcad_viewer --render-scene scene.js preview.png` (no UI or annotations).
+For viewer UI QA, `--ui-preview scene.js preview.png [mode]` captures three frames
+of the actual hidden viewer. Modes: `export`, `hidden`, `closed`, `small`,
+`selected`, `isolated`, `dimensions`; selection modes use the `Oggetto progettato`
+group in the fixture. These commands do not export STL.
 
 ## Dimension annotations
 

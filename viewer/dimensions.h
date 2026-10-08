@@ -51,7 +51,9 @@ std::vector<ProjectedDimension> ProjectDimensions(
 std::optional<size_t> FindHoveredDimension(
     const std::vector<ProjectedDimension> &dimensions, Vector2 mouse);
 void DrawDimensions(const std::vector<Dimension> &dimensions, DimensionMode mode,
-                    Camera3D camera, Font font, Vector2 mouse, bool suppressHover);
-void DrawDimensionButton(DimensionMode mode, Font font);
+                    Camera3D camera, Font font, Vector2 mouse, bool suppressHover,
+                    int width=-1,int height=-1);
+void DrawDimensionButton(DimensionMode mode, Font font,int width=-1,int height=-1,
+                         Vector2 mouse={-1,-1});
 
 }  // namespace dingcad
