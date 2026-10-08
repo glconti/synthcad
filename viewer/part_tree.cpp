@@ -17,18 +17,35 @@ void PartTree::Reload(std::vector<DisplayPart> next) {
     if(state.isolated && found==state.flags.end()) {
       state.beforeIsolation[p.id]=true;retained[p.id].visible=false;
     }
-    std::string key="g:";int parent=-1;
-    for(const auto &label:p.group){
-      key+=std::to_string(label.size())+":"+label;
-      auto g=groups.find(key);size_t index;
-      if(g==groups.end()){
-        index=nodes.size();groups[key]=index;nodes.push_back({key,label,true,parent,{},{}});
-        if(parent<0)roots_.push_back(index);else nodes[parent].children.push_back(index);
-      }else index=g->second;
-      nodes[index].parts.push_back(i);parent=static_cast<int>(index);
+    const bool graph=!p.sourcePartId.empty();
+    std::unordered_set<std::string> placed;
+    std::unordered_set<size_t> ancestors;
+    const auto addPath=[&](const std::vector<GroupLabel> &path){
+      std::string key=graph?"gg:":"g:";int parent=-1;
+      for(const auto &label:path){
+        const auto &identity=graph?label.id:label.name;
+        key+=std::to_string(identity.size())+":"+identity;
+        auto g=groups.find(key);size_t index;
+        if(g==groups.end()){
+          index=nodes.size();groups[key]=index;
+          nodes.push_back({key,label.name,true,parent,{},{},graph?label.id:std::string{}});
+          if(parent<0)roots_.push_back(index);else nodes[parent].children.push_back(index);
+        }else index=g->second;
+        if(ancestors.insert(index).second)nodes[index].parts.push_back(i);
+        parent=static_cast<int>(index);
+      }
+      if(!placed.insert(key).second)return;
+      size_t leaf=nodes.size();nodes.push_back({"p:"+p.id,p.name,false,parent,{}, {i}});
+      if(parent<0)roots_.push_back(leaf);else nodes[parent].children.push_back(leaf);
+    };
+    if(graph){
+      if(p.memberships.empty())addPath({});
+      else for(const auto &path:p.memberships)addPath(path);
+    }else{
+      std::vector<GroupLabel> path;
+      for(const auto &label:p.group)path.push_back({{},label});
+      addPath(path);
     }
-    size_t leaf=nodes.size();nodes.push_back({"p:"+p.id,p.name,false,parent,{}, {i}});
-    if(parent<0)roots_.push_back(leaf);else nodes[parent].children.push_back(leaf);
   }
   state.flags=std::move(retained);
   std::unordered_set<std::string> valid;

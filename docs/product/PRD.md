@@ -37,7 +37,7 @@ printable designs; reducing coordination overhead supports that outcome.
 | Design authoring | The external agent edits source files directly. Hot reload updates the viewer. No geometry-editing command language in the CLI. |
 | Agent conversation | Stays in the user's chosen agent. SynthCAD provides review context and guided selection, without an embedded chat or bundled AI model. |
 | Agent interface | A self-documenting CLI connects repeated calls to a persistent local project session and provides all operating and design guidance. No filesystem skill setup is needed. |
-| Platforms | Windows and Linux are release targets. Current Windows tooling is documented; Linux validation remains backlog work. |
+| Platforms | Windows and Linux are release targets. Manual build/runtime checks pass on Windows and Ubuntu X11/Mesa; automated CI and distribution validation remain backlog work. |
 | Knowledge | Versioned domain guidance is available in full through the CLI. Application checks enforce measurable constraints. |
 | Design scope | Any object supported by the available geometry tools, including functional, assembled and decorative designs. |
 | Printing | Build-plate preparation is a core user story. Account for printer, nozzle, material, orientation, support access and assembly. |
@@ -82,7 +82,8 @@ SynthCAD account or cloud service for its own workflow.
 
 This inventory reflects the initial PRD draft, before the delivery batches.
 For implemented capabilities and platform evidence, see
-[Batch 1](../batch-1-validation.md) and [Batch 2](../batch-2-validation.md).
+[Batch 1](../batch-1-validation.md), [Batch 2](../batch-2-validation.md) and
+[Batch 3](../batch-3-validation.md).
 It is not a current platform or physical test report.
 
 | Capability | Current state and implication |

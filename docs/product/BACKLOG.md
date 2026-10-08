@@ -217,11 +217,11 @@ P1 · R06 · Dependencies: SC01 · New
 
 P1 · R02, R08 · Dependencies: SC01 · Extends scene authoring
 
-- Define a future project-wide reference contract, with source-part identity
+- Define a project-wide reference contract, with source-part identity
   distinct from placed-instance identity. Assemblies, groups and all special
   views, including inspection and build plates, share source geometry
-  definitions rather than copying them. Define the final schema during
-  implementation; do not imply this contract is already implemented.
+  definitions rather than copying them. Publish the versioned schema and
+  its compatibility behavior through the CLI guidance.
 - Groups reference instances. Keep view/layout transforms separate from source
   geometry and from other views, so preparing plates does not move the assembly.
   Editing a shared source updates all dependent views at the new revision.
@@ -229,9 +229,10 @@ P1 · R02, R08 · Dependencies: SC01 · Extends scene authoring
   as distinct placements of shared source parts. Resolve repeated membership of
   one instance through multiple groups once for export; retain distinct
   intended instances even when they share source geometry.
-- Reject cyclic and dangling references explicitly. Tie checks and export
-  provenance to source/dependency revisions, instance membership and view/layout
-  transforms; changed inputs make earlier results outdated.
+- Reject cyclic and dangling references explicitly. Expose source/dependency
+  revisions, instance membership and view/layout identity for future checks and
+  export provenance. Changed inputs invalidate displayed-revision guards;
+  persistent check/export records belong to SC14/SC17.
 - Keep the core source/instance/group/view contract and placement authoring
   independent of printer setup. Printer-aware boundaries, clearance allowances
   for brims/supports and plate validation belong to SC11/SC13.
@@ -387,11 +388,12 @@ P1 · R01–R11 · Dependencies: SC09, SC14, SC17, SC18, SC21 · New
 The shared review loop (SC01–SC05) is delivered; see the
 [Batch 1 evidence](../batch-1-validation.md). The CLI guidance and selection
 feasibility work (SC06–SC07) are documented in
-[Batch 2](../batch-2-validation.md). Live acceptance status remains in GitHub.
+[Batch 2](../batch-2-validation.md). Shared sources, instances and independent
+view layouts (SC12) are implemented and verified on Windows and Linux in
+[Batch 3](../batch-3-validation.md). Live acceptance status remains in GitHub.
 
-Establish **SC12's shared source/instance contract** before wiring geometric
-references into **SC08–SC09**, so selection and future plates use consistent
-ownership. SC12 no longer waits for printer setup. Start Linux CI and licensing
+Wire geometric references into **SC08–SC09** using the shared source/instance
+contract, so selection and future plates use consistent ownership. Start Linux CI and licensing
 resolution in parallel when resources are available; do not leave either until
 packaging. The Bambu-format spike should precede promises about exact export
 settings.

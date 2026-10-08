@@ -33,7 +33,7 @@ void Check() {
     Require(doc.at("bundleVersion") == docs.at("bundleVersion"), "inconsistent version");
     Require(doc.at("source") == entry.at("source") && doc.at("title") == entry.at("title"), "list/read metadata diverged");
   }
-  for (const auto* topic : {"api", "cli", "projects", "skill", "start", "modeling",
+  for (const auto* topic : {"api", "cli", "projects", "design", "skill", "start", "modeling",
                           "print-design", "fit-and-assembly", "build-plates", "bambu-handoff"})
     Require(topics.count(topic) == 1, "required topic missing");
   // Compare the full bytes, not selected phrases, with the compiled source

@@ -335,8 +335,9 @@ class AgentSessionAcceptance:
         self.client = client
         self.timeout_ms = timeout_ms
         self.keep_temp = keep_temp
-        self.temp = tempfile.TemporaryDirectory(prefix="synthcad-agent-acceptance-")
-        self.temp_root = Path(self.temp.name).resolve()
+        self.temp = None if keep_temp else tempfile.TemporaryDirectory(prefix="synthcad-agent-acceptance-")
+        self.temp_root = Path(tempfile.mkdtemp(prefix="synthcad-agent-acceptance-")
+                              if self.temp is None else self.temp.name).resolve()
         self.client.session_dir = self.temp_root / "isolated-sessions"
         self.client.trace_path = self.temp_root / "cli-trace.jsonl"
         self.test_prefix = f"codex-agent-test-{os.getpid()}"

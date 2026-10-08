@@ -14,6 +14,13 @@ Use color to distinguish neighboring components in the review view. Color does n
 
 Show assembly parts in their intended assembled coordinates. Use a separate inspection view for useful sections or exploded arrangements and a separate named view for print-layout coordinates. Reuse parameters and source geometry between views so one change updates every representation. Do not let a print transform silently change the assembly view.
 
+Prefer the shared `design` export for new multi-view objects. Source parts own
+geometry; instances identify physical copies; groups and views reference those
+instances. Run `synthcad docs design` for that contract. Do not also export
+`scene` or `displayParts` in a design-graph entry. The legacy exports remain
+valid for existing models. Keep graph definitions and source geometry in shared
+modules rather than copying solids or modeling code into each view entry.
+
 Author dimension annotations from the same parameters used to build the solids. They are visual aids; the viewer does not derive dimensions from surfaces or test whether anchors match the intended feature.
 
 ## Check the modeled result

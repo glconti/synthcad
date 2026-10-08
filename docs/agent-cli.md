@@ -43,6 +43,7 @@ synthcad docs build-plates
 synthcad docs bambu-handoff
 synthcad docs cli             # This command reference
 synthcad docs projects        # Project files and revision semantics
+synthcad docs design          # Shared source parts, instances and layouts
 ```
 
 `docs AREA` writes the complete guide as plain UTF-8 text to stdout, with no
@@ -115,7 +116,8 @@ an unchanged screenshot, a timestamp, or the existence of a previous valid model
 A successful `wait` returns both `data.requestedRevision` and
 `data.displayedRevision`; the envelope's `revision` is the displayed revision.
 The requested token includes the active view; the displayed identifier describes
-the full consumed source graph, including any newly discovered imports. They are
+the full consumed source graph, including any newly discovered imports, plus
+the active view and resolved layout. They are
 distinct identifiers. Use the **displayed** revision for `--expect-revision` on subsequent
 review actions. If files change again, request a fresh token and wait again.
 
@@ -126,6 +128,14 @@ available. A failed reload keeps the last valid geometry, reports `load_failed`
 when waiting for the broken revision, and disables GUI export until recovery.
 A newer edit or active-view change produces `superseded` instead of acknowledging
 the earlier request.
+
+Snapshots also report `sourceRevision`, `displayedView` and `design` (null for
+legacy scenes). A shared-design graph supplies source-part IDs, physical
+instance IDs, groups, views and effective transforms. A tree alias references
+the same instance: it does not add another object to `parts` or exports. Each
+graph part includes `sourcePartId`, `instanceId` and `transform`; graph groups
+include their authored `sourceId`. Read `synthcad docs design` before authoring
+an assembly and multiple print views from shared definitions.
 
 ## Commands and options
 

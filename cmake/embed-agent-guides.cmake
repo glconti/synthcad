@@ -2,7 +2,8 @@
 # regenerate the header automatically. Runtime never reads checkout files.
 function(synthcad_embed_agent_guides output)
   set(sources "${PROJECT_SOURCE_DIR}/API.md" "${PROJECT_SOURCE_DIR}/docs/agent-cli.md"
-      "${PROJECT_SOURCE_DIR}/docs/agent-contract.md" "${PROJECT_SOURCE_DIR}/skills/synthcad-design/SKILL.md")
+      "${PROJECT_SOURCE_DIR}/docs/agent-contract.md" "${PROJECT_SOURCE_DIR}/docs/design-graph.md"
+      "${PROJECT_SOURCE_DIR}/skills/synthcad-design/SKILL.md")
   file(GLOB guides CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/docs/guides/*.md")
   list(SORT guides)
   list(APPEND sources ${guides})
@@ -18,6 +19,8 @@ function(synthcad_embed_agent_guides output)
       set(topic "cli")
     elseif(relative STREQUAL "docs/agent-contract.md")
       set(topic "projects")
+    elseif(relative STREQUAL "docs/design-graph.md")
+      set(topic "design")
     elseif(relative STREQUAL "skills/synthcad-design/SKILL.md")
       set(topic "skill")
     endif()

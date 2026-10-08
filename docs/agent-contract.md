@@ -32,6 +32,12 @@ directory; relative parent segments are allowed for shared sources. An entry
 can be absent when metadata is opened; evaluation reports its missing-file
 failure. Authored Unicode names and paths are preserved.
 
+Several view names may map to the same entry file when that file exports a
+shared `design` graph. The active manifest name selects the matching graph view;
+missing graph views fail rather than silently showing the default. Standalone
+files keep their `scene` alias and select the graph's `defaultView`. Run
+`synthcad docs design` for source parts, instances and reference-based layouts.
+
 Unknown fields are permitted for future metadata. Reserved areas for future
 contracts include `profiles`, `assumptions`, `checks`, `evidence` and `exports`.
 They are not interpreted or validated by this increment. Malformed JSON,
@@ -93,20 +99,33 @@ evaluation can replace the dependency graph with the files it actually read.
 Keep requested, attempted and displayed revisions separate. A requested revision
 describes the expected disk snapshot. An attempted revision describes actual
 bytes consumed by the attempt. A displayed revision describes the last valid
-geometry successfully published. If a new attempt fails, retain the previous
+geometry and active layout successfully published. If a new attempt fails, retain the previous
 displayed geometry and revision while exposing the new attempted revision and
 diagnostics; retained geometry must not acknowledge success for the broken edit.
 
 The revision command captures the files known to the active session at that
 instant. Its opaque requested token identifies that expected snapshot and active
 view: SHA-256 of the UTF-8 view name, ASCII `:`, and the source snapshot revision.
-It differs from the displayed source revision even when the graph is unchanged.
+It differs from the displayed revision even when the graph is unchanged.
 A bounded wait succeeds only while those expected files still match disk, the
 active view is unchanged, and a valid completed evaluation's entire consumed
 graph matches disk. If an edit introduces previously unknown imports, the
 completed graph can contain additional files. The requested token and displayed
-full-graph source revision have distinct meanings and both must be reported. The requested
+display identity have distinct meanings and both must be reported. The requested
 token does not certify dependencies that were unknown when it was captured.
+
+`sourceRevision` in a snapshot identifies the exact consumed source graph of
+the last valid load. `displayedRevision` also includes the active view and the
+resolved design layout, so two views of the same JavaScript entry cannot share
+a stale-action guard. Its version-1 identity is SHA-256 of
+`synthcad-display-v1:`, the decimal UTF-8 byte length of the active view, `:`,
+the active view, the 64-character source revision, and the design metadata
+identity (empty for legacy scenes). Treat returned revision tokens as opaque.
+`displayedView` names the last successful view separately from `view`, which
+can name an unsuccessful requested view. Snapshot `design` contains the last
+valid normalized reference graph, or null for legacy scenes. This provenance
+tuple permits consumers to reject outdated check/export results; persisted
+check and export records are implemented in their later stories.
 
 Pending work, evaluation failure, timeout, cancellation and a superseding edit
 are distinct outcomes. A changed expected file or active view supersedes the

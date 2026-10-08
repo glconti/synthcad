@@ -18,6 +18,7 @@ struct PartNode {
   bool group=false;
   int parent=-1;
   std::vector<size_t> children,parts;
+  std::string sourceId;
 };
 struct TreeRow { size_t node; int depth; };
 enum class CheckState { None, Mixed, All };

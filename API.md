@@ -53,15 +53,54 @@
 - genus{manifold}
 - decompose polygons back to JS with slice/project return [[x,y],...] loops
 
-Assign your final solid to `scene` to render, e.g. `scene = cube({...});`.
+Export your final solid as `scene` to render, e.g. `export const scene = cube({...});`.
+Alternatively export the shared `design` graph below.
+
+## Shared source parts and instances
+
+Export `design` for assemblies, groups and multiple layouts that reference the
+same source parts. Do not also export `scene` or `displayParts`. A version-1
+design has `defaultView`, `parts`, `instances`, optional `groups`, and `views`.
+
+```javascript
+const body = cube({size:[20,10,3]});
+export const design = {
+  schemaVersion: 1, defaultView: 'assembly',
+  parts: [{id:'body', solid:body, quantity:2}],
+  instances: [{id:'left', part:'body'},
+              {id:'right', part:'body', transform:{translate:[30,0,0]}}],
+  groups: [{id:'pair', members:[{instance:'left'}, {instance:'right'}]}],
+  views: [
+    {id:'assembly', kind:'assembly', members:[{group:'pair'}]},
+    {id:'plate', kind:'plate', members:[{group:'pair'}],
+     placements:{right:{translate:[25,0,0]}}},
+  ],
+};
+```
+
+Each source solid is defined once; physical copies have distinct instance IDs.
+Groups contain typed references to instances or other groups. Repeated membership
+creates tree aliases, never extra export copies. Names, colors and exportability
+inherit from the source and may be overridden per instance. Layout transforms
+rotate XYZ in degrees then translate in mm; a view override replaces the entire
+instance pose. They do not scale the source or move another view. Quantity is
+declared intent, not an instruction to generate copies or a plate check.
+
+Run `synthcad docs design` for the complete schema, limits, defaults and reference
+validation contract ([source](docs/design-graph.md)). All groups and views are
+validated, including unused ones; invalid references/cycles disable export and
+retain the previous valid view. A manifest maps named views to the shared entry:
+`"views":{"assembly":"design.js","plate":"design.js"}`. Standalone checks
+use the design's default view. Existing `scene`/`displayParts` files still work.
 
 ## Parts, groups and display colors
 
 The optional `displayParts` export defines **both** the viewer's components and
 its selective STL export source. Include every component that should be viewed
 or offered for export; solids present only in `scene` are not added automatically.
-The module must still export a valid `scene` (used for legacy scenes and CLI CAD
-bounds). Use original assembly coordinates or deliberate print-layout coordinates.
+With this legacy `displayParts` contract, the module must also export a valid
+`scene` (used for CLI CAD bounds). The shared `design` contract above replaces
+both exports. Use original assembly coordinates or deliberate print-layout coordinates.
 
 ```javascript
 const panel = cube({size:[100,40,4]});

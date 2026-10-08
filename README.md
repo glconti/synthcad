@@ -69,6 +69,21 @@ That directory is ignored by Git and is not part of the public development branc
 Preserve relative imports when moving a scene and its supporting modules there.
 Avoid force-adding personal files; `.gitignore` is a safeguard, not access control.
 
+## Linux development builds
+
+The viewer and CLI have been built and tested on Ubuntu 24.04 x64 with GCC 13.3,
+CMake 3.28, raylib 6.0, assimp 5.3, TBB and nlohmann_json. Install the development
+packages for these dependencies, an OpenGL/X11 environment and DejaVu Sans.
+Configure with CMake and build the `dingcad_viewer` and `synthcad` targets.
+Set `CMAKE_PREFIX_PATH` when dependency packages are installed outside the system
+prefix. Automated CI and distribution packages remain work in progress.
+
+`SYNTHCAD_CUSTOM_FRAME_CONTROL` must match raylib's
+`SUPPORT_CUSTOM_FRAME_CONTROL` build setting. It defaults to OFF on Linux and
+ON on Windows, matching the tested Linux dependency and Windows vcpkg builds.
+See [Batch 3 validation](docs/batch-3-validation.md) for runtime evidence and
+the limits of Xvfb/Mesa testing.
+
 ## Agent CLI and shared review
 
 Release builds also produce `synthcad` (`synthcad.exe` on Windows). Start with
@@ -93,12 +108,19 @@ use `wait --revision TOKEN` to acknowledge the loaded result. Highlights, framin
 named project views, selection readback and PNG screenshots share that viewer.
 These commands do not edit geometry, generate print layouts or export STL.
 
+For a new assembly with several layouts, export a shared `design` graph:
+source parts define geometry once, instances identify physical copies, and
+groups/views reference those instances. Plate placements can override assembly
+poses without copying the model. `synthcad docs design` prints the full contract;
+the [public shared-design fixture](viewer/tests/agent-fixtures/shared-design)
+shows four views sharing one entry. Automatic plate validation remains planned.
+
 See the [agent CLI guide](docs/agent-cli.md) for commands, errors and session
 lifecycle, and the [project/revision contract](docs/agent-contract.md) for optional
 `synthcad.json` projects. Standalone `.js` scenes remain supported. Named sessions
 are created through `open`; legacy direct scene launches keep their existing
-viewer behavior. Linux transport is tested; Linux GUI/distribution validation
-remains part of the v1 backlog.
+viewer behavior. The complete review loop also passes on Linux under Xvfb/Mesa;
+automated CI and distribution validation remain part of the v1 backlog.
 
 ## Viewer controls
 

@@ -54,17 +54,24 @@ json ReviewSnapshot(const dingcad::PartTree& tree,
                 bounds = {{"min", Coordinates(box.min)}, {"max", Coordinates(box.max)}};
             }
         }
-        result["parts"].push_back({{"id", part.id}, {"name", part.name},
+        json item = {{"id", part.id}, {"name", part.name},
             {"group", part.group}, {"color", ColorHex(part.color)},
             {"visible", tree.Visible(i)},
             {"exportable", tree.state.flags.at(part.id).exportable},
-            {"bounds", std::move(bounds)}});
+            {"bounds", std::move(bounds)}};
+        if (!part.sourcePartId.empty()) {
+            item["sourcePartId"] = part.sourcePartId;
+            item["instanceId"] = part.id;
+            item["transform"] = {{"rotate", part.rotation}, {"translate", part.translation}};
+        }
+        result["parts"].push_back(std::move(item));
     }
     for (const auto& node : tree.nodes) {
         if (!node.group) continue;
         json group = {{"key", node.key}, {"name", node.name},
                       {"parent", nullptr}, {"partIds", PartIds(tree, node.parts)}};
         if (node.parent >= 0) group["parent"] = tree.nodes.at(static_cast<size_t>(node.parent)).key;
+        if (!node.sourceId.empty()) group["sourceId"] = node.sourceId;
         result["groups"].push_back(std::move(group));
     }
     if (const auto selection = tree.Selection()) {

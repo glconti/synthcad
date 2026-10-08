@@ -43,6 +43,11 @@ int main() {
         Check(snapshot["parts"][0]["visible"] == false && snapshot["parts"][0]["exportable"] == true, "hidden remains exportable");
         Check(snapshot["parts"][1]["visible"] == true && snapshot["parts"][1]["exportable"] == true, "export override exposed");
         Check(snapshot["parts"][2]["exportable"] == false, "reference export default exposed");
+        for (const auto& part : snapshot["parts"])
+            Check(!part.contains("sourcePartId") && !part.contains("instanceId") && !part.contains("transform"),
+                  "legacy snapshots retain their original part schema");
+        for (const auto& group : snapshot["groups"])
+            Check(!group.contains("sourceId"), "legacy snapshots retain their original group schema");
         Check(snapshot["parts"][0]["bounds"]["min"] == nlohmann::json::array({100, 10, 20})
               && snapshot["parts"][0]["bounds"]["max"] == nlohmann::json::array({102, 13, 24}), "bounds retain CAD millimetres and Z up");
         Check(snapshot["groups"][0]["parent"].is_null()
@@ -75,6 +80,36 @@ int main() {
         tree.state.selected.clear();
         Check(ResolveReviewParts(tree, {}, true).empty(), "absent selection resolves empty");
         Check(ReviewSnapshot(tree, {}, camera, {})["selection"].is_null(), "absent selection serializes null");
+        auto instance = Part("instance-1", "Instance", {}, true, 4);
+        instance.sourcePartId = "source";
+        instance.rotation = {0, 0, 90};
+        instance.translation = {4, 10, 20};
+        instance.memberships = {{{"left", "Left"}, {"shared", "Shared"}},
+                                {{"right", "Right"}, {"shared", "Shared"}},
+                                {{"left", "Left"}, {"shared", "Shared"}}};
+        auto otherInstance = instance;
+        otherInstance.id = "instance-2";
+        otherInstance.memberships = {{{"left", "Left"}, {"shared", "Shared"}}};
+        tree.Reload({instance, otherInstance});
+        auto graphSnapshot = ReviewSnapshot(tree, {}, camera, {});
+        Check(graphSnapshot["parts"].size() == 2 && graphSnapshot["groups"].size() == 4,
+              "snapshot emits unique instances and unfolded group paths");
+        Check(graphSnapshot["parts"][0]["id"] == "instance-1"
+              && graphSnapshot["parts"][0]["instanceId"] == "instance-1"
+              && graphSnapshot["parts"][0]["sourcePartId"] == "source"
+              && graphSnapshot["parts"][1]["sourcePartId"] == "source", "instance and source identities exposed separately");
+        Check(graphSnapshot["parts"][0]["transform"]["rotate"] == nlohmann::json::array({0, 0, 90})
+              && graphSnapshot["parts"][0]["transform"]["translate"] == nlohmann::json::array({4, 10, 20}),
+              "snapshot preserves authored instance transform");
+        Check(graphSnapshot["groups"][0]["sourceId"] == "left"
+              && graphSnapshot["groups"][1]["sourceId"] == "shared"
+              && graphSnapshot["groups"][3]["sourceId"] == "shared"
+              && graphSnapshot["groups"][1]["key"] != graphSnapshot["groups"][3]["key"],
+              "group snapshots expose authored IDs and distinct path keys");
+        Check(graphSnapshot["groups"][0]["partIds"] == nlohmann::json::array({"instance-1", "instance-2"}),
+              "snapshot ancestor membership excludes duplicate aliases");
+        Check(ResolveReviewParts(tree, {tree.nodes[0].key, "instance-1"}) == std::vector<size_t>({0, 1}),
+              "graph group review resolution dedupes shared physical instances");
         tree.Reload({});
         auto empty = ReviewSnapshot(tree, {}, camera, {});
         Check(empty["parts"].empty() && empty["groups"].empty() && empty["annotations"].empty(), "empty scene snapshot");

@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include <memory>
 #include <string>
 #include <vector>
@@ -9,6 +10,7 @@ extern "C" {
 }
 
 namespace dingcad {
+struct GroupLabel { std::string id, name; };
 struct DisplayPart {
   std::shared_ptr<manifold::Manifold> solid;
   Color color;
@@ -16,6 +18,11 @@ struct DisplayPart {
   std::string name;
   std::vector<std::string> group;
   bool exportable = true;
+  std::string sourcePartId;
+  std::array<double,3> rotation{0,0,0}, translation{0,0,0};
+  std::vector<std::vector<GroupLabel>> memberships;
+  // Retain one shared, unplaced source for instance-aware checks and exports.
+  std::shared_ptr<manifold::Manifold> sourceSolid;
 };
 struct Appearance {
   bool specified=false;

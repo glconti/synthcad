@@ -12,9 +12,12 @@ modeling code or use an exported mesh as an editable substitute. A deliberate
 second physical copy is another placement of the same source part. Source
 definitions, placed instances and grouping have different meanings: putting
 one instance in a second review group should not create another printable copy.
-The current API supports shared imported modules and transformed solids; a
-project-wide source/instance reference registry and quantity validation are
-planned, not yet implemented. Do not invent manifest fields to imply otherwise.
+For new multi-view projects, export a shared `design` graph: define source parts
+once, give each physical copy a distinct instance ID, and reference those IDs
+from groups and view members. A plate's `placements` override assembly poses
+without changing the source or other views. Run `synthcad docs design` for the
+schema. The instance registry and intended quantities are available; automatic
+plate completeness and printer-dependent validation remain future work.
 
 Use the user's known usable build area and bed exclusions. If these are unknown, leave plate fit provisional and proceed with model review; do not infer a printer from another project. Place parts with room for the slicer choices that are actually known, and state when support or brim allowances have not been included.
 

@@ -43,6 +43,7 @@ extern "C" {
 #include "agent_transport.h"
 #include "agent_bridge.h"
 #include "agent_scene.h"
+#include "design_graph.h"
 
 namespace {
 const Color kBaseColor = {210, 210, 220, 255};
@@ -583,10 +584,12 @@ struct LoadResult {
   std::vector<std::filesystem::path> dependencies;
   std::vector<dingcad::Dimension> dimensions;
   dingcad::Appearance appearance;
+  nlohmann::json design;
   synthcad::FileSnapshot files;
 };
 
-LoadResult LoadSceneFromFile(JSRuntime *runtime, const std::filesystem::path &path) {
+LoadResult LoadSceneFromFile(JSRuntime *runtime, const std::filesystem::path &path,
+                             const std::string& requestedView = "") {
   LoadResult result;
   const auto loadStarted=std::chrono::steady_clock::now();
   const auto absolutePath = std::filesystem::absolute(path);
@@ -667,7 +670,13 @@ LoadResult LoadSceneFromFile(JSRuntime *runtime, const std::filesystem::path &pa
     return result;
   }
 
-  JSValue sceneVal = JS_GetPropertyStr(ctx, moduleNamespace, "scene");
+  auto design = dingcad::ReadDesignGraph(ctx, moduleNamespace, requestedView);
+  if (!design.diagnostic.empty()) {
+    result.message = design.diagnostic;
+    JS_FreeValue(ctx, moduleNamespace);assignDependencies();JS_FreeContext(ctx);
+    return result;
+  }
+  JSValue sceneVal = design.specified ? JS_UNDEFINED : JS_GetPropertyStr(ctx, moduleNamespace, "scene");
   if (JS_IsException(sceneVal)) {
     JS_FreeValue(ctx, moduleNamespace);
     captureException();
@@ -676,7 +685,8 @@ LoadResult LoadSceneFromFile(JSRuntime *runtime, const std::filesystem::path &pa
     return result;
   }
   auto annotations = dingcad::ReadDimensions(ctx, moduleNamespace);
-  result.appearance = dingcad::ReadAppearance(ctx, moduleNamespace);
+  result.appearance = design.specified ? std::move(design.appearance) : dingcad::ReadAppearance(ctx, moduleNamespace);
+  if (design.specified) result.design = std::move(design.metadata);
   JS_FreeValue(ctx, moduleNamespace);
 
   if(!result.appearance.diagnostic.empty()){
@@ -684,7 +694,7 @@ LoadResult LoadSceneFromFile(JSRuntime *runtime, const std::filesystem::path &pa
     JS_FreeValue(ctx,sceneVal);JS_FreeContext(ctx);assignDependencies();return result;
   }
 
-  if (JS_IsUndefined(sceneVal)) {
+  if (!design.specified && JS_IsUndefined(sceneVal)) {
     JS_FreeValue(ctx, sceneVal);
     JS_FreeContext(ctx);
     result.message = "Scene module must export 'scene'";
@@ -692,7 +702,7 @@ LoadResult LoadSceneFromFile(JSRuntime *runtime, const std::filesystem::path &pa
     return result;
   }
 
-  auto sceneHandle = GetManifoldHandle(ctx, sceneVal);
+  auto sceneHandle = design.specified ? design.scene : GetManifoldHandle(ctx, sceneVal);
   if (!sceneHandle) {
     JS_FreeValue(ctx, sceneVal);
     JS_FreeContext(ctx);
@@ -877,8 +887,15 @@ int main(int argc, char *argv[]) {
   bool brandingFontCustom = false;
 #if defined(_WIN32)
   const std::filesystem::path uiFontPath("C:/Windows/Fonts/segoeui.ttf");
-#else
+#elif defined(__APPLE__)
   const std::filesystem::path uiFontPath("/System/Library/Fonts/Supplemental/Arial.ttf");
+#else
+  const std::filesystem::path uiFontPath=[](){
+    for(const auto* path:{"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                          "/usr/share/fonts/TTF/DejaVuSans.ttf"})
+      if(std::filesystem::exists(path))return std::filesystem::path(path);
+    return std::filesystem::path{};
+  }();
 #endif
   auto loadUiFont=[&](){
     if(brandingFontCustom)UnloadFont(brandingFont);
@@ -918,6 +935,8 @@ int main(int argc, char *argv[]) {
   std::filesystem::path scriptPath;
   synthcad::FileSnapshot watchedFiles,attemptedFiles,displayedFiles;
   std::string attemptedRevision,displayedRevision,loadStatus="loading",loadDiagnostic;
+  std::string displayedSourceRevision,displayedView;
+  nlohmann::json displayedDesign;
   std::vector<std::string> agentHighlights;
   std::optional<std::filesystem::path> defaultScript;
   if(project){defaultScript=synthcad::ResolveView(*project,activeView);}
@@ -948,7 +967,15 @@ int main(int argc, char *argv[]) {
       }
       for(const auto& f:attemptedFiles)watchedFiles[f.first]=f.second;
     }
-    if(load.success){displayedFiles=attemptedFiles;displayedRevision=attemptedRevision;}
+    if(load.success){
+      displayedFiles=attemptedFiles;displayedSourceRevision=attemptedRevision;
+      displayedView=activeView;displayedDesign=load.design;
+      // Same source bytes can describe several layouts. Guards identify what
+      // was displayed, including the active view and resolved graph placement.
+      const auto identity=load.design.is_object()?load.design.value("identity",""):"";
+      displayedRevision=synthcad::Sha256("synthcad-display-v1:"+
+          std::to_string(activeView.size())+":"+activeView+attemptedRevision+identity);
+    }
   };
   if (defaultScript) {
     scriptPath = std::filesystem::absolute(*defaultScript);
@@ -957,7 +984,7 @@ int main(int argc, char *argv[]) {
       agent->Publish({{"status","loading"},{"view",activeView},{"projectPath",project->path.u8string()},
         {"displayedRevision",""},{"attemptedRevision",""},{"exportValid",false},{"selection",nullptr}},initial);
     }
-    auto load = LoadSceneFromFile(runtime, scriptPath);
+    auto load = LoadSceneFromFile(runtime, scriptPath, project&&!project->standalone?activeView:"");
     recordLoad(load);
     if (load.success) {
       scene = load.manifold;
@@ -993,7 +1020,7 @@ int main(int argc, char *argv[]) {
   if(!scriptPath.empty())panel.sceneName=scriptPath.filename().u8string();
   SetWindowTitle((std::string("SynthCAD \xE2\x80\x94 ")+panel.sceneName).c_str());
   std::unordered_map<std::string,dingcad::TreeSession> sessions;
-  std::string liveSceneKey=scriptPath.u8string();
+  std::string liveSceneKey=scriptPath.u8string()+"\nview:"+activeView;
   auto viewport=panel.Viewport(GetScreenWidth(),GetScreenHeight());
   BoundingBox renderBounds{{-20,-0.1f,-20},{20,2,20}};
   auto updateBounds=[&](){
@@ -1013,6 +1040,8 @@ int main(int argc, char *argv[]) {
     auto snapshot=synthcad::ReviewSnapshot(tree,dimensions,camera,agentHighlights);
     snapshot["status"]=loadStatus;snapshot["attemptedRevision"]=attemptedRevision;
     snapshot["displayedRevision"]=displayedRevision;snapshot["exportValid"]=exportValid;
+    snapshot["sourceRevision"]=displayedSourceRevision;snapshot["displayedView"]=displayedView;
+    snapshot["design"]=displayedDesign;
     snapshot["diagnostic"]=loadDiagnostic;snapshot["view"]=activeView;
     snapshot["projectPath"]=project?project->path.u8string():scriptPath.u8string();
     snapshot["views"]=nlohmann::json::object();
@@ -1161,7 +1190,7 @@ int main(int argc, char *argv[]) {
     const auto frameBudget = std::chrono::duration_cast<FrameClock::duration>(
         std::chrono::duration<double>(1.0 / targetFps));
     auto finishFrame = [&]() {
-#if defined(_WIN32)
+#if defined(SYNTHCAD_CUSTOM_FRAME_CONTROL)
       // Custom frame control leaves event pumping to the application.
       PollInputEvents();
 #else
@@ -1185,14 +1214,14 @@ int main(int argc, char *argv[]) {
       try {
         if(project){auto next=synthcad::LoadProject(project->path);
           auto nextPath=synthcad::ResolveView(next,activeView);project=std::move(next);scriptPath=nextPath;}
-        load=LoadSceneFromFile(runtime,scriptPath);
+        load=LoadSceneFromFile(runtime,scriptPath,project&&!project->standalone?activeView:"");
       }catch(const std::exception& error){load.message=error.what();
         if(project)synthcad::ReadTrackedFile(project->path,load.files);
       }
       recordLoad(load);
       if (load.success) {
         sessions[liveSceneKey]=tree.state;
-        const auto key=scriptPath.u8string();
+        const auto key=scriptPath.u8string()+"\nview:"+activeView;
         tree.state=sessions.count(key)?sessions.at(key):dingcad::TreeSession{};
         scene = load.manifold;
         tree.Reload(SceneParts(scene,load.appearance));
@@ -1450,8 +1479,8 @@ int main(int argc, char *argv[]) {
       rlDrawRenderBatchActive();Image shot=LoadImageFromScreen();ExportImage(shot,argv[3]);UnloadImage(shot);
     }
     EndDrawing();
-#if defined(_WIN32)
-    // vcpkg's raylib is built with SUPPORT_CUSTOM_FRAME_CONTROL. In that
+#if defined(SYNTHCAD_CUSTOM_FRAME_CONTROL)
+    // The linked raylib uses SUPPORT_CUSTOM_FRAME_CONTROL. In that
     // configuration EndDrawing() only flushes draw commands; presenting the
     // frame is the application's job. finishFrame() pumps events in every state.
     SwapScreenBuffer();

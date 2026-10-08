@@ -28,6 +28,12 @@ add_library(dingcad_quickjs STATIC
 )
 target_include_directories(dingcad_quickjs PUBLIC ${PROJECT_SOURCE_DIR}/vendor/quickjs)
 set_target_properties(dingcad_quickjs PROPERTIES LINKER_LANGUAGE C)
+if(UNIX)
+  target_link_libraries(dingcad_quickjs PUBLIC ${CMAKE_DL_LIBS} Threads::Threads m)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_compile_definitions(dingcad_quickjs PRIVATE _GNU_SOURCE)
+  endif()
+endif()
 if(WIN32)
   # cutils.c includes windows.h before cutils.h, which includes winsock2.h.
   # Prevent windows.h from pulling in legacy winsock.h first.
@@ -36,6 +42,20 @@ if(WIN32)
     # QuickJS uses <stdatomic.h>, which MSVC enables behind this opt-in.
     target_compile_options(dingcad_quickjs PRIVATE /experimental:c11atomics)
   endif()
+endif()
+
+add_library(synthcad_design_graph STATIC design_graph.cpp)
+target_include_directories(synthcad_design_graph PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(synthcad_design_graph PUBLIC manifold raylib dingcad_quickjs synthcad_agent)
+if(MSVC)
+  target_compile_options(synthcad_design_graph PRIVATE /utf-8)
+endif()
+add_executable(synthcad_design_graph_tests EXCLUDE_FROM_ALL tests/design_graph_test.cpp js_bindings.cpp)
+target_link_libraries(synthcad_design_graph_tests PRIVATE synthcad_design_graph)
+if(MSVC)
+  target_compile_options(synthcad_design_graph_tests PRIVATE /utf-8 /UNDEBUG)
+else()
+  target_compile_options(synthcad_design_graph_tests PRIVATE -UNDEBUG)
 endif()
 
 add_executable(dingcad_viewer
@@ -62,7 +82,20 @@ target_link_libraries(dingcad_viewer
     raylib
     dingcad_quickjs
     synthcad_agent
+    synthcad_design_graph
 )
+
+# Must match the linked raylib build. The pinned Windows vcpkg dependency uses
+# custom frame control; system/default Linux raylib normally presents itself.
+if(WIN32)
+  set(synthcad_custom_frame_default ON)
+else()
+  set(synthcad_custom_frame_default OFF)
+endif()
+option(SYNTHCAD_CUSTOM_FRAME_CONTROL "raylib was built with SUPPORT_CUSTOM_FRAME_CONTROL" ${synthcad_custom_frame_default})
+if(SYNTHCAD_CUSTOM_FRAME_CONTROL)
+  target_compile_definitions(dingcad_viewer PRIVATE SYNTHCAD_CUSTOM_FRAME_CONTROL)
+endif()
 
 foreach(test project_contract agent_cli agent_transport agent_bridge agent_knowledge)
   add_executable(synthcad_${test}_tests EXCLUDE_FROM_ALL tests/${test}_test.cpp)

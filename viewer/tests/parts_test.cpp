@@ -65,6 +65,56 @@ int main(){try{
   PartTree defaults;defaults.Reload({a});defaults.Reload({updated});
   Require(!defaults.state.flags.at("a").exportable,"Unmodified exportability follows model default");
 
+  PartTree instances;
+  auto bolt=Part("bolt-1","Bolt",{},true,0);
+  bolt.sourcePartId="bolt";
+  bolt.memberships={{{"left","Left assembly"},{"shared","Shared"}},
+                    {{"right","Right assembly"},{"shared","Shared"}},
+                    {{"left","Left assembly"},{"other","Other"}},
+                    {{"left","Left assembly"},{"shared","Shared"}}, {}};
+  auto secondBolt=Part("bolt-2","Second bolt",{},true,3);
+  secondBolt.sourcePartId="bolt";
+  secondBolt.memberships={{{"left","Left assembly"},{"shared","Shared"}}};
+  instances.Reload({bolt,secondBolt});
+  std::vector<size_t> aliases,shared;
+  for(size_t n=0;n<instances.nodes.size();++n){
+    if(instances.nodes[n].key=="p:bolt-1")aliases.push_back(n);
+    if(instances.nodes[n].sourceId=="shared")shared.push_back(n);
+  }
+  const auto leftAssembly=Node(instances,"Left assembly");
+  Require(aliases.size()==4&&instances.parts.size()==2,"Membership aliases dedupe identical paths and preserve distinct instances");
+  Require(shared.size()==2&&instances.nodes[shared[0]].key!=instances.nodes[shared[1]].key,"Shared group has path-specific row identities");
+  Require(instances.nodes[leftAssembly].parts==std::vector<size_t>({0,1}),"Ancestor membership dedupes an instance in multiple descendant branches");
+  Require(instances.ExportIndices(false)==std::vector<size_t>({0,1})
+          &&std::abs(instances.ExportSolid(false)->Volume()-16)<1e-8,"Exports count unique instances, never alias rows");
+  instances.Toggle(aliases.back(),false);
+  for(auto alias:aliases)Require(instances.Checked(alias,false)==CheckState::None,"Every alias shares visibility state");
+  Require(instances.Checked(leftAssembly,false)==CheckState::Mixed,"Shared instance contributes once to group tristate");
+  auto rightRows=instances.Rows("Right assembly");
+  Require(rightRows.size()==3,"Filtering a group includes its alias branch");
+  instances.Toggle(rightRows.back().node,true);
+  Require(instances.ExportIndices(false)==std::vector<size_t>({1})
+          &&instances.Checked(leftAssembly,true)==CheckState::Mixed,"Filtered alias changes instance exportability across branches");
+  instances.Select(aliases.back());instances.Isolate();
+  Require(instances.Visible(0)&&!instances.Visible(1),"Isolating an alias selects its physical instance");
+  instances.Isolate();
+  Require(!instances.Visible(0)&&instances.Visible(1),"Alias isolation restores previous shared flags");
+  instances.Select(leftAssembly);
+  const auto stableGroup=instances.state.selected;
+  instances.state.collapsed.insert(stableGroup);
+  for(auto &path:bolt.memberships)for(auto &label:path)if(label.id=="left")label.name="Renamed assembly";
+  secondBolt.memberships[0][0].name="Renamed assembly";
+  bolt.name="Edited source bolt";bolt.solid=std::make_shared<manifold::Manifold>(manifold::Manifold::Cube({3,3,3}));
+  instances.Reload({secondBolt,bolt});
+  Require(instances.state.selected==stableGroup&&instances.state.collapsed.count(stableGroup)
+          &&instances.nodes[*instances.Selection()].name=="Renamed assembly","Group rename preserves selection and collapse by authored IDs");
+  Require(!instances.Visible(1)&&!instances.state.flags.at("bolt-1").exportable
+          &&instances.parts[1].name=="Edited source bolt","Source edits preserve instance flags across reorder");
+  auto legacyGroup=Part("legacy","Legacy",{"Renamed assembly"});
+  instances.Reload({secondBolt,bolt,legacyGroup});
+  Require(std::count_if(instances.nodes.begin(),instances.nodes.end(),[](const auto &n){return n.group&&n.name=="Renamed assembly";})==2,
+          "Explicit group IDs and legacy labels have separate key namespaces");
+
   tree.Reload({wall,a,b});tree.ShowAll();tree.state.collapsed.clear();
   tree.state.flags.at("a").exportable=true;tree.state.flags.at("b").exportable=true;
   const auto solid=tree.ExportSolid(false);

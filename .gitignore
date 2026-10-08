@@ -1,6 +1,7 @@
 build/
 out/
 vcpkg_installed/
+__pycache__/
 
 # Personal designs and exports stay local, separate from public development.
 /local-scenes/

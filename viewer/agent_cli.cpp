@@ -157,7 +157,7 @@ std::string Help(const std::string& command) {
   const auto guidance = [&]() {
     out << "Guidance on demand: synthcad docs AREA\n"
         << "  Getting started     start, skill\n"
-        << "  Modeling            modeling, api\n"
+        << "  Modeling            modeling, api, design\n"
         << "  Printing & assembly print-design, fit-and-assembly\n"
         << "  Plates & handoff     build-plates, bambu-handoff\n"
         << "  Agent review        cli, projects\n"

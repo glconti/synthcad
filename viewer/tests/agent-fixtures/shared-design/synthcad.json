@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "name": "Shared design graph acceptance fixture",
+  "defaultView": "assembly",
+  "views": {
+    "assembly": "design.js",
+    "inspection": "design.js",
+    "plate-1": "design.js",
+    "plate-2": "design.js"
+  }
+}

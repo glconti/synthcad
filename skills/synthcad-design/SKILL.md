@@ -11,6 +11,7 @@ Start with `synthcad docs` to list the available topics, then print only the gui
 
 - `synthcad docs start` for the workflow entry point.
 - `synthcad docs modeling` for scene structure and parametric geometry.
+- `synthcad docs design` for shared source parts, instances, groups and layouts.
 - `synthcad docs print-design` for orientation and process decisions.
 - `synthcad docs fit-and-assembly` for mating parts and assembly sequence.
 - `synthcad docs build-plates` for authored print-layout views.
@@ -26,7 +27,7 @@ Preserve authored names and languages. Keep measured values distinct from derive
 
 ## Author and review
 
-Edit the JavaScript scene sources with the available file editor. The `synthcad` CLI opens and reviews projects; it does not author geometry or export models. Keep `scene` valid and include every intended viewer/export component in `displayParts`, using stable IDs and explicit `exportable` flags for designed parts and external context. Treat display colors as visual aids, not material assignments.
+Edit the JavaScript scene sources with the available file editor. The `synthcad` CLI opens and reviews projects; it does not author geometry or export models. For new multi-view projects, use a shared `design` graph: define geometry once, reference physical instances from groups and layouts, and keep assembly and plate transforms separate. For legacy scenes, keep `scene` valid and include every intended viewer/export component in `displayParts`. Do not mix these export styles. Use stable IDs and explicit `exportable` flags for designed parts and external context. Treat display colors as visual aids, not material assignments.
 
 After editing, capture the requested revision and wait for that revision to load successfully. Use the returned **displayed** revision for later `--expect-revision` review commands. A successful load and a plausible image establish that the edited source was evaluated and rendered; they do not establish fit, wall strength, printability, a successful slice or physical performance. Run `synthcad docs modeling` for checks the current files can support, and state what still needs slicer or physical evidence.
 
