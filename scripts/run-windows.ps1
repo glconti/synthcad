@@ -1,11 +1,16 @@
-[CmdletBinding()]
+[CmdletBinding(PositionalBinding = $false)]
 param(
-  [Parameter(ValueFromRemainingArguments = $true)]
-  [string[]] $ViewerArgs
+  [Parameter(Position = 0, ValueFromRemainingArguments = $true)]
+  [string[]] $ViewerArgs,
+
+  [ValidateSet('Release', 'Debug')]
+  [string] $Configuration = 'Release'
 )
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
+$preset = 'windows-x64-' + $Configuration.ToLowerInvariant()
+$buildDirectory = Join-Path $root "out\build\$preset"
 
 if (-not $env:VCPKG_ROOT) {
   $defaultVcpkgRoot = Join-Path $env:USERPROFILE 'vcpkg'
@@ -51,13 +56,18 @@ $env:Path = "$ninjaDirectory;$env:Path"
 
 Push-Location $root
 try {
-  & $cmakeExecutable --preset windows-x64-debug
+  # Configure on first use. Ninja/CMake regenerate automatically when tracked
+  # build inputs change, avoiding a redundant vcpkg configure on every launch.
+  if (-not (Test-Path (Join-Path $buildDirectory 'CMakeCache.txt')) -or
+      -not (Test-Path (Join-Path $buildDirectory 'build.ninja'))) {
+    & $cmakeExecutable --preset $preset
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  }
+
+  & $cmakeExecutable --build --preset $preset
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-  & $cmakeExecutable --build --preset windows-x64-debug
-  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-  $viewer = Join-Path $root 'out\build\windows-x64-debug\viewer\dingcad_viewer.exe'
+  $viewer = Join-Path $buildDirectory 'viewer\dingcad_viewer.exe'
   if (-not (Test-Path -LiteralPath $viewer)) {
     throw "Viewer executable was not found at $viewer"
   }

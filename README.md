@@ -41,9 +41,17 @@ From PowerShell, run:
 .\scripts\run-windows.ps1
 ```
 
-To work in VS Code, open this folder, install the recommended extensions, and select
-the `windows-x64-debug` CMake preset. The **Debug dingcad** launch configuration
-builds and starts the current CMake target with `scene.js`.
+The normal launcher uses the optimized `windows-x64-release` preset. Debug
+builds can be much slower for models with many boolean operations. The launcher
+configures on first use, then builds incrementally; CMake regenerates when build
+inputs change. To refresh dependencies or change toolchain settings explicitly,
+run `cmake --preset windows-x64-release` in a configured developer terminal.
+
+For native debugging, use `scripts/run-windows.ps1 -Configuration Debug`, or open
+this folder in VS Code, install the recommended extensions, and select the
+`windows-x64-debug` preset. The **Debug dingcad** launch configuration builds and
+starts the selected CMake target with `scene.js`; **Run dingcad** uses the normal
+Release launcher.
 
 `scene.js` retains the upstream example assembly. To run a different scene, pass
 its path to the launcher:
@@ -117,3 +125,17 @@ build directory. The parts suite covers nested trees, tri-state controls, search
 isolation, reload/reorder/add/remove, input capture and selective STL file safety.
 Use `viewer/tests/parts_scene.js` with `--ui-preview` for visual checks of the
 panel, selection, dimensions, export dialog, hidden geometry and resized viewport.
+
+To diagnose scene startup without opening a window or exporting files:
+
+```powershell
+.\scripts\run-windows.ps1 --profile-scene .\local-scenes\scene.js
+```
+
+The output separates scene loading (including JavaScript/model evaluation) from
+display mesh conversion, and reports part/triangle counts. These timings exclude
+window creation and GPU upload; the interactive viewer logs those mesh/upload
+costs separately. Use the same scene and build configuration when comparing
+changes, without other heavy builds running at the same time. The profiler does
+not cache, simplify or change geometry. An already-running Debug viewer needs to
+be relaunched through the Release launcher to benefit from compiler optimization.

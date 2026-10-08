@@ -565,8 +565,13 @@ JSModuleDef *FilesystemModuleLoader(JSContext *ctx, const char *module_name, voi
   return module;
 }
 
+double ElapsedMilliseconds(std::chrono::steady_clock::time_point start) {
+  return std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count();
+}
+
 struct LoadResult {
   bool success = false;
+  double loadMilliseconds=0, evaluationMilliseconds=0;
   std::shared_ptr<manifold::Manifold> manifold;
   std::string message;
   std::vector<std::filesystem::path> dependencies;
@@ -576,6 +581,7 @@ struct LoadResult {
 
 LoadResult LoadSceneFromFile(JSRuntime *runtime, const std::filesystem::path &path) {
   LoadResult result;
+  const auto loadStarted=std::chrono::steady_clock::now();
   const auto absolutePath = std::filesystem::absolute(path);
   if (!std::filesystem::exists(absolutePath)) {
     result.message = "Scene file not found: " + absolutePath.string();
@@ -626,7 +632,9 @@ LoadResult LoadSceneFromFile(JSRuntime *runtime, const std::filesystem::path &pa
   }
 
   auto *module = static_cast<JSModuleDef *>(JS_VALUE_GET_PTR(moduleFunc));
+  const auto evaluationStarted=std::chrono::steady_clock::now();
   JSValue evalResult = JS_EvalFunction(ctx, moduleFunc);
+  result.evaluationMilliseconds=ElapsedMilliseconds(evaluationStarted);
   if (JS_IsException(evalResult)) {
     captureException();
     assignDependencies();
@@ -690,6 +698,7 @@ LoadResult LoadSceneFromFile(JSRuntime *runtime, const std::filesystem::path &pa
   assignDependencies();
   JS_FreeValue(ctx, sceneVal);
   JS_FreeContext(ctx);
+  result.loadMilliseconds=ElapsedMilliseconds(loadStarted);
   return result;
 }
 
@@ -703,10 +712,12 @@ struct PartModels {
   std::vector<BoundingBox> bounds;
   void Clear(){for(auto &m:models)DestroyModel(m);models.clear();bounds.clear();}
   void Reload(const dingcad::PartTree &tree){
+    const auto started=std::chrono::steady_clock::now();
     Clear();for(const auto &part:tree.parts){
       models.push_back(CreateRaylibModelFrom(dingcad::DisplayMesh({part}),true,!kUsePostProcessing));
       bounds.push_back(GetModelBoundingBox(models.back()));
     }
+    TraceLog(LOG_INFO,"Display mesh conversion and GPU upload: %.1f ms",ElapsedMilliseconds(started));
   }
   std::optional<BoundingBox> Bounds(const dingcad::PartTree &tree,bool selected=false) const{
     std::optional<BoundingBox> result;const auto node=tree.Selection();
@@ -755,6 +766,26 @@ int main(int argc, char *argv[]) {
     }
     DestroyModel(model);CloseWindow();load.appearance.parts.clear();load.manifold.reset();JS_FreeRuntime(runtime);
     return saved?0:1;
+  }
+  // Separate eager model evaluation from deferred tessellation. This headless
+  // diagnostic never writes geometry and uses the same parts as the viewer.
+  if(argc==3&&std::string(argv[1])=="--profile-scene"){
+    const auto started=std::chrono::steady_clock::now();
+    JSRuntime *runtime=JS_NewRuntime();EnsureManifoldClass(runtime);
+    JS_SetModuleLoaderFunc(runtime,nullptr,FilesystemModuleLoader,&g_module_loader_data);
+    auto load=LoadSceneFromFile(runtime,argv[2]);
+    if(!load.success){std::cerr<<load.message<<'\n';JS_FreeRuntime(runtime);return 1;}
+    const auto meshStarted=std::chrono::steady_clock::now();
+    size_t triangles=0;
+    const auto parts=SceneParts(load.manifold,load.appearance);
+    for(const auto &part:parts)triangles+=dingcad::DisplayMesh({part}).NumTri();
+    const double meshMilliseconds=ElapsedMilliseconds(meshStarted);
+    std::cout<<"Scene load (ms): "<<load.loadMilliseconds<<'\n'
+             <<"  JavaScript/model evaluation (ms): "<<load.evaluationMilliseconds<<'\n'
+             <<"Display mesh conversion (ms): "<<meshMilliseconds<<'\n'
+             <<"Total before GPU (ms): "<<ElapsedMilliseconds(started)<<'\n'
+             <<"Parts: "<<parts.size()<<", triangles: "<<triangles<<'\n';
+    JS_FreeRuntime(runtime);return 0;
   }
   // Validate scene code and annotations without opening a window, useful for
   // agents and automated checks before replacing the live scene.
@@ -855,6 +886,7 @@ int main(int argc, char *argv[]) {
       dimensions = std::move(load.dimensions);
       appearance = std::move(load.appearance);
       reportStatus(load.message);
+      TraceLog(LOG_INFO,"Scene load: %.1f ms (model evaluation %.1f ms)",load.loadMilliseconds,load.evaluationMilliseconds);
     } else {
       reportStatus(load.message);
     }
