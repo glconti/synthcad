@@ -158,7 +158,7 @@ const char *DimensionModeName(DimensionMode mode) {
 
 Rectangle DimensionButtonBounds(int width, int height) {
   const float buttonWidth = std::min(246.0f, std::max(0.0f, width - 16.0f));
-  return {8, std::max(0.0f, height - 42.0f), buttonWidth, std::min(34.0f, float(height))};
+  return {std::max(8.0f, width - buttonWidth - 8.0f), std::max(0.0f, height - 42.0f), buttonWidth, std::min(34.0f, float(height))};
 }
 
 void UpdateDimensionControls(DimensionControls &controls, Rectangle button,

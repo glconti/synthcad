@@ -76,7 +76,7 @@ int main(){try{
   tree.Toggle(Node(tree,"Wall"),true);
 
   PartsPanel panel;
-  Require(panel.Viewport(1280,720).width==960,"Independent scene viewport");
+  Require(panel.Viewport(1280,720).x==0&&panel.Viewport(1280,720).width==1280&&panel.Bounds(1280,720).width==320,"Overlay keeps full scene viewport");
   panel.Update(tree,Click(50,60),1280,720);
   PanelInput typed;typed.mouse={50,60};typed.text="Right";panel.Update(tree,typed,1280,720);
   Require(panel.searchFocus&&panel.search=="Right"&&tree.Visible(1),"Search editing leaves geometry visible");
@@ -88,14 +88,14 @@ int main(){try{
   drag.leftDown=false;panel.Update(tree,drag,1280,720);
   Require(!panel.CapturesMouse(drag,1280,720),"Camera released after panel gesture");
   panel.Update(tree,Click(25,20),1280,720);
-  Require(!panel.open&&panel.Viewport(1280,720).width==1280&&!panel.searchFocus,"Collapsed panel releases viewport and focus");
+  Require(!panel.open&&panel.Viewport(1280,720).width==1280&&!panel.searchFocus,"Collapsed panel preserves viewport and releases focus");
   panel.Update(tree,PanelInput{},720,480);
   Require(panel.Viewport(720,480).height==480,"Resize viewport");
   panel.Update(tree,Click(25,20),720,480);
-  Require(panel.open&&panel.Viewport(720,480).width==400,"Reopen after resize");
-  DimensionControls dimensions;const auto local=Vector2{20,460};
-  UpdateDimensionControls(dimensions,DimensionButtonBounds(400,480),local,false,true,true);
-  Require(dimensions.mode==DimensionMode::All&&dimensions.buttonGesture,"Dimension control uses viewport-local input");
+  Require(panel.open&&panel.Viewport(720,480).width==720&&panel.Bounds(720,480).width==320,"Reopening overlay preserves resized projection");
+  DimensionControls dimensions;const auto local=Vector2{700,460};
+  UpdateDimensionControls(dimensions,DimensionButtonBounds(720,480),local,false,true,true);
+  Require(dimensions.mode==DimensionMode::All&&dimensions.buttonGesture,"Dimension control stays accessible beside overlay");
 
   ExportDialog dialog;dialog.Open("unused.stl");
   auto save=Click(820,478); // 1280x720 dialog origin (330,210), save (800,462)

@@ -1228,11 +1228,11 @@ int main(int argc, char *argv[]) {
     rlPushMatrix();rlTranslatef(viewport.x,0,0);
     if(partModels.Bounds(tree))dingcad::DrawDimensions(dimensions,dimensionControls.mode,camera,brandingFont,localMouse,
       captureMouse||input.leftDown||input.rightDown||dimensionControls.overButton,screenWidth,screenHeight);
-    else DrawTextEx(brandingFont,"Tutte le parti sono nascoste",{20,64},18,0,DARKGRAY);
+    else DrawTextEx(brandingFont,"Tutte le parti sono nascoste",{panel.Bounds(screenWidth,screenHeight).width+20,64},18,0,DARKGRAY);
     dingcad::DrawDimensionButton(dimensionControls.mode,brandingFont,screenWidth,screenHeight,localMouse);
     const auto brandSize=MeasureTextEx(brandingFont,kBrandText,kBrandFontSize,0);
     DrawTextEx(brandingFont,kBrandText,{screenWidth-brandSize.x-20,14},kBrandFontSize,0,DARKGRAY);
-    if(!statusMessage.empty())DrawTextEx(brandingFont,statusMessage.c_str(),{12,50},14,0,exportValid?DARKGRAY:MAROON);
+    if(!statusMessage.empty())DrawTextEx(brandingFont,statusMessage.c_str(),{panel.Bounds(screenWidth,screenHeight).width+12,50},14,0,exportValid?DARKGRAY:MAROON);
     rlPopMatrix();EndScissorMode();
     panel.Draw(tree,brandingFont,GetScreenWidth(),GetScreenHeight());
     exportDialog.Draw(brandingFont,GetScreenWidth(),GetScreenHeight(),tree.ExportIndices(exportDialog.visibleOnly).size(),exportValid);

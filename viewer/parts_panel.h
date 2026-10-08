@@ -17,6 +17,7 @@ struct PartsPanel {
   std::string search;
   float scroll=0;
   Rectangle Viewport(int width,int height) const;
+  Rectangle Bounds(int width,int height) const;
   PanelActions Update(PartTree &tree,const PanelInput &input,int width,int height);
   bool CapturesMouse(const PanelInput &input,int width,int height) const;
   void Draw(const PartTree &tree,Font font,int width,int height) const;

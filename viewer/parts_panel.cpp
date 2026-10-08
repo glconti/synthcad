@@ -5,6 +5,7 @@
 namespace dingcad {
 namespace {
 const Color ink{42,57,53,255},muted{107,121,116,255},accent{59,130,94,255},paper{248,249,245,255};
+const Color overlayInk{240,244,242,255},overlayMuted{173,187,181,255},overlayAccent{119,204,162,255};
 bool Hit(const PanelInput &i,Rectangle r){return i.pressed&&CheckCollisionPointRec(i.mouse,r);}
 void EraseLast(std::string &s){if(s.empty())return;size_t pos=s.size()-1;while(pos>0&&(static_cast<unsigned char>(s[pos])&0xc0)==0x80)--pos;s.resize(pos);}
 void Edit(std::string &s,bool &selected,const PanelInput &i){
@@ -22,13 +23,15 @@ std::string Fit(std::string s,Font f,float size,float width){
 void Label(const std::string &text,Font f,float x,float y,float width,float size=16,Color c=ink){
   auto s=Fit(text,f,size,width);DrawTextEx(f,s.c_str(),{x,y},size,0,c);
 }
-void Button(Rectangle r,const char *label,Font f,bool enabled=true){
-  DrawRectangleRounded(r,0.16f,4,enabled?Color{226,234,227,255}:Color{237,239,235,255});
-  Label(label,f,r.x+7,r.y+6,r.width-14,13,enabled?ink:muted);
+void Button(Rectangle r,const char *label,Font f,bool enabled=true,bool dark=false){
+  const Color fill=dark?(enabled?Color{83,104,94,170}:Color{60,72,65,100}):
+    (enabled?Color{226,234,227,255}:Color{237,239,235,255});
+  DrawRectangleRounded(r,0.16f,4,fill);
+  Label(label,f,r.x+7,r.y+6,r.width-14,13,dark?(enabled?overlayInk:overlayMuted):(enabled?ink:muted));
 }
-void Check(Rectangle r,CheckState s){
-  DrawRectangleLinesEx(r,1,muted);
-  if(s!=CheckState::None)DrawRectangleRec({r.x+3,r.y+(s==CheckState::Mixed?7:3),r.width-6,s==CheckState::Mixed?3:r.height-6},accent);
+void Check(Rectangle r,CheckState s,bool dark=false){
+  DrawRectangleLinesEx(r,1,dark?overlayMuted:muted);
+  if(s!=CheckState::None)DrawRectangleRec({r.x+3,r.y+(s==CheckState::Mixed?7:3),r.width-6,s==CheckState::Mixed?3:r.height-6},dark?overlayAccent:accent);
 }
 Rectangle DialogBounds(int width,int height){return {std::max(8.0f,(width-620.0f)/2),std::max(8.0f,(height-300.0f)/2),std::min(620.0f,width-16.0f),300};}
 }
@@ -45,16 +48,21 @@ PanelInput ReadPanelInput(){
   return i;
 }
 Rectangle PartsPanel::Viewport(int width,int height) const{
-  const float panel=open?std::min(320.0f,std::max(0.0f,width-160.0f)):0;
-  return {panel,0,std::max(1.0f,width-panel),static_cast<float>(std::max(1,height))};
+  // The scene always occupies the complete window; toggling the overlay must
+  // not change camera projection or resize the render targets.
+  return {0,0,static_cast<float>(std::max(1,width)),static_cast<float>(std::max(1,height))};
+}
+Rectangle PartsPanel::Bounds(int width,int height) const{
+  return {0,0,open?std::min(320.0f,std::max(0.0f,width-160.0f)):0,
+          static_cast<float>(std::max(1,height))};
 }
 bool PartsPanel::CapturesMouse(const PanelInput &i,int width,int height) const{
-  return gesture||(open?i.mouse.x<Viewport(width,height).x:CheckCollisionPointRec(i.mouse,{8,8,76,30}));
+  return gesture||(open?CheckCollisionPointRec(i.mouse,Bounds(width,height)):CheckCollisionPointRec(i.mouse,{8,8,76,30}));
 }
 PanelActions PartsPanel::Update(PartTree &tree,const PanelInput &i,int width,int height){
   PanelActions a;
   if(i.pressed||i.rightPressed)gesture=CapturesMouse(i,width,height);
-  const float w=Viewport(width,height).x;
+  const float w=Bounds(width,height).width;
   if(Hit(i,{8,8,76,30})){open=!open;searchFocus=false;return a;}
   if(!open){searchFocus=false;if(!i.leftDown&&!i.rightDown&&!i.pressed&&!i.rightPressed)gesture=false;return a;}
   if(i.pressed)searchFocus=CheckCollisionPointRec(i.mouse,{8,48,w-16,28});
@@ -83,33 +91,35 @@ PanelActions PartsPanel::Update(PartTree &tree,const PanelInput &i,int width,int
   return a;
 }
 void PartsPanel::Draw(const PartTree &tree,Font f,int width,int height) const{
-  if(!open){Button({8,8,76,30},"Parti >",f);return;}
-  float w=Viewport(width,height).x;DrawRectangle(0,0,static_cast<int>(w),height,paper);DrawLine(static_cast<int>(w)-1,0,static_cast<int>(w)-1,height,{205,213,205,255});
-  Button({8,8,76,30},"< Parti",f);Button({w-95,8,87,30},"Esporta",f);
-  DrawRectangleRec({8,48,w-16,28},searchFocus?Color{230,241,231,255}:WHITE);
-  Label(search.empty()?"Cerca parti...":search,f,14,54,w-28,16,search.empty()?muted:ink);
-  Button({8,84,w/3-10,29},tree.state.isolated?"Esci":"Isola",f,tree.Selection().has_value()||tree.state.isolated);
-  Button({w/3+3,84,w/3-10,29},"Mostra tutto",f);
+  if(!open){Button({8,8,76,30},"Parti >",f,true,true);return;}
+  const float w=Bounds(width,height).width;
+  DrawRectangle(0,0,static_cast<int>(w),height,{20,28,25,210});
+  DrawLine(static_cast<int>(w)-1,0,static_cast<int>(w)-1,height,{157,183,168,65});
+  Button({8,8,76,30},"< Parti",f,true,true);Button({w-95,8,87,30},"Esporta",f,true,true);
+  DrawRectangleRec({8,48,w-16,28},searchFocus?Color{66,92,77,210}:Color{11,18,14,130});
+  Label(search.empty()?"Cerca parti...":search,f,14,54,w-28,16,search.empty()?overlayMuted:overlayInk);
+  Button({8,84,w/3-10,29},tree.state.isolated?"Esci":"Isola",f,tree.Selection().has_value()||tree.state.isolated,true);
+  Button({w/3+3,84,w/3-10,29},"Mostra tutto",f,true,true);
   bool canFrame=false;if(auto n=tree.Selection())for(auto p:tree.nodes[*n].parts)canFrame|=tree.Visible(p);
-  Button({2*w/3-2,84,w/3-6,29},"Inquadra",f,canFrame);
-  Label(std::to_string(tree.parts.size())+" parti",f,10,122,w-85,13,muted);
-  Label("V",f,w-55,122,22,13,muted);Label("STL",f,w-31,122,27,13,muted);
+  Button({2*w/3-2,84,w/3-6,29},"Inquadra",f,canFrame,true);
+  Label(std::to_string(tree.parts.size())+" parti",f,10,122,w-85,13,overlayMuted);
+  Label("V",f,w-55,122,22,13,overlayMuted);Label("STL",f,w-31,122,27,13,overlayMuted);
   BeginScissorMode(0,142,static_cast<int>(w),std::max(0,height-150));
   auto rows=tree.Rows(search);
   for(size_t index=0;index<rows.size();++index){
     float y=142+index*26-scroll;if(y+26<142||y>height)continue;
     const auto &r=rows[index];const auto &n=tree.nodes[r.node];
-    if(n.key==tree.state.selected)DrawRectangleRec({4,y,w-8,25},{216,231,217,255});
+    if(n.key==tree.state.selected)DrawRectangleRec({4,y,w-8,25},{100,166,128,95});
     const float x=9+r.depth*14;
-    if(n.group)Label(tree.state.collapsed.count(n.key)&&search.empty()?">":"v",f,x,y+5,15);
+    if(n.group)Label(tree.state.collapsed.count(n.key)&&search.empty()?">":"v",f,x,y+5,15,16,overlayInk);
     else DrawRectangle(static_cast<int>(x+1),static_cast<int>(y+9),8,8,tree.parts[n.parts.front()].color);
-    Label(n.name,f,x+16,y+5,w-82-x,15,tree.Checked(r.node,false)==CheckState::None?muted:ink);
-    Check({w-55,y+5,17,17},tree.Checked(r.node,false));Check({w-27,y+5,17,17},tree.Checked(r.node,true));
+    Label(n.name,f,x+16,y+5,w-82-x,15,tree.Checked(r.node,false)==CheckState::None?overlayMuted:overlayInk);
+    Check({w-55,y+5,17,17},tree.Checked(r.node,false),true);Check({w-27,y+5,17,17},tree.Checked(r.node,true),true);
   }
   EndScissorMode();
-  if(rows.empty())Label("Nessun risultato",f,12,154,w-24,16,muted);
+  if(rows.empty())Label("Nessun risultato",f,12,154,w-24,16,overlayMuted);
   const float available=std::max(0.0f,height-150.0f),total=rows.size()*26.0f;
-  if(total>available&&available>0)DrawRectangleRec({w-4,142+scroll/total*available,3,std::max(8.0f,available*available/total)},muted);
+  if(total>available&&available>0)DrawRectangleRec({w-4,142+scroll/total*available,3,std::max(8.0f,available*available/total)},overlayMuted);
 }
 void ExportDialog::Open(const std::string &defaultPath){open=true;if(path.empty())path=defaultPath;error.clear();overwrite=false;pathFocus=false;}
 PanelActions ExportDialog::Update(const PanelInput &i,int width,int height,size_t count,bool valid){

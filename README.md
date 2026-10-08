@@ -76,8 +76,10 @@ Avoid force-adding personal files; `.gitignore` is a safeguard, not access contr
   `Downloads/ding.stl` path; existing files require **Sostituisci** confirmation.
   No selected parts means no file is written.
 
-The panel has its own viewport. Panel clicks, scrolling, text entry and modal
-interaction do not operate the camera or viewport shortcuts. Search/path fields
+The parts panel is a dark translucent overlay over the full-window scene.
+Opening or closing it preserves the camera projection. Panel clicks, scrolling,
+text entry and modal interaction do not operate the camera or viewport shortcuts.
+The Dimensions button stays accessible at the bottom right. Search/path fields
 support typing, Backspace, Ctrl/Cmd+A and paste. Escape cancels the export dialog.
 Visibility, export overrides, selection and group expansion persist across reload
 within the running session, using stable IDs; they reset after closing the viewer.

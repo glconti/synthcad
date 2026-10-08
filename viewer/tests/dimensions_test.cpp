@@ -79,11 +79,11 @@ void CheckProjectionAndHover() {
   Require(NextDimensionMode(DimensionMode::Hover) == DimensionMode::All &&
           NextDimensionMode(DimensionMode::All) == DimensionMode::Off &&
           NextDimensionMode(DimensionMode::Off) == DimensionMode::Hover, "Cycle all modes");
-  Require(CheckCollisionPointRec({20, 700}, DimensionButtonBounds(1280, 720)), "Button hit area");
+  Require(CheckCollisionPointRec({1200, 700}, DimensionButtonBounds(1280, 720)), "Button hit area");
 
   DimensionControls controls;
   const auto button = DimensionButtonBounds(1280, 720);
-  UpdateDimensionControls(controls, button, {20, 700}, false, true, true);
+  UpdateDimensionControls(controls, button, {1200, 700}, false, true, true);
   Require(controls.mode == DimensionMode::All && controls.buttonGesture, "Button click cycles and consumes orbit gesture");
   UpdateDimensionControls(controls, button, {500, 400}, false, false, true);
   Require(controls.mode == DimensionMode::All && controls.buttonGesture, "Dragging out of button must still suppress orbit");
