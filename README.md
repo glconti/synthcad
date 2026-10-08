@@ -79,7 +79,10 @@ the window's native DPI. The app scales physical rendering and mouse input
 itself, without raylib's separate `FLAG_WINDOW_HIGHDPI` transform.
 Configure with CMake and build the `dingcad_viewer` and `synthcad` targets.
 Set `CMAKE_PREFIX_PATH` when dependency packages are installed outside the system
-prefix. Automated CI and distribution packages remain work in progress.
+prefix. The [Release CI workflow](docs/ci.md) defines Windows/MSVC and
+Ubuntu/X11 build and native test gates. Local rehearsal has passed; hosted
+results must be checked on the corresponding commit. Distribution packages
+remain work in progress.
 
 `SYNTHCAD_CUSTOM_FRAME_CONTROL` must match raylib's
 `SUPPORT_CUSTOM_FRAME_CONTROL` build setting. It defaults to OFF on Linux and

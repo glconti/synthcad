@@ -267,3 +267,18 @@ if(MSVC)
     target_compile_options(${target} PRIVATE /utf-8)
   endforeach()
 endif()
+
+# One authoritative inventory for local verification and both CI platforms.
+get_property(synthcad_viewer_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+set(synthcad_test_targets)
+foreach(target IN LISTS synthcad_viewer_targets)
+  if(target MATCHES "_tests$")
+    list(APPEND synthcad_test_targets ${target})
+    if(BUILD_TESTING)
+      add_test(NAME ${target} COMMAND $<TARGET_FILE:${target}>)
+      set_tests_properties(${target} PROPERTIES
+        WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}" TIMEOUT 120)
+    endif()
+  endif()
+endforeach()
+add_custom_target(synthcad_tests DEPENDS dingcad_viewer synthcad ${synthcad_test_targets})
