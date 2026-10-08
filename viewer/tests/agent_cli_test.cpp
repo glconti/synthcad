@@ -48,6 +48,13 @@ void CheckParsing() {
   Require(bool(ParseCli({"highlight", "--clear"})), "highlight clear must parse");
   Require(bool(ParseCli({"frame"})), "whole-scene framing must parse");
   Require(bool(ParseCli({"docs"})), "guidance discovery must parse");
+  Require(bool(ParseCli({"overview", "--expect-revision", "rev"})) &&
+          bool(ParseCli({"profile", "--expect-revision", "rev"})), "context reads support revision guards");
+  auto profileTemplate = ParseCli({"profile", "--template", "--json"});
+  Require(bool(profileTemplate) && profileTemplate.options.arguments.at("template") == true,
+          "profile template must parse without a session");
+  Require(!ParseCli({"overview", "--template"}) && !ParseCli({"profile", "extra"}) &&
+          !ParseCli({"profile", "--template", "--expect-revision", "rev"}), "invalid context options accepted");
   auto docs = ParseCli({"docs", "print-design", "--json"});
   Require(bool(docs) && docs.options.arguments.at("topic") == "print-design", "guide topic missing");
   Require(!ParseCli({"docs", "a", "b"}) && !ParseCli({"docs", ""}) &&
@@ -74,6 +81,17 @@ void CheckResponses() {
   Require(synthcad::Help("screenshot").find("--replace") != std::string::npos, "command help missing options");
   Require(synthcad::Capabilities().at("geometryEditing") == false, "discovery must not promise geometry edits");
   Require(synthcad::Capabilities().at("export") == false, "discovery must not promise exports");
+  Require(synthcad::Capabilities().at("printerProfiles") == true &&
+          synthcad::Capabilities().at("projectOverview") == true &&
+          synthcad::Capabilities().at("slicerPresetVerification") == false, "context discovery missing");
+  Require(synthcad::Help("profile").find("--template") != std::string::npos &&
+          synthcad::Help("docs").find("profiles") != std::string::npos, "profile help missing");
+  const auto fragment = nlohmann::json({{"activeProfile", "custom"}, {"profiles", {{"custom", nlohmann::json::object()}}}});
+  const auto templateResponse = synthcad::Success("profile", fragment);
+  Require(nlohmann::json::parse(synthcad::FormatResponse(templateResponse, false)) == fragment,
+          "template default stdout must be a standalone JSON fragment");
+  Require(nlohmann::json::parse(synthcad::FormatResponse(templateResponse, true)) == templateResponse,
+          "template JSON mode must retain response envelope");
   Require(synthcad::Capabilities().at("selectionReferences") == true &&
           synthcad::Help("reference").find("reference TOKEN") != std::string::npos,
           "reference discovery missing");

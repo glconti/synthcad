@@ -423,7 +423,11 @@ class AgentSessionAcceptance:
         )
 
     def _load_state(self, response: dict[str, Any]) -> str:
-        value = _find(response, "loadState", "status", "state")
+        # Overview/profile records also have status fields. The scene state is
+        # the immediate response payload, not the first nested metadata status.
+        payload = response.get("data", response)
+        value = next((payload[key] for key in ("loadState", "status", "state")
+                      if isinstance(payload, dict) and key in payload), None)
         return value.casefold() if isinstance(value, str) else ""
 
     def _displayed_revision(self, response: dict[str, Any]) -> str:

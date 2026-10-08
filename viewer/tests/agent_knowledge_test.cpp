@@ -34,7 +34,7 @@ void Check() {
     Require(doc.at("source") == entry.at("source") && doc.at("title") == entry.at("title"), "list/read metadata diverged");
   }
   for (const auto* topic : {"api", "cli", "projects", "design", "skill", "start", "modeling",
-                          "print-design", "fit-and-assembly", "build-plates", "bambu-handoff"})
+                          "overview", "profiles", "print-design", "fit-and-assembly", "build-plates", "bambu-handoff"})
     Require(topics.count(topic) == 1, "required topic missing");
   // Compare the full bytes, not selected phrases, with the compiled source
   // assets; retrieval must not normalize Unicode, line endings or whitespace.

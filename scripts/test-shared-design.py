@@ -414,7 +414,7 @@ class SharedDesignAcceptance:
 
     def _assert_failure_retained(self, displayed_revision: str, width: float) -> None:
         state = self._state()
-        self._check((_find(state, "status") or "").casefold() in {"failed", "error", "load_failed"},
+        self._check((self._payload(state).get("status") or "").casefold() in {"failed", "error", "load_failed"},
                     f"failed design edit was not reported as failed: {state}")
         self._check(self._displayed_revision(state) == displayed_revision,
                     f"failed design edit replaced the displayed revision: {state}")

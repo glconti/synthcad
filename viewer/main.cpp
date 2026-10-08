@@ -49,6 +49,9 @@ extern "C" {
 #include "selection_reference.h"
 #include "selection_ui.h"
 #include "guided_pick_ui.h"
+#include "printer_profile.h"
+#include "project_overview.h"
+#include "project_overview_ui.h"
 #include "display_scale.h"
 
 namespace {
@@ -943,6 +946,50 @@ int main(int argc, char *argv[]) {
   std::string attemptedRevision,displayedRevision,loadStatus="loading",loadDiagnostic;
   std::string displayedSourceRevision,displayedView;
   nlohmann::json displayedDesign;
+  struct ViewObservation {
+    synthcad::FileSnapshot files;
+    std::string entry,revision;
+  };
+  std::map<std::string,ViewObservation> observedViews;
+  std::map<std::string,nlohmann::json> viewDescriptions;
+  nlohmann::json projectOverview;
+  bool overviewDirty=true;
+  dingcad::ProjectOverviewUi overviewUi;
+  auto refreshOverview=[&](){
+    if(!overviewDirty)return;
+    auto metadata=project?project->metadata:nlohmann::json::object();
+    auto profile=synthcad::PrinterProfileContext(metadata);
+    const bool metadataCurrent=!project||project->standalone||synthcad::MatchesDisk(project->files);
+    if(!metadataCurrent){
+      profile["status"]="invalid";
+      profile["errors"].push_back({{"path","project"},{"message","Current manifest is unavailable; showing the last loaded profile."}});
+      for(auto& readiness:profile["checkReadiness"]){readiness["status"]="invalid";readiness["reason"]="Current project metadata is unavailable";}
+    }
+    auto views=nlohmann::json::array();
+    const auto entries=project?project->views:std::map<std::string,std::filesystem::path>{{"scene",scriptPath}};
+    for(const auto& [id,entry]:entries){
+      auto row=nlohmann::json{{"id",id},{"name",id},{"kind","scene"},{"entry",entry.u8string()},
+        {"loaded",false},{"modelRevision",nullptr},{"sourceCurrent",false}};
+      const auto path=entry.empty()?std::string{}:synthcad::CanonicalPath(entry);
+      auto descriptions=viewDescriptions.find(path);
+      if(descriptions!=viewDescriptions.end())for(const auto& d:descriptions->second)
+        if(d.value("id","")==id){row["name"]=d.value("name",id);row["kind"]=d.value("kind","scene");}
+      auto seen=observedViews.find(id);
+      if(seen!=observedViews.end()){
+        row["loaded"]=true;row["modelRevision"]=seen->second.revision;
+        row["sourceCurrent"]=seen->second.entry==path&&synthcad::MatchesDisk(seen->second.files);
+      }
+      views.push_back(std::move(row));
+    }
+    projectOverview=synthcad::ProjectOverview(metadata,profile,views);
+    projectOverview["metadataCurrent"]=metadataCurrent;
+    projectOverview["profile"]=std::move(profile);projectOverview["views"]=std::move(views);
+    projectOverview["name"]=project?project->name:"Built-in sample";
+    projectOverview["path"]=project?project->path.u8string():scriptPath.u8string();
+    projectOverview["standalone"]=!project||project->standalone;
+    projectOverview["modelRevision"]=observedViews.count(displayedView)?nlohmann::json(observedViews.at(displayedView).revision):nlohmann::json(nullptr);
+    overviewDirty=false;
+  };
   std::vector<std::string> agentHighlights;
   std::optional<std::filesystem::path> defaultScript;
   if(project){defaultScript=synthcad::ResolveView(*project,activeView);}
@@ -952,12 +999,14 @@ int main(int argc, char *argv[]) {
   } else {
     defaultScript = FindDefaultScene();
   }
+  if(activeView.empty())activeView="scene";
   auto reportStatus = [&](const std::string &message) {
     statusMessage = message;
     TraceLog(LOG_INFO, "%s", statusMessage.c_str());
     std::cout << statusMessage << std::endl;
   };
   auto recordLoad = [&](LoadResult& load) {
+    const auto modelFiles=load.files;
     if(project&&!project->standalone)load.files.insert(project->files.begin(),project->files.end());
     attemptedFiles=load.files;attemptedRevision=synthcad::Revision(attemptedFiles);
     if(load.success&&!synthcad::MatchesDisk(attemptedFiles)){
@@ -981,7 +1030,10 @@ int main(int argc, char *argv[]) {
       const auto identity=load.design.is_object()?load.design.value("identity",""):"";
       displayedRevision=synthcad::Sha256("synthcad-display-v1:"+
           std::to_string(activeView.size())+":"+activeView+attemptedRevision+identity);
+      observedViews[activeView]={modelFiles,synthcad::CanonicalPath(scriptPath),synthcad::ModelRevision(modelFiles,activeView,identity)};
+      viewDescriptions[synthcad::CanonicalPath(scriptPath)]=load.design.is_object()?load.design.value("views",nlohmann::json::array()):nlohmann::json::array();
     }
+    overviewDirty=true;
   };
   if (defaultScript) {
     scriptPath = std::filesystem::absolute(*defaultScript);
@@ -1096,7 +1148,11 @@ int main(int argc, char *argv[]) {
     }
   };
   updateBounds();frameParts(false);
-  auto publishAgent=[&](){if(!agent)return;
+  auto publishAgent=[&](){
+    refreshOverview();
+    projectOverview["activeView"]=activeView;projectOverview["displayedView"]=displayedView;
+    projectOverview["geometryStatus"]=loadStatus;projectOverview["geometryDiagnostic"]=loadDiagnostic;
+    if(!agent)return;
     auto snapshot=synthcad::ReviewSnapshot(tree,dimensions,camera,agentHighlights);
     if(!snapshot["selection"].is_null()){
       if(!selectionGeometry.is_null())snapshot["selection"]["geometry"]=selectionGeometry;
@@ -1109,6 +1165,7 @@ int main(int argc, char *argv[]) {
     snapshot["displayedRevision"]=displayedRevision;snapshot["exportValid"]=exportValid;
     snapshot["sourceRevision"]=displayedSourceRevision;snapshot["displayedView"]=displayedView;
     snapshot["design"]=displayedDesign;
+    snapshot["overview"]=projectOverview;
     snapshot["diagnostic"]=loadDiagnostic;snapshot["view"]=activeView;
     snapshot["projectPath"]=project?project->path.u8string():scriptPath.u8string();
     snapshot["views"]=nlohmann::json::object();
@@ -1275,11 +1332,12 @@ int main(int argc, char *argv[]) {
     dingcad::SetUiDrawScale(uiScale);
     const auto input=dingcad::LogicalInput(dingcad::ReadPanelInput(),uiScale);
 
-    auto reloadScene = [&]() {
+    auto reloadScene = [&](bool allowDefaultFallback=true) {
       loadStatus="loading";exportValid=false;publishAgent();
       LoadResult load;
       try {
         if(project){auto next=synthcad::LoadProject(project->path);
+          if(allowDefaultFallback&&!next.views.count(activeView))activeView=next.defaultView;
           auto nextPath=synthcad::ResolveView(next,activeView);project=std::move(next);scriptPath=nextPath;}
         load=LoadSceneFromFile(runtime,scriptPath,project&&!project->standalone?activeView:"");
       }catch(const std::exception& error){load.message=error.what();
@@ -1310,6 +1368,7 @@ int main(int argc, char *argv[]) {
     };
 
     if (!scriptPath.empty() && frameStarted >= nextSceneCheck) {
+      overviewDirty=true;
       nextSceneCheck = frameStarted + kSceneCheckInterval;
       const bool changed = !synthcad::MatchesDisk(watchedFiles);
       if (changed) {
@@ -1335,7 +1394,7 @@ int main(int argc, char *argv[]) {
         if(command=="view"){
           if(!project){fail("not_found","This scene has no named project views");continue;}
           const auto name=args.at("name").get<std::string>();
-          synthcad::ResolveView(*project,name);activeView=name;agentHighlights.clear();reloadScene();
+          synthcad::ResolveView(*project,name);activeView=name;agentHighlights.clear();reloadScene(false);
           if(loadStatus!="ready"){fail("load_failed",loadDiagnostic);continue;}
           action->result.set_value(synthcad::Success(command,{{"view",activeView}},agentSession,displayedRevision));continue;
         }
@@ -1388,6 +1447,7 @@ int main(int argc, char *argv[]) {
     }
 
     syncGuidedPick();
+    refreshOverview();
     guidedUi.canConfirm=validGuidedCandidate();
     const bool modalWasOpen=exportDialog.open;
     const bool keyboardWasCaptured=modalWasOpen||panel.searchFocus;
@@ -1395,6 +1455,10 @@ int main(int argc, char *argv[]) {
     dingcad::PanelActions workspaceActions;
     dingcad::SelectionActions selectionActions;
     dingcad::GuidedPickActions guidedActions;
+    dingcad::ProjectOverviewActions overviewActions;
+    const bool overviewWasOpen=overviewUi.open;
+    const auto overviewCaptures=[&](){return overviewUi.open&&overviewUi.CapturesMouse(input,uiWidth,uiHeight);};
+    const auto partsCaptures=[&](){return !overviewUi.open&&panel.CapturesMouse(tree,input,uiWidth,uiHeight);};
     const bool guidedUiActive=guidedUi.active&&workspace.loadError.empty()&&!workspace.help;
     workspace.toastBottom=guidedUiActive?guidedUi.Bounds(uiWidth,uiHeight).height+24:128;
     const auto guidedCaptures=[&](){return guidedUiActive&&guidedUi.CapturesMouse(input,uiWidth,uiHeight);};
@@ -1403,22 +1467,31 @@ int main(int argc, char *argv[]) {
     if(!selectionUiActive)selectionUi.gesture=false;
     const auto selectionCaptures=[&](){return selectionUiActive&&selectionUi.CapturesMouse(input,uiWidth,uiHeight);};
     if(!modalWasOpen){
+      if(overviewWasOpen)overviewActions=overviewUi.Update(projectOverview,input,brandingFont,uiWidth,uiHeight);
       if(guidedUiActive){auto guidedInput=input;
-        if(keyboardWasCaptured)guidedInput.escape=guidedInput.enter=false;
+        if(keyboardWasCaptured||overviewWasOpen)guidedInput.escape=guidedInput.enter=false;
+        if(overviewCaptures()){guidedInput.pressed=false;guidedInput.rightPressed=false;guidedInput.wheel=0;}
         guidedActions=guidedUi.Update(guidedInput,uiWidth,uiHeight,[&](const std::string& text){return MeasureTextEx(brandingFont,text.c_str(),16,0).x;});
       }
-      if(selectionUiActive)selectionActions=selectionUi.Update(input,uiWidth,uiHeight);
-      if(!selectionCaptures()&&!guidedCaptures())workspaceActions=workspace.Update(input,uiWidth,uiHeight,GetTime());
-      if((!workspace.CapturesMouse(input,uiWidth,uiHeight,GetTime())&&!selectionCaptures()&&!guidedCaptures())||input.find)
+      if(selectionUiActive&&!overviewCaptures())selectionActions=selectionUi.Update(input,uiWidth,uiHeight);
+      if(!selectionCaptures()&&!guidedCaptures()&&!overviewCaptures())workspaceActions=workspace.Update(input,uiWidth,uiHeight,GetTime());
+      if(!overviewWasOpen&&((!workspace.CapturesMouse(input,uiWidth,uiHeight,GetTime())&&!selectionCaptures()&&!guidedCaptures())||input.find))
         actions=panel.Update(tree,input,uiWidth,uiHeight);
     }
+    if(actions.openOverview){overviewUi.open=true;panel.searchFocus=false;}
+    if(overviewActions.close||(!modalWasOpen&&input.find)){overviewUi.open=false;
+      if(input.find&&overviewWasOpen)actions=panel.Update(tree,input,uiWidth,uiHeight);}
     if(actions.selectionChanged)clearGeometry();
     viewport=panel.Viewport(GetScreenWidth(),GetScreenHeight());
-    const bool captureKeyboard=keyboardWasCaptured||panel.searchFocus||exportDialog.open||
-      (panel.CapturesMouse(tree,input,uiWidth,uiHeight)||workspace.CapturesMouse(input,uiWidth,uiHeight,GetTime())||selectionCaptures()||guidedCaptures());
-    const bool captureMouse=modalWasOpen||exportDialog.open||(panel.CapturesMouse(tree,input,uiWidth,uiHeight)||workspace.CapturesMouse(input,uiWidth,uiHeight,GetTime())||selectionCaptures()||guidedCaptures());
+    const bool captureKeyboard=keyboardWasCaptured||panel.searchFocus||exportDialog.open||(overviewWasOpen&&(overviewActions.close||input.find))||
+      (partsCaptures()||workspace.CapturesMouse(input,uiWidth,uiHeight,GetTime())||selectionCaptures()||guidedCaptures()||overviewCaptures());
+    const bool captureMouse=modalWasOpen||exportDialog.open||overviewWasOpen&&(overviewActions.close||!overviewActions.view.empty())||
+      (partsCaptures()||workspace.CapturesMouse(input,uiWidth,uiHeight,GetTime())||selectionCaptures()||guidedCaptures()||overviewCaptures());
+    if(!overviewActions.view.empty()&&project&&project->views.count(overviewActions.view)){
+      activeView=overviewActions.view;agentHighlights.clear();reloadRequested=true;
+    }
     if(workspaceActions.reload||(!captureKeyboard&&IsKeyPressed(KEY_R)))reloadRequested=true;
-    if(reloadRequested&&!scriptPath.empty())reloadScene();
+    if(reloadRequested&&!scriptPath.empty())reloadScene(overviewActions.view.empty());
     if(actions.openExport||(!captureKeyboard&&IsKeyPressed(KEY_P)))exportDialog.Open(defaultExportPath);
     if(modalWasOpen){
       const auto dialogAction=exportDialog.Update(input,uiWidth,uiHeight,tree.ExportIndices(exportDialog.visibleOnly).size(),exportValid);
@@ -1620,12 +1693,13 @@ int main(int argc, char *argv[]) {
       const float textWidth=MeasureTextEx(brandingFont,empty,18,0).x;
       DrawTextEx(brandingFont,empty,{std::max(12.f,(uiWidth-textWidth)/2),uiHeight-80.f},18,0,DARKGRAY);
     }
-    panel.Draw(tree,brandingFont,uiWidth,uiHeight);
+    if(!overviewUi.open)panel.Draw(tree,brandingFont,uiWidth,uiHeight);
     workspace.Draw(brandingFont,uiWidth,uiHeight,dimensionControls.mode,GetTime());
     if(selectionUiActive&&showSelectionUi())selectionUi.Draw(brandingFont,uiWidth,uiHeight);
     if(guidedUi.active&&workspace.loadError.empty()&&!workspace.help)guidedUi.Draw(brandingFont,uiWidth,uiHeight,uiScale);
+    if(overviewUi.open)overviewUi.Draw(projectOverview,brandingFont,uiWidth,uiHeight,uiScale);
     exportDialog.Draw(brandingFont,uiWidth,uiHeight,tree.ExportIndices(exportDialog.visibleOnly).size(),exportValid);
-    if(!agentHighlights.empty())DrawTextEx(brandingFont,guidedUi.active?"Agent highlight":"Agent highlight - Esc to clear",{380.f,62.f},16,0,{48,106,142,255});
+    if(!agentHighlights.empty()&&!overviewUi.open)DrawTextEx(brandingFont,guidedUi.active?"Agent highlight":"Agent highlight - Esc to clear",{380.f,62.f},16,0,{48,106,142,255});
     rlPopMatrix();
     for(auto& action:pendingScreenshots){
       const auto args=action->request.at("arguments");const auto path=args.at("path").get<std::string>();

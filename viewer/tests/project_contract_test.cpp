@@ -62,6 +62,9 @@ int main() {
         Check(MatchesDisk(graph), "fresh graph matches");
         Check(Revision(CaptureFiles({imported, entry, entry})) == Revision(graph), "sorted duplicate-free graph");
         Check(Revision(CaptureFiles({entry})) != Revision(graph), "dependency paths affect revision");
+        Check(ModelRevision(graph,"assembly","layout")!=ModelRevision(graph,"plate","layout"),"model basis binds named view");
+        Check(ModelRevision(graph,"assembly","layout")!=ModelRevision(graph,"assembly","moved"),"model basis binds placement graph");
+        Check(ModelRevision(graph,"assembly","layout")==ModelRevision(CaptureFiles({imported,entry}),"assembly","layout"),"model basis uses consumed source graph");
         auto originalTime = fs::last_write_time(imported);
         Write(imported, "two\0one"s);
         fs::last_write_time(imported, originalTime);
@@ -95,6 +98,7 @@ int main() {
         Check(project.identity != standalone.identity, "project distinct from scene identity");
         Check(project.views.size() == 2 && ResolveView(project) == standalone.path, "named default entry resolution");
         Check(project.files.at(CanonicalPath(manifest)) == Sha256(valid), "manifest actual bytes tracked");
+        Check(project.metadata.at("name")==u8"Città 日本", "authored metadata retained verbatim");
         Check(ResolveView(project,"plate").filename() == "plate.js", "view resolves before entry exists");
         Reject([&] { ResolveView(project,"unknown"); }, "unknown view rejected");
         for (const auto& invalid : {

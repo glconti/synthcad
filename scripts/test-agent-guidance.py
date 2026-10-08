@@ -33,10 +33,18 @@ def main():
         for area in ('Getting started', 'Modeling', 'Printing & assembly', 'Plates & handoff', 'Agent review'):
             assert area in help_text, area
         assert 'docs [AREA]' in call('help', 'docs')
+        assert 'profile [--template]' in help_text and 'overview' in help_text
+        fragment = json.loads(call('profile', '--template'))
+        assert fragment['activeProfile'] in fragment['profiles']
+        profile = fragment['profiles'][fragment['activeProfile']]
+        assert profile['buildVolume'] is None and profile['nozzleDiameter'] is None
+        envelope = json.loads(call('profile', '--template', '--json'))
+        assert envelope['ok'] and envelope['command'] == 'profile' and envelope['data'] == fragment
+        call('profile', '--template', '--expect-revision', 'stale', exit_code=2)
         index = json.loads(call('docs', '--json'))
         assert index['ok'] and index['command'] == 'docs'
         topics = index['data']['topics']
-        assert len(topics) == 11
+        assert len(topics) == 13
         assert 'bundleVersion' in index['data']
         for entry in topics:
             topic = entry['topic']
@@ -53,7 +61,7 @@ def main():
         assert 'synthcad docs' in error['error']['message']
         call('docs', 'start', 'extra', exit_code=2)
         assert sorted(path.name for path in root.iterdir()) == [executable.name], 'Discovery wrote files'
-    print('PASS stdout-only guides: standalone CLI, grouped help, 11 complete topics, UTF-8, hashes, errors, no writes')
+    print('PASS stdout-only guides: standalone CLI, grouped help, 13 complete topics, UTF-8, hashes, errors, no writes')
 
 
 if __name__ == '__main__':

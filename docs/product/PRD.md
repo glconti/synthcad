@@ -83,7 +83,8 @@ SynthCAD account or cloud service for its own workflow.
 This inventory reflects the initial PRD draft, before the delivery batches.
 For implemented capabilities and platform evidence, see
 [Batch 1](../batch-1-validation.md), [Batch 2](../batch-2-validation.md) and
-[Batch 3](../batch-3-validation.md) and [Batch 4](../batch-4-validation.md).
+[Batch 3](../batch-3-validation.md), [Batch 4](../batch-4-validation.md),
+[Batch 5](../batch-5-validation.md) and [Batch 6](../batch-6-validation.md).
 It is not a current platform or physical test report.
 
 | Capability | Current state and implication |
@@ -140,8 +141,9 @@ copy. View and layout transforms are separate from source geometry and from
 each other. A shared source edit updates every dependent view at the new
 revision, while intentionally repeated quantities remain distinct instance
 placements. Core source/instance references work before a printer profile is
-configured. This is a future contract; its final schema remains an
-implementation decision.
+configured. The implemented source/instance schema is documented in
+`synthcad docs design`; metadata and printer context use `synthcad docs overview`
+and `synthcad docs profiles`.
 
 Reject cyclic and dangling references with actionable diagnostics. Resolve
 instance membership consistently for review and export: the same instance

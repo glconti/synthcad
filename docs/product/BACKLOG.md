@@ -396,8 +396,10 @@ Geometric picking and revision-bound references (SC08) are implemented; see
 [Batch 4](../batch-4-validation.md). Its Windows desktop clipboard verification
 remains outstanding, so the issue stays open. **SC09** guided picks and
 event readback build on this selection contract; see [Batch 5](../batch-5-validation.md).
-Next, develop **SC10–SC11** project overview and printer profiles together, then
-use the existing shared-instance contract for **SC13** plate checks. Start Linux CI and licensing
+**SC10–SC11** project overview and printer profiles are integrated in
+[Batch 6](../batch-6-validation.md). Next, use those profiles and the existing
+shared-instance contract for **SC13–SC14** plate checks and scoped manufacturing
+results. Start Linux CI and licensing
 resolution in parallel when resources are available; do not leave either until
 packaging. The Bambu-format spike should precede promises about exact export
 settings.

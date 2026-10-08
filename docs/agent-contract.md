@@ -38,9 +38,11 @@ missing graph views fail rather than silently showing the default. Standalone
 files keep their `scene` alias and select the graph's `defaultView`. Run
 `synthcad docs design` for source parts, instances and reference-based layouts.
 
-Unknown fields are permitted for future metadata. Reserved areas for future
-contracts include `profiles`, `assumptions`, `checks`, `evidence` and `exports`.
-They are not interpreted or validated by this increment. Malformed JSON,
+Unknown root fields are permitted for future metadata. `profiles` and
+`activeProfile` now supply project-local printer context (`synthcad docs profiles`).
+`measurements`, `assumptions`, `checks`, `evidence` and `exports` supply the
+overview (`synthcad docs overview`). Their validation errors are reported
+separately and do not reject otherwise valid geometry. Malformed JSON,
 unsupported schema versions and invalid required fields produce actionable
 errors including the manifest path. Loading never rewrites project files.
 
@@ -125,7 +127,36 @@ identity (empty for legacy scenes). Treat returned revision tokens as opaque.
 can name an unsuccessful requested view. Snapshot `design` contains the last
 valid normalized reference graph, or null for legacy scenes. This provenance
 tuple permits consumers to reject outdated check/export results; persisted
-check and export records are implemented in their later stories.
+check and export records use the separate artifact basis described below.
+
+## Artifact model revisions
+
+`overview.modelRevision` identifies the displayed model for authored checks,
+exports and optional physical evidence. It hashes the evaluator-consumed model
+files, view name and normalized design/layout identity. The manifest is excluded
+when used only to route views and hold metadata. If model code itself reads the
+manifest as an input, its consumed bytes remain model dependencies.
+
+The version-1 token is SHA-256 of `synthcad-model-v1:` followed by three
+length-prefixed fields (decimal UTF-8 byte count, `:`, value): view name,
+`Revision(modelFiles)`, and design metadata identity (empty for legacy scenes).
+Keep the returned token opaque. This separate identity prevents recording a
+check in the manifest from making that same check immediately stale. Existing
+reload and action-guard tokens continue to include manifest bytes.
+
+The viewer remembers successfully loaded views for the session; it does not
+evaluate other layouts behind the scenes. `overview.views` includes each entry's
+last loaded `modelRevision` and `sourceCurrent` status. Unvisited views have no
+verified current model revision. Referenced source edits or entry-path changes
+make prior records stale; unvisited views remain unknown until loaded. Snapshot
+refresh uses the existing source polling interval. A removed active view falls
+back to the new manifest's default view.
+
+`profileRevision` hashes the normalized selected printer profile and its ID.
+Changing nozzle, material, dimensions or provisional markers changes it without
+changing model identity. Records explicitly bind a profile revision or use null
+for profile-independent evidence. Authored results remain authored; matching
+revisions do not prove printability or physical strength.
 
 Pending work, evaluation failure, timeout, cancellation and a superseding edit
 are distinct outcomes. A changed expected file or active view supersedes the

@@ -135,6 +135,15 @@ std::string Revision(const FileSnapshot& snapshot) {
     return Sha256(graph);
 }
 
+std::string ModelRevision(const FileSnapshot& files, const std::string& view,
+                          const std::string& designIdentity) {
+    std::string value = "synthcad-model-v1:";
+    AppendField(value, view);
+    AppendField(value, Revision(files));
+    AppendField(value, designIdentity);
+    return Sha256(value);
+}
+
 bool MatchesDisk(const FileSnapshot& snapshot) {
     for (const auto& file : snapshot) {
         FileSnapshot current;
@@ -192,6 +201,7 @@ Project LoadProject(const std::filesystem::path& input) {
         project.views.emplace(it.key(), std::filesystem::weakly_canonical(project.root / entry));
     }
     if (!project.views.count(project.defaultView)) Invalid(path, "defaultView must name an entry in views");
+    project.metadata = std::move(json);
     return project;
 }
 

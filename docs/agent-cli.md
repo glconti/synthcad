@@ -39,6 +39,7 @@ synthcad docs skill           # Full portable design workflow instructions
 synthcad docs modeling        # Structure parametric models and scenes
 synthcad docs api             # Implemented geometry API, from API.md
 synthcad docs print-design    # Printing constraints and orientation decisions
+synthcad docs profiles        # Printer, bed exclusions, nozzle and material setup
 synthcad docs fit-and-assembly
 synthcad docs build-plates
 synthcad docs bambu-handoff
@@ -140,9 +141,26 @@ an assembly and multiple print views from shared definitions.
 
 ## Commands and options
 
+`overview` and `profile` read context stored with the displayed scene revision.
+They do not reread a changed manifest independently of scene reload. Use
+`--expect-revision TOKEN` when a review depends on a specific displayed revision.
+Profile context reports setup status, missing fields and identifiers, provisional
+values, scoped validation errors, metadata readiness, and a deterministic
+`profileRevision`. Readiness does not mean geometry checks have passed. Printer
+context is project-local; previous projects and global defaults are never inherited.
+Slicer IDs are recorded as metadata and never reported as verified presets.
+
+Run `synthcad docs profiles` for setup questions and the manifest contract, or
+`synthcad profile --template` for an incomplete JSON fragment that can be reviewed
+before dimensions, nozzle, and material are known. Template output requires no
+viewer or session and cannot be combined with `--expect-revision`.
+
 | Command | Behavior |
 | --- | --- |
 | `docs [AREA]` | List guidance areas, or print complete bundled instructions to stdout without a viewer or filesystem setup. |
+| `overview` | Read project overview and profile context stored for the displayed revision; supports `--expect-revision`. |
+| `profile` | Read the displayed overview's project-local printer/material context; supports `--expect-revision`. |
+| `profile --template` | Print an incomplete manifest fragment without a session. Default stdout is standalone JSON; `--json` wraps it in the protocol envelope. |
 | `open PATH [--hidden]` | Start or reuse a project session. `--hidden` requests an automation window; a graphics context is still required. |
 | `sessions` | List reachable CLI-managed sessions, including session name, project path, process ID and local endpoint. |
 | `snapshot` | Read parts, groups, authored annotations, bounds, selection, highlights, camera and load state. |

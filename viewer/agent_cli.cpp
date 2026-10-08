@@ -13,6 +13,7 @@ const std::map<std::string, std::string> kUsage = {
     {"docs", "docs [AREA]"},
     {"open", "open PATH [--session NAME] [--hidden]"},
     {"sessions", "sessions"}, {"snapshot", "snapshot"},
+    {"overview", "overview"}, {"profile", "profile [--template]"},
     {"selection", "selection"}, {"state", "state"},
     {"reference", "reference TOKEN"},
     {"pick", "pick --id ID --kind part|surface|edge|vertex --question TEXT"},
@@ -30,6 +31,8 @@ const std::map<std::string, std::string> kDescriptions = {
     {"open", "Open or reuse a persistent project session. --hidden is for automation."},
     {"sessions", "List live local sessions."},
     {"snapshot", "Read semantic scene state, without meshes."},
+    {"overview", "Read the displayed revision's project overview and profile context."},
+    {"profile", "Read displayed project-local printer/material context. --template prints an incomplete manifest fragment without a session; preset IDs are never verified."},
     {"selection", "Read the user's current selection."},
     {"reference", "Resolve a copied selection reference against the displayed geometry."},
     {"pick", "Ask the human to select geometry. Caller ID permits safe retries; this returns a receipt immediately."},
@@ -46,7 +49,7 @@ const std::map<std::string, std::string> kDescriptions = {
     {"capabilities", "List supported commands and protocol capabilities."},
     {"version", "Print the application and protocol versions."}};
 const std::set<std::string> kReview = {
-    "snapshot", "selection", "reference", "state", "highlight", "frame", "view", "screenshot", "pick"};
+    "snapshot", "overview", "profile", "selection", "reference", "state", "highlight", "frame", "view", "screenshot", "pick"};
 json Envelope(const std::string& command, const std::string& session,
               const std::string& revision, bool ok) {
   json result = {{"protocolVersion", 1}, {"ok", ok}, {"command", command}};
@@ -115,6 +118,7 @@ CliParseResult ParseCli(const std::vector<std::string>& arguments) {
       else if (flag == "--frame") options.arguments["frame"] = true;
       else if (flag == "--selection") options.arguments["selection"] = true;
       else if (flag == "--replace") options.arguments["replace"] = true;
+      else if (flag == "--template") options.arguments["template"] = true;
       else return fail("Unknown option: " + flag);
       continue;
     }
@@ -143,13 +147,15 @@ CliParseResult ParseCli(const std::vector<std::string>& arguments) {
       {"--hidden", "open"}, {"--revision", "wait"}, {"--clear", "highlight"},
       {"--frame", "highlight"}, {"--selection", "frame"}, {"--replace", "screenshot"},
       {"--id", "pick"}, {"--kind", "pick"}, {"--question", "pick"},
-      {"--after", "events"}, {"--wait", "events"}};
+      {"--after", "events"}, {"--wait", "events"}, {"--template", "profile"}};
   for (const auto& entry : owners) {
     if (flags.count(entry.first) && options.command != entry.second)
       return fail(entry.first + " is only valid for " + entry.second);
   }
   if (!options.expectRevision.empty() && !kReview.count(options.command))
     return fail("--expect-revision is only valid for review commands");
+  if (options.arguments.value("template", false) && !options.expectRevision.empty())
+    return fail("--template does not read a displayed revision; omit --expect-revision");
   if (options.help) return result;
   if (options.command == "open" || options.command == "view" || options.command == "screenshot" || options.command == "reference") {
     if (positional.size() != 1 || positional.front().empty())
@@ -203,9 +209,9 @@ std::string Help(const std::string& command) {
     out << "Guidance on demand: synthcad docs AREA\n"
         << "  Getting started     start, skill\n"
         << "  Modeling            modeling, api, design\n"
-        << "  Printing & assembly print-design, fit-and-assembly\n"
+        << "  Printing & assembly profiles, print-design, fit-and-assembly\n"
         << "  Plates & handoff     build-plates, bambu-handoff\n"
-        << "  Agent review        cli, projects\n"
+        << "  Agent review        cli, projects, overview\n"
         << "Prints complete instructions to stdout; no skill files to install.\n"
         << "Use synthcad docs to list guides and their current bundle version.\n";
   };
@@ -227,6 +233,7 @@ std::string Help(const std::string& command) {
         {"Discovery", {"docs", "capabilities", "version"}},
         {"Projects & sessions", {"open", "sessions", "view"}},
         {"Reload & revision checks", {"state", "revision", "wait"}},
+        {"Project context", {"overview", "profile"}},
         {"Shared review", {"snapshot", "selection", "reference", "highlight", "frame", "screenshot"}},
         {"Guided selection", {"pick", "pick-status", "pick-cancel", "events"}}}) {
       out << "\n" << area.first << ":\n";
@@ -235,6 +242,8 @@ std::string Help(const std::string& command) {
     out << "\n  help [COMMAND]\n\nExamples:\n"
         << "  synthcad docs start\n"
         << "  synthcad docs print-design\n"
+        << "  synthcad profile --template\n"
+        << "  synthcad overview -s bracket --json\n"
         << "  synthcad open \"My Project/assembly.js\" --session bracket\n"
         << "  synthcad --session bracket --json snapshot\n"
         << "  synthcad revision -s bracket --json\n"
@@ -263,6 +272,7 @@ json Capabilities() {
           {"persistentSessions", true}, {"semanticSnapshots", true},
           {"revisionWait", true}, {"agentHighlights", true},
           {"screenshots", true}, {"bundledGuidance", true}, {"selectionReferences", true},
+          {"projectOverview", true}, {"printerProfiles", true}, {"slicerPresetVerification", false},
           {"guidedPicking", true}, {"sessionEvents", true}, {"geometryEditing", false}, {"export", false}};
 }
 
@@ -300,6 +310,8 @@ std::string FormatResponse(const json& response, bool jsonOutput) {
     return error.value("code", "error") + ": " + error.value("message", "Request failed") + "\n";
   }
   const auto data = response.find("data");
+  if (response.value("command", "") == "profile" && data != response.end() && data->contains("profiles"))
+    return data->dump(2) + "\n";
   if (response.value("command", "") == "docs" && data != response.end()) {
     if (data->contains("content")) return data->at("content").get<std::string>();
     std::ostringstream docs;

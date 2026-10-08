@@ -127,6 +127,15 @@ automated CI and distribution validation remain part of the v1 backlog.
 
 ## Viewer controls
 
+Use **Project** beside the scene filename to review named views, measurements,
+assumptions, printer context, checks, exports and optional physical notes.
+`synthcad overview --json` and `synthcad profile --json` expose the same context
+to the agent. `synthcad profile --template` prints an incomplete setup fragment;
+`synthcad docs profiles` guides printer/nozzle/material setup without installing
+files or inheriting another project's settings. Missing setup permits review.
+Read [the overview contract](docs/project-overview.md) for record formats and
+revision freshness. Authored check results remain distinct from engine checks.
+
 - Left-drag to orbit, right-drag to pan (the model follows the mouse), and scroll to zoom.
 - Click to select geometry. The bottom-right card switches between Part,
   Surface, Edge and Vertex modes. Surfaces distinguish planar faces from

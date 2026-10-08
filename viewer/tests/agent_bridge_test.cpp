@@ -63,6 +63,18 @@ int main() {
         bridge.Publish(Snapshot("ready", first, firstRevision), first);
         Check(bridge.Handle(Request("state"))["data"]["displayedRevision"] == firstRevision, "state reports displayed revision");
         Check(bridge.Handle(Request("selection"))["data"]["selection"].is_null(), "selection null passes through");
+        auto contextSnapshot = Snapshot("ready", first, firstRevision);
+        contextSnapshot["overview"] = {{"projectName", "Custom"}, {"profile", {{"status", "incomplete"}, {"activeProfile", "custom"}}}};
+        bridge.Publish(contextSnapshot, first);
+        const auto overview = bridge.Handle(Request("overview"));
+        Check(overview["data"] == contextSnapshot["overview"] && overview["revision"] == firstRevision,
+              "overview returns the stored displayed context");
+        const auto profile = bridge.Handle(Request("profile"));
+        Check(profile["data"] == contextSnapshot["overview"]["profile"] && profile["revision"] == firstRevision,
+              "profile reads exactly the stored context");
+        auto staleContext = Request("profile"); staleContext["expectRevision"] = "old";
+        ErrorCode(bridge.Handle(staleContext), "stale_revision");
+        Check(bridge.Drain().empty(), "context reads never queue an action");
         auto token = bridge.Handle(Request("revision"))["data"]["revision"].get<std::string>();
         auto ready = bridge.Handle(Request("wait", {{"revision", token}}));
         Check(ready["ok"] == true && ready["data"]["requestedRevision"] == token

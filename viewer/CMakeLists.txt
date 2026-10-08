@@ -4,7 +4,7 @@ find_package(Threads REQUIRED)
 
 include(${PROJECT_SOURCE_DIR}/cmake/embed-agent-guides.cmake)
 synthcad_embed_agent_guides(${CMAKE_CURRENT_BINARY_DIR}/agent_guides.generated.h)
-add_library(synthcad_agent STATIC agent_cli.cpp project_contract.cpp agent_transport.cpp agent_bridge.cpp agent_entry.cpp agent_knowledge.cpp guided_pick.cpp)
+add_library(synthcad_agent STATIC agent_cli.cpp project_contract.cpp agent_transport.cpp agent_bridge.cpp agent_entry.cpp agent_knowledge.cpp guided_pick.cpp printer_profile.cpp project_overview.cpp)
 target_include_directories(synthcad_agent PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(synthcad_agent PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_link_libraries(synthcad_agent PUBLIC nlohmann_json::nlohmann_json Threads::Threads)
@@ -66,6 +66,7 @@ add_executable(dingcad_viewer
   selection_ui.cpp
   display_scale.cpp
   guided_pick_ui.cpp
+  project_overview_ui.cpp
   js_bindings.cpp
   dimensions.cpp
   appearance.cpp
@@ -103,7 +104,7 @@ if(SYNTHCAD_CUSTOM_FRAME_CONTROL)
   target_compile_definitions(dingcad_viewer PRIVATE SYNTHCAD_CUSTOM_FRAME_CONTROL)
 endif()
 
-foreach(test project_contract agent_cli agent_transport agent_bridge agent_knowledge guided_pick)
+foreach(test project_contract agent_cli agent_transport agent_bridge agent_knowledge guided_pick printer_profile project_overview)
   add_executable(synthcad_${test}_tests EXCLUDE_FROM_ALL tests/${test}_test.cpp)
   target_link_libraries(synthcad_${test}_tests PRIVATE synthcad_agent)
   target_include_directories(synthcad_${test}_tests PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
@@ -148,6 +149,14 @@ else()
 endif()
 
 add_executable(synthcad_guided_pick_ui_tests EXCLUDE_FROM_ALL tests/guided_pick_ui_test.cpp guided_pick_ui.cpp parts_panel.cpp part_tree.cpp dimensions.cpp brand.cpp)
+add_executable(synthcad_project_overview_ui_tests EXCLUDE_FROM_ALL tests/project_overview_ui_test.cpp project_overview_ui.cpp guided_pick_ui.cpp parts_panel.cpp part_tree.cpp dimensions.cpp brand.cpp)
+target_include_directories(synthcad_project_overview_ui_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(synthcad_project_overview_ui_tests PRIVATE manifold raylib dingcad_quickjs nlohmann_json::nlohmann_json)
+if(MSVC)
+  target_compile_options(synthcad_project_overview_ui_tests PRIVATE /utf-8 /UNDEBUG)
+else()
+  target_compile_options(synthcad_project_overview_ui_tests PRIVATE -UNDEBUG)
+endif()
 target_include_directories(synthcad_guided_pick_ui_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(synthcad_guided_pick_ui_tests PRIVATE manifold raylib dingcad_quickjs)
 if(MSVC)

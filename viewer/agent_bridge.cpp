@@ -112,6 +112,10 @@ json AgentBridge::Handle(const json& request){
   const auto guard=request.value("expectRevision","");
   if(!guard.empty()&&(snapshot_.value("status","")!="ready"||guard!=snapshot_.value("displayedRevision","")||!MatchesDisk(files_)))
     return failure("stale_revision","The requested displayed revision is no longer current");
+  if(command=="overview"||command=="profile"){
+    const auto overview=snapshot_.value("overview",json(nullptr));
+    return Success(command,command=="profile"&&overview.is_object()?overview.value("profile",json(nullptr)):overview,session_,snapshot_.value("displayedRevision",""));
+  }
   if(command=="state"||command=="snapshot"||command=="selection"){
     return Success(command,command=="selection"?json{{"selection",snapshot_.value("selection",json(nullptr))}}:snapshot_,session_,snapshot_.value("displayedRevision",""));
   }
