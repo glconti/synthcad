@@ -116,7 +116,9 @@ void CheckLayoutAndEmptyProfile() {
   };
   for (const auto *heading : {"Project", "Views", "Geometry status",
                               "Printer profile", "Measurements", "Assumptions",
-                              "Checks", "Exports", "Evidence", "Metadata errors"})
+                              "Checks", "Exports", "Evidence",
+                              "Compatibility and reprint notes", "Metadata errors",
+                              "Project metadata warnings"})
     Require(hasDocumentText(heading), "Every overview section is labeled");
   Require(std::count(layout.document.begin(), layout.document.end(), "None recorded.") >= 6,
           "Empty view and metadata sections say that nothing was recorded");
@@ -464,6 +466,197 @@ void CheckGeneratedExportHistoryIsSeparate() {
               "Generated receipt summary avoids raw serializer output");
   }
 }
+
+void CheckSampleEvidenceAndViewActions() {
+  const Font noFont{};
+  auto overview = EmptyOverview();
+  overview["views"] = {{{"id", "main"}, {"name", "Main assembly"},
+                        {"kind", "assembly"}, {"loaded", true},
+                        {"modelRevision", "rev-main"}, {"sourceCurrent", true}},
+                       {{"id", "sample-plate"}, {"name", "Sample plate"},
+                        {"kind", "plate"}, {"loaded", false},
+                        {"modelRevision", nullptr}, {"sourceCurrent", false}}};
+  overview["displayedView"] = "main";
+  overview["warnings"] = {{{"path", "$.compatibilityChanges[0].evidenceIds"},
+                            {"message", "Some authored evidence IDs do not resolve to accepted evidence records."},
+                            {"missingEvidenceIds", {"missing-fit"}},
+                            {"recordId", "change-unknown"}}};
+  overview["errors"].push_back(
+      {{"path", "profiles.custom.buildVolume"}, {"message", "Build volume is missing."}});
+  const std::string details = "Fit held after cooling; clearance was visible at the rear. æ±äº¬.";
+  overview["evidence"] = {{
+      {"id", "evidence-fit"}, {"text", "Clearance check on sample"},
+      {"stage", "tested"}, {"freshness", "stale"},
+      {"reason", "The model revision changed after the observation."},
+      {"origin", "authored"}, {"sampleView", "sample-plate"},
+      {"sampleViewStatus", "available"}, {"sourcePartIds", {"bracket-source"}},
+      {"observation", {{"kind", "fit"}, {"result", "passed"},
+                       {"reportedBy", "Workshop operator"}, {"details", details},
+                       {"conditions", "PLA, room temperature, 0.2 mm layers"},
+                       {"recordedAt", "2026-10-08T12:00:00Z"}}}}};
+  overview["evidence"].push_back(
+      {{"id", "evidence-superseded"}, {"text", "Earlier load observation"},
+       {"stage", "superseded"}, {"freshness", "current"},
+       {"reason", "The recorded source basis still matches."},
+       {"observation", {{"kind", "load"}, {"result", "inconclusive"},
+                        {"reportedBy", "Workshop operator"},
+                        {"details", "The sample was not held long enough to assess creep."}}}});
+
+  ProjectOverviewUi ui;
+  ui.open = true;
+  auto layout = ui.Layout(overview, 800, 600, noFont, TestMeasure);
+  const auto has = [&](const std::string &text) {
+    return std::find(layout.document.begin(), layout.document.end(), text) !=
+           layout.document.end();
+  };
+  Require(has("Optional sample evidence; it is not required to export."),
+          "Sample evidence remains optional for export");
+  Require(has("Stage: tested") &&
+              has("Freshness: stale — The model revision changed after the observation."),
+          "Evidence stage and freshness remain separate");
+  Require(has("Stage: superseded") &&
+              has("Freshness: current — The recorded source basis still matches."),
+          "A superseded stage does not imply stale basis freshness");
+  Require(has("Observation: fit · passed (user-reported; not engine-verified)") &&
+              has("Reported by: Workshop operator") &&
+              has("Observation details: " + details) &&
+              has("Conditions: PLA, room temperature, 0.2 mm layers") &&
+              has("Recorded: 2026-10-08T12:00:00Z"),
+          "Sample observations display their user-reported details and conditions");
+  Require(has("Source part IDs: bracket-source"),
+          "Sample evidence preserves source-part identifiers");
+  Require(has("Project metadata warnings") &&
+              has("$.compatibilityChanges[0].evidenceIds: Some authored evidence IDs do not resolve to accepted evidence records.") &&
+              has("Affected record: change-unknown") &&
+              has("Missing evidence IDs: missing-fit") &&
+              has("profiles.custom.buildVolume: Build volume is missing."),
+          "Root metadata warnings are shown separately from structural errors");
+  const auto sampleLink = std::find_if(layout.rows.begin(), layout.rows.end(),
+                                       [](const ProjectOverviewRow &row) {
+                                         return row.viewButton &&
+                                                row.text.rfind("Open sample view:", 0) == 0;
+                                       });
+  Require(sampleLink != layout.rows.end() && sampleLink->viewId == "sample-plate",
+          "A uniquely registered sample view gets an open action even when not loaded");
+  const float desiredScroll = std::clamp(
+      ui.scroll + sampleLink->bounds.y + sampleLink->bounds.height / 2.0f -
+          (layout.body.y + layout.body.height / 2.0f),
+      0.0f, layout.maxScroll);
+  PanelInput wheelToSample;
+  wheelToSample.mouse = Vector2{layout.body.x + 16, layout.body.y + 16};
+  wheelToSample.wheel = -(desiredScroll - ui.scroll) / 60.0f;
+  ui.Update(overview, wheelToSample, noFont, 800, 600, TestMeasure);
+  layout = ui.Layout(overview, 800, 600, noFont, TestMeasure);
+  const auto visibleSampleLink = std::find_if(layout.rows.begin(), layout.rows.end(),
+                                             [](const ProjectOverviewRow &row) {
+                                               return row.viewButton &&
+                                                      row.text.rfind("Open sample view:", 0) == 0;
+                                             });
+  Require(visibleSampleLink != layout.rows.end() &&
+              CheckCollisionPointRec(
+                  Vector2{visibleSampleLink->bounds.x + visibleSampleLink->bounds.width / 2.0f,
+                          visibleSampleLink->bounds.y + visibleSampleLink->bounds.height / 2.0f},
+                  layout.body),
+          "The sample action is clicked only after scrolling it into the body viewport");
+  const auto action = ui.Update(overview, Click(visibleSampleLink->bounds), noFont,
+                                800, 600, TestMeasure);
+  Require(action.view == "sample-plate" && !action.close,
+          "Clicking sample-view evidence routes through the normal view action");
+
+  overview["evidence"][0]["sampleViewStatus"] = "unknown";
+  overview["evidence"][0]["sampleViewReason"] = "The referenced view is not uniquely registered.";
+  layout = ui.Layout(overview, 800, 600, noFont, TestMeasure);
+  Require(std::none_of(layout.rows.begin(), layout.rows.end(),
+                       [](const ProjectOverviewRow &row) {
+                         return row.text.rfind("Open sample view:", 0) == 0;
+                       }) &&
+              std::any_of(layout.document.begin(), layout.document.end(),
+                          [](const std::string &row) {
+                            return row.find("Sample view: Sample plate (unknown) — The referenced view is not uniquely registered.") != std::string::npos;
+                          }),
+          "Unknown sample links stay non-actionable and explain why");
+}
+
+void CheckAuthoredCompatibilityAndReprintChanges() {
+  const Font noFont{};
+  auto overview = EmptyOverview();
+  std::string longText;
+  const std::string unicode = "R\xc3\xa9vise the fit after the connector moved \xe6\x9d\xb1\xe4\xba\xac. ";
+  while (longText.size() < 5000) longText += unicode;
+  overview["compatibilityChanges"] = {
+      {{"id", "change-1"}, {"text", longText}, {"status", "requires-reprint"},
+       {"basis", {{"view", "target-plate"}, {"modelRevision", std::string(64, 'a')},
+                   {"profileRevision", "profile-target"}}},
+       {"previousBasis", {{"view", "previous-plate"}, {"modelRevision", std::string(64, 'b')},
+                           {"profileRevision", "profile-previous"}}},
+       {"partIds", {"housing", "connector"}}, {"reprintPartIds", {"connector"}},
+       {"evidenceIds", {"evidence-fit"}}, {"evidenceStatus", "available"},
+       {"evidenceReason", "All authored evidence references resolve; no verification of their claims is inferred."},
+       {"freshness", "stale"}, {"reason", "Target basis changed since this note was recorded."},
+       {"origin", "authored"}},
+      {{"id", "change-2"}, {"text", "Compatibility has not been established."},
+       {"status", "unknown"}, {"basis", {{"view", "current-plate"}}},
+       {"previousBasis", {{"view", "older-plate"}}},
+       {"partIds", {"housing"}}, {"reprintPartIds", json::array()},
+       {"evidenceIds", {"missing-evidence"}},
+       {"evidenceStatus", "unknown"},
+       {"evidenceReason", "Referenced evidence is missing."},
+       {"freshness", "current"}, {"reason", "Target basis matches."},
+       {"origin", "authored"}},
+      {{"id", "change-3"}, {"text", "No evidence was linked to this decision."},
+       {"status", "compatible"}, {"basis", {{"view", "current-plate"}}},
+       {"previousBasis", {{"view", "older-plate"}}},
+       {"partIds", {"housing"}}, {"reprintPartIds", json::array()},
+       {"evidenceIds", json::array()}, {"evidenceStatus", "available"},
+       {"evidenceReason", "No evidence IDs were authored; no supporting observation is inferred."},
+       {"freshness", "current"}, {"reason", "Target basis matches."},
+       {"origin", "authored"}}};
+
+  ProjectOverviewUi ui;
+  ui.open = true;
+  const auto layout = ui.Layout(overview, 800, 600, noFont, TestMeasure);
+  const auto has = [&](const std::string &text) {
+    return std::find(layout.document.begin(), layout.document.end(), text) !=
+           layout.document.end();
+  };
+  Require(has("Origin: authored; these notes are not an engine verification or certification."),
+          "Compatibility notes are clearly distinguished from verified results");
+  Require(std::any_of(layout.rows.begin(), layout.rows.end(), [&](const ProjectOverviewRow &row) {
+            return row.text == "change-1 · " + longText;
+          }),
+          "Long authored Unicode compatibility notes remain complete");
+  Require(has("Authored status: requires-reprint (authored, not certified)") &&
+              has("Authored status: unknown — compatibility is not certified."),
+          "Reprint and unknown statuses are plain and explicitly non-certifying");
+  Require(has("Target basis: view target-plate · model aaaaaaaaaaaa… · profile profile-target") &&
+              has("Previous basis: view previous-plate · model bbbbbbbbbbbb… · profile profile-previous"),
+          "Target and previous revision bases are shown independently");
+  Require(has("Impacted part IDs: housing, connector") &&
+              has("Required reprint part IDs: connector") &&
+              has("Impacted part IDs: housing") &&
+              has("Required reprint part IDs: None"),
+          "Impacted parts and required reprints are separately identified");
+  Require(has("Related evidence IDs: evidence-fit") &&
+              has("Evidence availability: available") &&
+              has("Evidence note: All authored evidence references resolve; no verification of their claims is inferred.") &&
+              has("Evidence availability: unknown") &&
+              has("Evidence note: Referenced evidence is missing.") &&
+              has("Evidence links: None recorded.") &&
+              has("Evidence note: No evidence IDs were authored; no supporting observation is inferred."),
+          "Evidence references and missing-evidence limitations are visible");
+  Require(has("Freshness: stale — Target basis changed since this note was recorded.") &&
+              has("Freshness: current — Target basis matches."),
+          "Compatibility freshness is reported independently from reprint status");
+  for (const auto &row : layout.rows) {
+    if (row.text.rfind("Target basis:", 0) == 0 ||
+        row.text.rfind("Previous basis:", 0) == 0 ||
+        row.text.rfind("Impacted part IDs:", 0) == 0 ||
+        row.text.rfind("Required reprint part IDs:", 0) == 0)
+      Require(row.text.find('{') == std::string::npos &&
+                  row.text.find('[') == std::string::npos,
+              "Compatibility rows avoid raw serializer syntax");
+  }
+}
 }  // namespace
 
 int main() {
@@ -473,6 +666,8 @@ int main() {
     CheckReadableCommonMetadata();
     CheckUnicodeContentAndScrolling();
     CheckGeneratedExportHistoryIsSeparate();
+    CheckSampleEvidenceAndViewActions();
+    CheckAuthoredCompatibilityAndReprintChanges();
     std::cout << "PASS project overview layout, content, input, and scrolling\n";
   } catch (const std::exception &error) {
     std::cerr << error.what() << '\n';

@@ -407,9 +407,10 @@ manufacturing results build on those profiles and shared instances; see
 2026-10-08. Standard current-plate 3MF in **SC16**, strengthened printing guidance
 and build-volume-only checks are verified in [Batch 8](../batch-8-validation.md).
 **SC17** export provenance and shared CLI/GUI actions are verified in
-[Batch 9](../batch-9-validation.md). Next is **SC18** optional physical feedback,
-with no mandatory sample-print step.
-Start Linux CI and licensing
-resolution in parallel when resources are available; do not leave either until
-packaging. The Bambu-format spike should precede promises about exact export
-settings.
+[Batch 9](../batch-9-validation.md). **SC18** optional physical feedback is
+verified in [Batch 10](../batch-10-validation.md), with no mandatory sample-print
+step. Next are **SC19** hosted Windows/Linux validation and **SC20** resolution
+of the exact application license terms before packaging. Local CI rehearsal
+evidence does not establish a successful hosted run. Exact Bambu settings and
+printer catalogs remain deferred; current placement uses the build volume and
+checks the complete transformed footprint, including diagonal orientations.

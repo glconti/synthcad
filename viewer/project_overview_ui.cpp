@@ -145,6 +145,17 @@ std::string ViewLabel(const json &overview, const std::string &id) {
   return ShortLabel(id);
 }
 
+bool IsKnownView(const json &overview, const std::string &id) {
+  const auto *views = Field(overview, "views");
+  if (!views || !views->is_array() || id.empty()) return false;
+  size_t matches = 0;
+  for (const auto &view : *views) {
+    if (StringField(view, "id", "") != id) continue;
+    ++matches;
+  }
+  return matches == 1;
+}
+
 struct DocumentBuilder {
   std::vector<ProjectOverviewRow> rows;
 
@@ -175,7 +186,12 @@ struct DocumentBuilder {
   }
 
   void ArrayField(const char *label, const json *value) {
-    if (!value || !value->is_array() || value->empty()) return;
+    if (!value || !value->is_array()) return;
+    if (value->empty()) {
+      if (std::string(label) == "Required reprint part IDs")
+        Add(std::string(label) + ": None");
+      return;
+    }
     if (std::string(label) != "Part IDs") {
       Add(std::string(label) + ": " + JoinArray(value));
       return;
@@ -249,6 +265,40 @@ struct DocumentBuilder {
                                     : "profile " + ShortIdentifier(profileRevision);
     Add("Basis: view " + ShortIdentifier(Field(*basis, "view")) + " · model " +
         ShortIdentifier(Field(*basis, "modelRevision")) + " · " + profile);
+  }
+
+  void CompatibilityBasis(const char *label, const json *basis) {
+    if (!basis || basis->is_null()) {
+      Add(std::string(label) + ": Unknown");
+      return;
+    }
+    if (basis->is_string()) {
+      Add(std::string(label) + ": " + ShortLabel(basis->get<std::string>()));
+      return;
+    }
+    if (!basis->is_object()) {
+      Add(std::string(label) + ": Unknown");
+      return;
+    }
+    std::vector<std::string> fields;
+    for (const auto *key : {"view", "modelRevision"}) {
+      const auto *value = Field(*basis, key);
+      if (!value || value->is_null()) continue;
+      const std::string fieldLabel = std::string(key) == "view" ? "view" : "model";
+      fields.push_back(fieldLabel + " " + ShortIdentifier(value));
+    }
+    if (const auto *profileRevision = Field(*basis, "profileRevision")) {
+      fields.push_back(profileRevision->is_null()
+                           ? "profile independent"
+                           : "profile " + ShortIdentifier(profileRevision));
+    }
+    std::string line = std::string(label) + ": ";
+    if (fields.empty()) line += "Unknown";
+    for (const auto &field : fields) {
+      if (line.size() > std::string(label).size() + 2) line += " · ";
+      line += field;
+    }
+    Add(std::move(line));
   }
 
   void ProfileErrors(const json *errors) {
@@ -484,8 +534,26 @@ struct DocumentBuilder {
     }
   }
 
-  void AddEvidence(const json *records) {
+  void AddRootWarnings(const json *warnings) {
+    Section("Project metadata warnings");
+    Empty(warnings);
+    if (!warnings || !warnings->is_array()) return;
+    for (const auto &warning : *warnings) {
+      if (warning.is_string()) {
+        Add("Warning: " + warning.get<std::string>());
+      } else {
+        const std::string path = StringField(warning, "path", "Project");
+        Add(path + ": " + StringField(warning, "message", "Metadata warning."));
+        if (HasText(Field(warning, "recordId")))
+          Add("Affected record: " + ShortIdentifier(Field(warning, "recordId")));
+        ArrayField("Missing evidence IDs", Field(warning, "missingEvidenceIds"));
+      }
+    }
+  }
+
+  void AddEvidence(const json &overview, const json *records) {
     Section("Evidence");
+    Add("Optional sample evidence; it is not required to export.");
     Empty(records);
     if (!records || !records->is_array()) return;
     for (const auto &record : *records) {
@@ -495,7 +563,69 @@ struct DocumentBuilder {
           StringField(record, "reason"));
       ArrayField("Attachments", Field(record, "attachments"));
       ArrayField("Part IDs", Field(record, "partIds"));
+      ArrayField("Source part IDs", Field(record, "sourcePartIds"));
       Basis(record);
+      const auto *observation = Field(record, "observation");
+      if (observation && observation->is_object()) {
+        Add("Observation: " + StringField(*observation, "kind") + " · " +
+            StringField(*observation, "result") +
+            " (user-reported; not engine-verified)");
+        Add("Reported by: " + StringField(*observation, "reportedBy"));
+        Add("Observation details: " + StringField(*observation, "details"));
+        if (HasText(Field(*observation, "conditions")))
+          Add("Conditions: " + StringField(*observation, "conditions", ""));
+        if (HasText(Field(*observation, "recordedAt")))
+          Add("Recorded: " + StringField(*observation, "recordedAt", ""));
+        JsonField("Custom metadata", Field(*observation, "extensions"));
+      }
+      const auto *sampleView = Field(record, "sampleView");
+      if (HasText(sampleView)) {
+        const std::string sampleId = sampleView->get<std::string>();
+        const std::string state = StringField(record, "sampleViewStatus", "unknown");
+        const std::string reason = StringField(record, "sampleViewReason", "");
+        if (state == "available" && IsKnownView(overview, sampleId)) {
+          const bool selected = StringField(overview, "displayedView", "") == sampleId;
+          AddView(sampleId, "Open sample view: " + ViewLabel(overview, sampleId),
+                  selected);
+        } else {
+          Add("Sample view: " + ViewLabel(overview, sampleId) + " (" +
+              (state == "available" ? "unavailable" : "unknown") + ")" +
+              (reason.empty() ? "" : " — " + reason));
+        }
+      }
+      JsonField("Custom metadata", Field(record, "extensions"));
+    }
+  }
+
+  void AddCompatibilityChanges(const json *records) {
+    Section("Compatibility and reprint notes");
+    Add("Origin: authored; these notes are not an engine verification or certification.");
+    Empty(records);
+    if (!records || !records->is_array()) return;
+    for (const auto &record : *records) {
+      Add(ShortIdentifier(Field(record, "id")) + " · " + StringField(record, "text"));
+      const std::string status = StringField(record, "status", "unknown");
+      Add("Authored status: " + status +
+          (status == "unknown" ? " — compatibility is not certified."
+                                : " (authored, not certified)"));
+      CompatibilityBasis("Target basis", Field(record, "basis"));
+      CompatibilityBasis("Previous basis", Field(record, "previousBasis"));
+      ArrayField("Impacted part IDs", Field(record, "partIds"));
+      ArrayField("Required reprint part IDs", Field(record, "reprintPartIds"));
+      const auto *evidenceIds = Field(record, "evidenceIds");
+      if (evidenceIds) ArrayField("Related evidence IDs", evidenceIds);
+      const std::string evidenceStatus = StringField(record, "evidenceStatus", "unknown");
+      if (evidenceStatus == "available" &&
+          (!evidenceIds || !evidenceIds->is_array() || evidenceIds->empty()))
+        Add("Evidence links: None recorded.");
+      else
+        Add("Evidence availability: " + evidenceStatus);
+      if (HasText(Field(record, "evidenceReason")))
+        Add("Evidence note: " + StringField(record, "evidenceReason", ""));
+      else if (evidenceStatus == "unknown")
+        Add("Evidence note: No supporting evidence is available; compatibility is not certified.");
+      Add("Freshness: " + StringField(record, "freshness") + " — " +
+          StringField(record, "reason"));
       JsonField("Custom metadata", Field(record, "extensions"));
     }
   }
@@ -561,7 +691,8 @@ struct DocumentBuilder {
     AddAssumptions(Field(overview, "assumptions"));
     AddChecks(Field(overview, "checks"));
     AddExports(Field(overview, "exports"));
-    AddEvidence(Field(overview, "evidence"));
+    AddEvidence(overview, Field(overview, "evidence"));
+    AddCompatibilityChanges(Field(overview, "compatibilityChanges"));
 
     AddGeneratedExports(Field(overview, "generatedExports"));
     AddExportHistoryDiagnostics(Field(overview, "exportHistoryDiagnostics"));
@@ -573,6 +704,7 @@ struct DocumentBuilder {
       for (const auto &error : *errors)
         Add(StringField(error, "path") + ": " + StringField(error, "message"));
     }
+    AddRootWarnings(Field(overview, "warnings"));
   }
 };
 

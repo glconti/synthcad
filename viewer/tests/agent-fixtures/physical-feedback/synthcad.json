@@ -1,0 +1,12 @@
+{
+  "schemaVersion":1,
+  "name":"Optional physical feedback acceptance fixture",
+  "defaultView":"assembly",
+  "views":{"assembly":"design.js","plate":"design.js","fit-sample":"design.js"},
+  "activeProfile":"test-volume",
+  "profiles":{"test-volume":{"buildVolume":[120,120,100],"exclusions":[],"provenance":{"type":"user","description":"Synthetic test dimensions; no printer validation"}}},
+  "plateSettings":{
+    "plate":{"partGap":3,"brim":0,"support":0},
+    "fit-sample":{"partGap":3,"brim":0,"support":0}
+  }
+}

@@ -101,6 +101,8 @@ Windows launcher accepts them too:
 Running `synthcad` with no arguments groups commands and guidance by area.
 Read just the instructions you need with `synthcad docs start`,
 `synthcad docs modeling`, `synthcad docs print-design` or `synthcad docs api`.
+For optional sample prints and user-reported results, use
+`synthcad docs physical-feedback`. Full exports never require sample records.
 `synthcad docs` lists all areas. Complete guides print to stdout from the CLI's
 compiled bundle, without installing skill files or accessing this checkout.
 Add `--json` for content and version metadata in a structured response.

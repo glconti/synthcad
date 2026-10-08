@@ -34,6 +34,7 @@ def main():
             assert area in help_text, area
         assert 'docs [AREA]' in call('help', 'docs')
         assert 'profile [--template]' in help_text and 'overview' in help_text
+        assert 'physical-feedback' in help_text
         fragment = json.loads(call('profile', '--template'))
         assert fragment['activeProfile'] in fragment['profiles']
         profile = fragment['profiles'][fragment['activeProfile']]
@@ -44,7 +45,7 @@ def main():
         index = json.loads(call('docs', '--json'))
         assert index['ok'] and index['command'] == 'docs'
         topics = index['data']['topics']
-        assert len(topics) == 14
+        assert len(topics) == 15 and any(entry['topic'] == 'physical-feedback' for entry in topics)
         assert 'bundleVersion' in index['data']
         for entry in topics:
             topic = entry['topic']
@@ -61,7 +62,7 @@ def main():
         assert 'synthcad docs' in error['error']['message']
         call('docs', 'start', 'extra', exit_code=2)
         assert sorted(path.name for path in root.iterdir()) == [executable.name], 'Discovery wrote files'
-    print('PASS stdout-only guides: standalone CLI, grouped help, 14 complete topics, UTF-8, hashes, errors, no writes')
+        print(f'PASS stdout-only guides: standalone CLI, grouped help, {len(topics)} complete topics, UTF-8, hashes, errors, no writes')
 
 
 if __name__ == '__main__':

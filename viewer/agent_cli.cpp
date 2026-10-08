@@ -236,7 +236,7 @@ std::string Help(const std::string& command) {
     out << "Guidance on demand: synthcad docs AREA\n"
         << "  Getting started     start, skill\n"
         << "  Modeling            modeling, api, design\n"
-        << "  Printing & assembly profiles, checks, print-design, fit-and-assembly\n"
+        << "  Printing & assembly profiles, checks, print-design, fit-and-assembly, physical-feedback\n"
         << "  Plates & handoff     build-plates, bambu-handoff\n"
         << "  Agent review        cli, projects, overview\n"
         << "Prints complete instructions to stdout; no skill files to install.\n"

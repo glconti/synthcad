@@ -76,10 +76,10 @@ struct Validator {
         for (std::size_t i = 0; i < array.size(); ++i)
             if (!Text(array[i])) Error(path + "." + key + "[" + std::to_string(i) + "]", "expected nonempty NUL-free UTF-8 string");
     }
-    void Basis(const json& object, const std::string& path) {
-        if (!object.contains("basis")) return;
-        const auto& basis = object["basis"];
-        const auto bp = path + ".basis";
+    void Basis(const json& object, const std::string& path, const std::string& key = "basis", bool required = false) {
+        if (!object.contains(key)) { if(required) Error(path+"."+key,"required field is missing"); return; }
+        const auto& basis = object[key];
+        const auto bp = path + "." + key;
         if (!basis.is_object()) { Error(bp, "expected object"); return; }
         Fields(basis, {"view", "modelRevision", "profileRevision", "extensions"}, bp);
         String(basis, "view", bp);
@@ -105,7 +105,7 @@ struct Validator {
             String(record, "text", path);
             Enum(record, "status", path, {"provisional", "confirmed"});
         } else {
-            fields.insert("basis"); Basis(record, path);
+            fields.insert("basis"); Basis(record, path,"basis",section=="compatibilityChanges");
             if (section == "checks") {
                 fields.insert({"name", "result", "scope", "details"});
                 String(record, "name", path); String(record, "details", path, false, false);
@@ -115,10 +115,47 @@ struct Validator {
                 fields.insert({"path", "format", "createdAt"});
                 String(record, "path", path); String(record, "createdAt", path, false);
                 Enum(record, "format", path, {"stl", "3mf"});
+            } else if(section == "compatibilityChanges") {
+                fields.insert({"text","status","previousBasis","reprintPartIds","evidenceIds"});
+                String(record,"text",path);
+                Enum(record,"status",path,{"compatible","requires-reprint","unknown"});
+                Basis(record,path,"previousBasis",true);
+                Strings(record,"reprintPartIds",path); Strings(record,"evidenceIds",path);
+                if(!record.contains("partIds") || !record["partIds"].is_array() || record["partIds"].empty())
+                    Error(path+".partIds","required nonempty array of part IDs");
+                if(!record.contains("reprintPartIds"))Error(path+".reprintPartIds","required array is missing; use [] when no reprint is authored");
+                if(record.contains("reprintPartIds") && record["reprintPartIds"].is_array()) {
+                    if(record.value("status",json(nullptr))=="requires-reprint" && record["reprintPartIds"].empty())
+                        Error(path+".reprintPartIds","requires-reprint status requires at least one part ID");
+                    if(record.value("status",json(nullptr))=="compatible" && !record["reprintPartIds"].empty())
+                        Error(path+".reprintPartIds","compatible status requires an empty reprint list");
+                    if(record.contains("partIds") && record["partIds"].is_array()) {
+                        std::set<std::string> parts;
+                        for(const auto &id:record["partIds"])if(Text(id))parts.insert(id.get<std::string>());
+                        for(const auto &id:record["reprintPartIds"])
+                            if(Text(id) && !parts.count(id.get<std::string>()))
+                                Error(path+".reprintPartIds","reprint part IDs must be a subset of partIds");
+                    }
+                }
             } else {
-                fields.insert({"text", "stage", "attachments"});
+                fields.insert({"text", "stage", "attachments", "sampleView", "sourcePartIds", "observation"});
                 String(record, "text", path); Strings(record, "attachments", path);
                 Enum(record, "stage", path, {"proposed", "printed", "tested", "superseded"});
+                String(record,"sampleView",path,false); Strings(record,"sourcePartIds",path);
+                if(record.contains("observation")) {
+                    const auto &observation=record["observation"];
+                    const auto op=path+".observation";
+                    if(record.value("stage",json(nullptr))!="tested" && record.value("stage",json(nullptr))!="superseded")
+                        Error(op,"observation requires an explicitly authored tested or superseded stage");
+                    if(!observation.is_object())Error(op,"expected object");
+                    else {
+                        Fields(observation,{"kind","result","reportedBy","details","conditions","recordedAt","extensions"},op);
+                        Enum(observation,"kind",op,{"fit","load","other"});
+                        Enum(observation,"result",op,{"passed","failed","inconclusive"});
+                        String(observation,"reportedBy",op); String(observation,"details",op);
+                        String(observation,"conditions",op,false,false); String(observation,"recordedAt",op,false);
+                    }
+                }
             }
         }
         Fields(record, fields, path);
@@ -169,14 +206,15 @@ void Freshness(json& record, const json& profile, const json& views) {
 } // namespace
 
 nlohmann::json ProjectOverview(const json& metadata, const json& profile, const json& views) {
-    json output = {{"errors", json::array()}, {"revisionSources", {
+    json output = {{"errors", json::array()}, {"warnings", json::array()}, {"revisionSources", {
         {"modelRevision", "Opaque revision supplied by the loaded view; excludes authored overview records."},
         {"profileRevision", "Revision supplied by the active printer profile context; null basis means profile-independent."},
         {"freshness", "Revision comparison only; authored results are not engine or physical verification."}}}};
     Validator validator{output["errors"]};
     if (!metadata.is_object()) validator.Error("$", "expected metadata object");
     std::size_t validCount = 0;
-    for (const auto* section : {"measurements", "assumptions", "checks", "exports", "evidence"}) {
+    std::map<std::string,std::string> compatibilityPaths;
+    for (const auto* section : {"measurements", "assumptions", "checks", "exports", "evidence", "compatibilityChanges"}) {
         output[section] = json::array();
         if (!metadata.is_object() || !metadata.contains(section)) continue;
         const auto& records = metadata[section];
@@ -195,10 +233,35 @@ nlohmann::json ProjectOverview(const json& metadata, const json& profile, const 
             }
             if (!valid) continue;
             auto record = records[i]; record["origin"] = "authored";
-            if (std::string(section) == "checks" || std::string(section) == "exports" || std::string(section) == "evidence")
+            if (std::string(section) == "checks" || std::string(section) == "exports" || std::string(section) == "evidence" || std::string(section)=="compatibilityChanges")
                 Freshness(record, profile, views);
+            if(std::string(section)=="evidence" && record.contains("sampleView")) {
+                const json *sample=nullptr; bool ambiguous=false;
+                if(views.is_array())for(const auto &view:views)
+                    if(view.is_object() && view.value("id",json(nullptr))==record["sampleView"]) {
+                        if(sample)ambiguous=true; sample=&view;
+                    }
+                const bool available=sample && !ambiguous;
+                record["sampleViewStatus"]=available?"available":"unknown";
+                record["sampleViewReason"]=available?"The sample view is registered and can be opened; its revision freshness and physical observation are assessed separately.":
+                    ambiguous?"The sample view ID is ambiguous.":"The sample view ID is not known in this project.";
+            }
+            if(std::string(section)=="compatibilityChanges")compatibilityPaths[record["id"].get<std::string>()]=rp;
             output[section].push_back(std::move(record)); ++validCount;
         }
+    }
+    std::set<std::string> evidenceIds;
+    for(const auto &evidence:output["evidence"])evidenceIds.insert(evidence["id"].get<std::string>());
+    for(std::size_t i=0;i<output["compatibilityChanges"].size();++i) {
+        auto &record=output["compatibilityChanges"][i];json missing=json::array();
+        for(const auto &id:record.value("evidenceIds",json::array()))
+            if(!evidenceIds.count(id.get<std::string>()))missing.push_back(id);
+        record["evidenceStatus"]=missing.empty()?"available":"unknown";
+        record["evidenceReason"]=!missing.empty()?"Some authored evidence IDs do not resolve to accepted evidence records.":
+            record.value("evidenceIds",json::array()).empty()?"No evidence IDs were authored; no supporting observation is inferred.":
+            "All authored evidence references resolve; no verification of their claims is inferred.";
+        if(!missing.empty())output["warnings"].push_back({{"path",compatibilityPaths.at(record["id"].get<std::string>())+".evidenceIds"},
+            {"message",record["evidenceReason"]},{"missingEvidenceIds",missing},{"recordId",record["id"]}});
     }
     output["status"] = output["errors"].empty() ? "valid" : (validCount ? "partial" : "invalid");
     return output;

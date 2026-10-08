@@ -3,6 +3,7 @@
 #include <iostream>
 #include <limits>
 #include <stdexcept>
+#include <vector>
 
 using nlohmann::json;
 using synthcad::ProjectOverview;
@@ -16,6 +17,16 @@ json Basis(json profile = "profile-a") {
 json Evidence() {
     return {{"id", "fit"}, {"text", u8"Verificare città 日本"}, {"stage", "proposed"},
             {"basis", Basis()}, {"attachments", {"does-not-exist.png"}}};
+}
+json Observation() {
+    return {{"kind","fit"},{"result","inconclusive"},{"reportedBy",u8"Maker città"},
+        {"details","Fit needs a second trial."},{"conditions",""},{"recordedAt","2026-10-08"}};
+}
+json Compatibility() {
+    auto previous=Basis(nullptr); previous["modelRevision"]="older-model";
+    return {{"id","interface-r2"},{"text","New mating edge needs a replacement panel."},
+        {"status","requires-reprint"},{"basis",Basis(nullptr)},{"previousBasis",previous},
+        {"partIds",{"panel","clip"}},{"reprintPartIds",{"panel"}},{"evidenceIds",{"fit"}}};
 }
 }
 int main() {
@@ -112,6 +123,76 @@ int main() {
         Check(result["status"] == "valid" && result["checks"][0]["origin"] == "authored", "authored passed result not engine verified");
         Check(result["exports"][0]["path"] == "missing.stl", "export path not opened");
         Check(result["assumptions"][0]["status"] == "provisional", "assumption state preserved");
+
+        profile={{"status","complete"},{"profileRevision","profile-a"}};
+        views=json::array({{{"id","assembly"},{"loaded",true},{"modelRevision","model-a"},{"sourceCurrent",true}}});
+        Check(empty["compatibilityChanges"].empty() && empty["warnings"].empty(),"sixth optional section is empty without authoring");
+        auto sample=Evidence();sample["stage"]="tested";sample["sampleView"]="assembly";
+        sample["sourcePartIds"]={"panel"};sample["observation"]=Observation();
+        metadata={{"evidence",json::array({sample})},{"compatibilityChanges",json::array({Compatibility()})}};
+        const auto authored=metadata;
+        result=ProjectOverview(metadata,profile,views);
+        Check(result["status"]=="valid" && metadata==authored,"projection leaves authored sample/compatibility records untouched");
+        Check(result["evidence"][0]["observation"]==Observation() && result["evidence"][0]["stage"]=="tested","explicit observation remains authored and stage is retained");
+        Check(result["evidence"][0]["sampleViewStatus"]=="available" && result["compatibilityChanges"][0]["evidenceStatus"]=="available","registered sample and accepted evidence links available");
+        Check(result["compatibilityChanges"][0]["freshness"]=="current" && result["compatibilityChanges"][0]["previousBasis"]==Compatibility()["previousBasis"],"target basis alone determines freshness; previous basis retained verbatim");
+        views[0]["loaded"]=false;views[0]["modelRevision"]=nullptr;
+        result=ProjectOverview(metadata,profile,views);
+        Check(result["evidence"][0]["sampleViewStatus"]=="available" && result["evidence"][0]["freshness"]=="unknown","registered unloaded sample is openable without claiming current revision");
+        result=ProjectOverview(metadata,profile,json::array());
+        Check(result["status"]=="valid" && result["evidence"][0]["sampleViewStatus"]=="unknown","foreign sample view does not invalidate physical history");
+        auto duplicatedViews=json::array({views[0],views[0]});
+        Check(ProjectOverview(metadata,profile,duplicatedViews)["evidence"][0]["sampleViewStatus"]=="unknown","ambiguous sample registry remains unknown");
+        Check(ProjectOverview(metadata,profile,nullptr)["evidence"][0]["sampleViewStatus"]=="unknown","invalid sample registry remains unknown");
+        views[0]["loaded"]=true;views[0]["modelRevision"]="model-a";
+        for(const char *stage:{"proposed","printed"}) {
+            auto bad=sample;bad["stage"]=stage;
+            Check(ProjectOverview({{"evidence",json::array({bad})}},profile,views)["evidence"].empty(),"observation forbidden before explicitly tested stage");
+        }
+        auto superseded=sample;superseded["stage"]="superseded";
+        Check(ProjectOverview({{"evidence",json::array({superseded})}},profile,views)["evidence"][0]["stage"]=="superseded","superseded observations preserve history");
+        for(const json &patch:std::vector<json>{
+            {{"kind","strength"}},{{"result","warning"}},{{"reportedBy",""}},{{"details",nullptr}},
+            {{"conditions",17}},{{"recordedAt",""}},{{"extensions",json::array()}},{{"automatic",true}},
+            {{"reportedBy",std::string("bad\0name",8)}}}) {
+            auto bad=sample;bad["observation"].update(patch);
+            Check(ProjectOverview({{"evidence",json::array({bad})}},profile,views)["evidence"].empty(),"strict observation fields reject malformed values");
+        }
+        for(const json &patch:std::vector<json>{{{"sampleView",""}},{{"sourcePartIds",json::array({17})}},{{"observation",nullptr}}}) {
+            auto bad=sample;bad.update(patch);
+            Check(ProjectOverview({{"evidence",json::array({bad})}},profile,views)["evidence"].empty(),"strict sample fields reject malformed values");
+        }
+        auto change=Compatibility();change["evidenceIds"]={"unknown-evidence"};
+        result=ProjectOverview({{"compatibilityChanges",json::array({change})}},profile,views);
+        Check(result["status"]=="valid" && result["compatibilityChanges"].size()==1 && result["compatibilityChanges"][0]["evidenceStatus"]=="unknown" && result["warnings"].size()==1,"missing evidence warns without silently dropping compatibility claim");
+        Check(result["warnings"][0]["missingEvidenceIds"]==json::array({"unknown-evidence"}),"unresolved evidence IDs disclosed");
+        change=Compatibility();change.erase("evidenceIds");change["status"]="compatible";change["reprintPartIds"]=json::array();
+        result=ProjectOverview({{"compatibilityChanges",json::array({change})}},profile,views);
+        Check(result["status"]=="valid" && result["compatibilityChanges"][0]["evidenceStatus"]=="available","compatible empty reprint/no evidence flow valid");
+        change["status"]="unknown";change["reprintPartIds"]={"clip"};
+        Check(ProjectOverview({{"compatibilityChanges",json::array({change})}},profile,views)["status"]=="valid","unknown compatibility can retain authored possible reprint list");
+        for(const json &patch:std::vector<json>{
+            {{"partIds",json::array()}},{{"reprintPartIds",{"foreign"}}},{{"status","requires-reprint"},{"reprintPartIds",json::array()}},
+            {{"status","compatible"}},{{"evidenceIds",json::array({false})}},{{"previousBasis",nullptr}},{{"extra",true}}}) {
+            auto bad=change;bad.update(patch);
+            Check(ProjectOverview({{"compatibilityChanges",json::array({bad})}},profile,views)["compatibilityChanges"].empty(),"strict compatibility requirements enforced");
+        }
+        for(const char *key:{"basis","previousBasis","partIds","reprintPartIds"}) {
+            auto bad=Compatibility();bad.erase(key);
+            Check(ProjectOverview({{"compatibilityChanges",json::array({bad})}},profile,views)["compatibilityChanges"].empty(),"required compatibility field cannot be omitted");
+        }
+        auto bad=Compatibility();bad["previousBasis"]["unexpected"]=true;
+        Check(ProjectOverview({{"compatibilityChanges",json::array({bad})}},profile,views)["compatibilityChanges"].empty(),"previous basis uses same strict schema");
+        auto stale=Compatibility();stale["basis"]["modelRevision"]="target-before-edit";
+        Check(ProjectOverview({{"compatibilityChanges",json::array({stale})}},profile,views)["compatibilityChanges"][0]["freshness"]=="stale","target revision change stales compatibility claim");
+        metadata={{"evidence",json::array({sample,sample})},{"compatibilityChanges",json::array({17,Compatibility()})}};
+        result=ProjectOverview(metadata,profile,views);
+        Check(result["status"]=="partial" && result["compatibilityChanges"].size()==1 && result["compatibilityChanges"][0]["evidenceStatus"]=="unknown","rejected evidence cannot satisfy cross references; valid sibling compatibility survives");
+        Check(result["warnings"][0]["path"]=="$.compatibilityChanges[1].evidenceIds","warning path follows authored index despite rejected sibling");
+        metadata={{"compatibilityChanges",json::array()}};
+        for(int i=0;i<1001;++i){auto item=change;item["id"]=std::to_string(i);metadata["compatibilityChanges"].push_back(item);}
+        result=ProjectOverview(metadata,profile,views);
+        Check(result["status"]=="partial" && result["compatibilityChanges"].size()==1000,"compatibility section uses existing bounded valid-prefix behavior");
         std::cout << "project overview tests passed\n";
         return 0;
     } catch (const std::exception& error) {

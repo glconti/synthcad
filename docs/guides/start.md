@@ -76,3 +76,5 @@ synthcad wait --revision REQUESTED_TOKEN --timeout 10000 --json
 Replace `REQUESTED_TOKEN` with the revision returned by `revision`. Proceed only when `wait` succeeds. Its envelope `revision` / `data.displayedRevision` identifies the geometry actually displayed. Use that displayed revision with `--expect-revision` for later snapshot, highlight, frame or screenshot calls. If the files change again, capture and wait for a fresh revision. Run `synthcad docs cli` for full command behavior and failure states.
 
 Inspect the part tree, authored annotations, bounds, diagnostic and selected view. A screenshot is useful for shape and placement review, but it does not test clearances, wall thickness, bed fit, supports, toolpaths or strength. Record printer, nozzle and material details only when supplied for this project; unknown details can remain open during initial modeling.
+
+If the user wants a targeted sample before a full print, run `synthcad docs physical-feedback` for shared sample geometry, explicit user reports and revision-linked reprint decisions. This flow is optional; exporting a file never implies it was printed or tested.
