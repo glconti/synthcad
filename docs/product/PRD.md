@@ -36,14 +36,14 @@ printable designs; reducing coordination overhead supports that outcome.
 | --- | --- |
 | Design authoring | The external agent edits source files directly. Hot reload updates the viewer. No geometry-editing command language in the CLI. |
 | Agent conversation | Stays in the user's chosen agent. SynthCAD provides review context and guided selection, without an embedded chat or bundled AI model. |
-| Agent interface | A discoverable CLI connects repeated calls to a persistent local project session. Portable skills are optional onboarding aids. |
+| Agent interface | A self-documenting CLI connects repeated calls to a persistent local project session and provides all operating and design guidance. No filesystem skill setup is needed. |
 | Platforms | Windows and Linux are release targets. Current Windows tooling is documented; Linux validation remains backlog work. |
-| Knowledge | Versioned guides and skills teach modeling and manufacturing judgment. Application checks enforce measurable constraints. |
+| Knowledge | Versioned domain guidance is available in full through the CLI. Application checks enforce measurable constraints. |
 | Design scope | Any object supported by the available geometry tools, including functional, assembled and decorative designs. |
 | Printing | Build-plate preparation is a core user story. Account for printer, nozzle, material, orientation, support access and assembly. |
 | Delivery | STL plus Bambu Studio project 3MF first. The user reviews and slices in Bambu Studio. |
 | Iteration | Physical samples and test feedback are supported, optional flows. They are not prerequisites for ordinary export. |
-| Workspace | One unified view of the current project. No multi-project library in v1. |
+| Workspace | One unified view of the current project. Assemblies, groups and special views reference shared source parts through distinct instances. No multi-project library in v1. |
 
 Local refers to project files, geometry evaluation, viewer and communication with
 the CLI. The external agent may use a cloud model. SynthCAD does not require a
@@ -51,9 +51,11 @@ SynthCAD account or cloud service for its own workflow.
 
 ## Main user journey
 
-1. **Start.** Install SynthCAD and tell an agent to use it. The agent discovers
-   commands and relevant design guides, creates or opens project files, and opens
-   the project in SynthCAD. The user can also open a project directly.
+1. **Start.** Install SynthCAD and tell an agent to use it. Running `synthcad`
+   or `synthcad --help` shows commands and guidance grouped by area;
+   `synthcad docs AREA` prints that area's complete guidance. The agent creates
+   or opens project files and opens the project in SynthCAD. The user can also
+   open a project directly. No filesystem skill setup is needed.
 2. **Establish constraints.** Capture intended use, dimensions and the printer,
    nozzle and material when known. Record provisional measurements explicitly.
    Missing printer settings should not prevent initial design review.
@@ -65,8 +67,8 @@ SynthCAD account or cloud service for its own workflow.
    selects a part or feature, or answers a guided selection request. Both can
    identify the same geometry and revision without copying filenames or opening
    another viewer for every edit.
-5. **Prepare plates.** The agent writes print-layout definitions using the same
-   source geometry as the assembly. SynthCAD shows the plate boundaries,
+5. **Prepare plates.** The agent writes print-layout placements that reference
+   the same source parts as the assembly. SynthCAD shows the plate boundaries,
    orientations, quantities, warnings and reasons for important choices.
 6. **Export.** Review included parts and profile, then export STL or a prepared
    Bambu Studio 3MF. The user opens the latter in Bambu Studio to inspect and slice.
@@ -78,8 +80,10 @@ SynthCAD account or cloud service for its own workflow.
 
 ## Current baseline
 
-The baseline is the repository on `main` at the time of this draft. This is a
-capability inventory, not a fresh platform or physical test report.
+This inventory reflects the initial PRD draft, before the delivery batches.
+For implemented capabilities and platform evidence, see
+[Batch 1](../batch-1-validation.md) and [Batch 2](../batch-2-validation.md).
+It is not a current platform or physical test report.
 
 | Capability | Current state and implication |
 | --- | --- |
@@ -102,17 +106,21 @@ See [README.md](../../README.md), [viewer/main.cpp](../../viewer/main.cpp),
 
 ### R01 Discovery and guidance
 
-An agent with shell and file access can start with `synthcad --help`, discover a
-command's detailed help and request focused domain guides. No installed skill is
-required to operate the product. An optional skill installer writes a portable
-entry skill and references to a chosen directory, with explicit replacement
-handling for existing files.
+An agent with shell and file access can start with `synthcad` or
+`synthcad --help`. Both show commands and guidance grouped by area, with a clear
+route to command-level help and domain documentation. `synthcad docs AREA`
+prints the complete skill/domain text for the requested area to stdout, so the
+agent can read all required guidance using the CLI alone. It must not require
+installed skills, a source checkout, or filesystem skill setup.
 
 Guides cover the model API, review workflow, printer constraints, orientation,
 layer direction, tolerances, joints, assembly, build plates and Bambu handoff.
-They identify evidence limits and adapt to the active profile. Command help,
-guides and installed skills share a versioned source. Routine responses provide
-relevant guide references instead of repeatedly printing the complete handbook.
+They identify evidence limits and adapt to the active profile. Command help and
+domain text share a versioned source; maintainers may use internal `SKILL.md`
+sources without requiring users to install them. Routine responses point to
+relevant `synthcad docs AREA` commands instead of repeatedly printing the
+complete handbook. Explicit documentation requests return the complete area
+text rather than a summary or a path the agent must read separately.
 
 ### R02 Project files and overview
 
@@ -122,8 +130,26 @@ points, printer profile, assumptions, checks, exports and optional test notes.
 The agent can maintain this information using normal file edits. Define the
 schema during implementation; do not require a database or import chat history.
 
+The project contract must distinguish a source part's identity and geometry
+definition from the identities of its placed instances. Assemblies, groups,
+inspection views and all special views, including build plates, reference this
+shared source-part graph rather than copying geometry definitions. Groups
+reference instances; group membership alone must not create another physical
+copy. View and layout transforms are separate from source geometry and from
+each other. A shared source edit updates every dependent view at the new
+revision, while intentionally repeated quantities remain distinct instance
+placements. Core source/instance references work before a printer profile is
+configured. This is a future contract; its final schema remains an
+implementation decision.
+
+Reject cyclic and dangling references with actionable diagnostics. Resolve
+instance membership consistently for review and export: the same instance
+reached through several groups is included once, while distinct intended
+instances of one source part remain distinct placements.
+
 The viewer presents a current-project overview and switches between its views.
-Each export records its source revision, included parts, layout and profile.
+Each export records its source/dependency revision, source parts, included
+instances, view/layout transforms and profile revision when applicable.
 Changed inputs mark previous checks and exports as outdated without deleting or
 silently overwriting them. Existing single-scene files continue to open without
 requiring project conversion.
@@ -209,6 +235,11 @@ Provide a dedicated plate view with selected printer boundaries, part names,
 instance quantities, print orientation and configurable clearance allowances for
 brims and supports. Assembly and plate transforms reference shared source parts;
 preparing plates must not move the assembly or duplicate its modeling logic.
+Plate placements use the project-wide source/instance reference contract from
+R02, shared by assemblies, groups and other views. Each intended copy has a
+distinct placement identity; reaching one placement through multiple groups
+must not multiply its quantity or exported geometry. Source edits propagate to
+dependent plate views, with revision-aware checks and export provenance.
 
 The agent authors plate placement in files and explains relevant compromises
 between strength, supports, appearance and assembly. SynthCAD checks transformed
@@ -216,9 +247,12 @@ bounds, plate contact, overlap and requested clearances. Conservatively estimate
 support/brim space is labeled; actual toolpaths remain the slicer's responsibility.
 
 Support multiple plates and flag missing, duplicate or intentionally repeated
-parts against the planned quantities. Automatic packing or a mathematically
-optimal arrangement is not required for v1. The objective is a reviewable,
-printer-aware arrangement with explicit tradeoffs.
+parts against the planned quantities. Cyclic or dangling placement references
+fail explicitly rather than producing partial layouts or exports. Shared part
+references and placement authoring do not require a printer profile;
+printer-dependent checks identify missing settings as not checked. Automatic
+packing or a mathematically optimal arrangement is not required for v1. The
+objective is a reviewable, printer-aware arrangement with explicit tradeoffs.
 
 ### R09 Export and slicer handoff
 
@@ -286,8 +320,13 @@ person, prepare plates and export without a custom SynthCAD agent integration.
 
 Required evidence includes:
 
-- A fresh agent session completes discovery without an installed skill, and a
-  second run works using the distributed skill bundle.
+- A fresh agent session discovers commands and guidance through no-argument
+  help or `--help`, reads complete area guidance through `synthcad docs AREA`,
+  and completes onboarding with only the CLI, without filesystem skill setup.
+- A shared source edit updates assembly, group and special views, including
+  plate placements. Distinct instances retain intentional quantities; repeated
+  group membership does not duplicate an export. Cyclic/dangling references
+  fail explicitly and prior checks/exports become outdated by revision.
 - A multi-file edit, broken edit and recovery report the correct displayed
   revision; stale geometry never receives a false success acknowledgement.
 - Review tests cover multiple sessions, selection, highlights, guided-pick

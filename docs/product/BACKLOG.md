@@ -25,13 +25,13 @@ Dependencies name backlog IDs. PRD references use its R01–R11 requirement IDs.
 | SC03 | [#4 Connect CLI calls to persistent local sessions](https://github.com/glconti/synthcad/issues/4) | v1 |
 | SC04 | [#5 Acknowledge hot reload and recover from errors](https://github.com/glconti/synthcad/issues/5) | v1 |
 | SC05 | [#6 Expose semantic review state and commands](https://github.com/glconti/synthcad/issues/6) | v1 |
-| SC06 | [#7 Distribute focused domain guides and a portable skill](https://github.com/glconti/synthcad/issues/7) | v1 |
+| SC06 | [#7 Provide complete domain guidance through the CLI](https://github.com/glconti/synthcad/issues/7) | v1 |
 | SC07 | [#8 Prove geometric selection semantics](https://github.com/glconti/synthcad/issues/8) | v1 |
 | SC08 | [#9 Add geometric picking and copyable references](https://github.com/glconti/synthcad/issues/9) | v1 |
 | SC09 | [#10 Support guided picks and event readback](https://github.com/glconti/synthcad/issues/10) | v1 |
 | SC10 | [#11 Present the current project overview](https://github.com/glconti/synthcad/issues/11) | v1 |
 | SC11 | [#12 Capture printer, nozzle and material profiles](https://github.com/glconti/synthcad/issues/12) | v1 |
-| SC12 | [#13 Define reusable part instances and plate layouts](https://github.com/glconti/synthcad/issues/13) | v1 |
+| SC12 | [#13 Define shared source parts, instances and view layouts](https://github.com/glconti/synthcad/issues/13) | v1 |
 | SC13 | [#14 Add the build plate view and deterministic layout checks](https://github.com/glconti/synthcad/issues/14) | v1 |
 | SC14 | [#15 Add manufacturing guidance and scoped check results](https://github.com/glconti/synthcad/issues/15) | v1 |
 | SC15 | [#16 Prove the Bambu Studio project format and profile mapping](https://github.com/glconti/synthcad/issues/16) | v1 |
@@ -83,7 +83,9 @@ discussing, including changes in imported model files.
 
 P0 · R01, R03, R11 · Dependencies: none · Extends existing CLI
 
-- Add top-level and command-level help, examples, version/capability discovery,
+- With no arguments or `--help`, show commands and guidance grouped by area,
+  including how to request complete text with `synthcad docs AREA`.
+- Add command-level help, examples, version/capability discovery,
   structured output and documented exit/error categories.
 - Keep machine-readable output separate from logs; avoid dumping meshes or
   encoded screenshots into routine responses.
@@ -127,17 +129,21 @@ P0 · R04 · Dependencies: SC03, SC04 · Extends tree, camera and rendering
   user can clear them. Preserve camera on reload where applicable.
 - Verify requests do not operate on a different session or stale revision.
 
-### SC06 Distribute focused domain guides and a portable skill
+### SC06 Provide complete domain guidance through the CLI
 
 P0 · R01 · Dependencies: SC02 · Extends repository design guidance
 
 - Provide on-demand guides for source authoring, review, print design and later
   plate/export workflows. Reference the implemented API rather than duplicating it.
-- Install an optional portable entry skill into a chosen directory; detect
-  version mismatch and require explicit replacement of existing user files.
-- Generate help/guide/skill references from a consistent versioned source.
-- Verify both skill-free discovery and skill-assisted onboarding with a new
-  object; do not inherit a personal project's dimensions, printer or material.
+- `synthcad docs AREA` prints the complete skill/domain text for that area to
+  stdout, including the guidance needed to use its commands. Return full text
+  rather than a summary or a filesystem path.
+- Generate help and domain guidance from a consistent versioned source.
+  Internal `SKILL.md` authoring is allowed; user-side skill installation or
+  filesystem setup is not part of the workflow.
+- Verify a fresh agent discovers areas from no-argument help and `--help`, reads
+  complete guidance, and designs a new object using only the CLI. Do not inherit
+  a personal project's dimensions, printer or material.
 
 ## Delivery phase 2 Precise discussion and project context
 
@@ -158,7 +164,7 @@ P0 · R05 · Dependencies: SC01 · Technical spike
 
 ### SC08 Add geometric picking and copyable references
 
-P0 · R05 · Dependencies: SC05, SC07 · Extends selection
+P0 · R05 · Dependencies: SC05, SC07, SC12 · Extends selection
 
 - Pick part, face, edge and vertex using the agreed semantics; expose ownership
   and geometric context in GUI and structured responses.
@@ -207,20 +213,37 @@ P1 · R06 · Dependencies: SC01 · New
 - Allow review before setup is complete; flag which printing checks cannot run.
 - Do not claim a custom geometric profile is a validated slicer preset.
 
-### SC12 Define reusable part instances and plate layouts
+### SC12 Define shared source parts, instances and view layouts
 
-P1 · R08 · Dependencies: SC01, SC11 · Extends scene authoring
+P1 · R02, R08 · Dependencies: SC01 · Extends scene authoring
 
-- Define source part references, intended quantities, plate assignment and print
-  transforms editable in project files without duplicating geometry logic.
-- Support multiple plates and separate assembly transforms from print transforms.
-- Document allowances for brims/supports and intentional multiple copies.
+- Define a future project-wide reference contract, with source-part identity
+  distinct from placed-instance identity. Assemblies, groups and all special
+  views, including inspection and build plates, share source geometry
+  definitions rather than copying them. Define the final schema during
+  implementation; do not imply this contract is already implemented.
+- Groups reference instances. Keep view/layout transforms separate from source
+  geometry and from other views, so preparing plates does not move the assembly.
+  Editing a shared source updates all dependent views at the new revision.
+- Support multiple plates, intended quantities and intentional multiple copies
+  as distinct placements of shared source parts. Resolve repeated membership of
+  one instance through multiple groups once for export; retain distinct
+  intended instances even when they share source geometry.
+- Reject cyclic and dangling references explicitly. Tie checks and export
+  provenance to source/dependency revisions, instance membership and view/layout
+  transforms; changed inputs make earlier results outdated.
+- Keep the core source/instance/group/view contract and placement authoring
+  independent of printer setup. Printer-aware boundaries, clearance allowances
+  for brims/supports and plate validation belong to SC11/SC13.
+- Test shared edits across assembly, groups and special views, independent
+  transforms, repeated quantities, duplicate group membership, and invalid
+  references before accepting the contract.
 - Legacy hand-authored print scenes remain viewable; identify the extra metadata
   needed for validated quantities and plate checks.
 
 ### SC13 Add the build plate view and deterministic layout checks
 
-P1 · R07, R08 · Dependencies: SC05, SC12 · New
+P1 · R07, R08 · Dependencies: SC05, SC11, SC12 · New
 
 - Render actual configured bed boundaries/exclusions, part names and orientation.
 - Check transformed bounds, bed contact, overlap, clearance and planned
@@ -326,8 +349,9 @@ P1 · R11 · Dependencies: none · Release prerequisite
 P1 · R01, R11 · Dependencies: SC03, SC06, SC19, SC20 · New
 
 - Select Windows/Linux distribution formats and ship matching binaries/docs.
-- Verify first launch, help, skill discovery and session reuse from outside the
-  repository without developer tools or source checkout.
+- Verify first launch, area-grouped no-argument/`--help` discovery, complete
+  `synthcad docs AREA` output and session reuse from outside the repository,
+  without developer tools, source checkout or filesystem skill setup.
 - Document installation, upgrades and compatibility; preserve existing targets
   and scripts through aliases where needed.
 - Test package contents for required runtime assets and absence of personal
@@ -338,7 +362,7 @@ P1 · R01, R11 · Dependencies: SC03, SC06, SC19, SC20 · New
 P1 · R01–R11 · Dependencies: SC09, SC14, SC17, SC18, SC21 · New
 
 - Use public fitting, assembled-object and curved-object fixtures for the PRD
-  journeys, including both discovery modes and optional iteration.
+  journeys, including CLI-only guidance discovery and optional iteration.
 - Record platform and Bambu version results, unresolved limitations and pilot
   measures: time to first valid model, context copying, misunderstandings,
   handoff success and avoidable reprints. Establish a baseline before targets.
@@ -360,10 +384,14 @@ P1 · R01–R11 · Dependencies: SC09, SC14, SC17, SC18, SC21 · New
 
 ## Recommended next implementation
 
-Start with **SC01 and SC02**, then implement **SC03–SC05** as one demonstrable
-review loop. Investigate **SC07** early because meaningful geometric selection is
-the largest review-workflow uncertainty. Start Linux CI and licensing resolution
-in parallel workstreams when resources are available; do not leave either until
+The shared review loop (SC01–SC05) is delivered; see the
+[Batch 1 evidence](../batch-1-validation.md). The CLI guidance and selection
+feasibility work (SC06–SC07) are documented in
+[Batch 2](../batch-2-validation.md). Live acceptance status remains in GitHub.
+
+Establish **SC12's shared source/instance contract** before wiring geometric
+references into **SC08–SC09**, so selection and future plates use consistent
+ownership. SC12 no longer waits for printer setup. Start Linux CI and licensing
+resolution in parallel when resources are available; do not leave either until
 packaging. The Bambu-format spike should precede promises about exact export
-settings. Assigning people, scheduling and implementing these stories can now use the
-linked GitHub issues. Implementation has not started.
+settings.

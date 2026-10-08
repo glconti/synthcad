@@ -25,6 +25,35 @@ Help, version and capability discovery run without opening a GUI. Capabilities
 describe this implementation, including `geometryEditing: false` and
 `export: false`; they are not a roadmap of planned features.
 
+## Load guidance only when needed
+
+Running `synthcad` without arguments, or `synthcad --help`, groups commands and
+guidance by area. The instructions are bundled in the CLI: no checkout, network
+request, viewer session or skill installation is needed to read them.
+
+```text
+synthcad docs                 # List available areas and bundle version
+synthcad docs start           # Start a new design/review workflow
+synthcad docs skill           # Full portable design workflow instructions
+synthcad docs modeling        # Structure parametric models and scenes
+synthcad docs api             # Implemented geometry API, from API.md
+synthcad docs print-design    # Printing constraints and orientation decisions
+synthcad docs fit-and-assembly
+synthcad docs build-plates
+synthcad docs bambu-handoff
+synthcad docs cli             # This command reference
+synthcad docs projects        # Project files and revision semantics
+```
+
+`docs AREA` writes the complete guide as plain UTF-8 text to stdout, with no
+status prefix. `docs AREA --json` returns the same text in `data.content` with
+`topic`, `title`, repository-relative `source`, `hash`, `bundleHash` and
+`bundleVersion`. `docs --json` lists topic metadata. Content hashes identify
+the instructions shipped with this build; runtime never looks for guide files
+on the user's disk. Unknown areas return `not_found` and suggest discovery.
+The guides distinguish current functionality from future printer, plate and
+3MF features. Reading a guide does not enable a feature absent from capabilities.
+
 ## Open, edit, wait and review
 
 Open a standalone `.js` file, a project directory containing `synthcad.json`,
@@ -102,6 +131,7 @@ the earlier request.
 
 | Command | Behavior |
 | --- | --- |
+| `docs [AREA]` | List guidance areas, or print complete bundled instructions to stdout without a viewer or filesystem setup. |
 | `open PATH [--hidden]` | Start or reuse a project session. `--hidden` requests an automation window; a graphics context is still required. |
 | `sessions` | List reachable CLI-managed sessions, including session name, project path, process ID and local endpoint. |
 | `snapshot` | Read parts, groups, authored annotations, bounds, selection, highlights, camera and load state. |
@@ -211,7 +241,7 @@ with help returns the help text in a structured envelope.
 | 9 | `cancelled` | The viewer closed while a request was pending. |
 | 10 | `io_error` | Check filesystem access, screenshot destination and local transport. |
 | 11 | `busy` | Initial dependencies are unavailable, an existing process is unresponsive, or a GUI modal blocks review; retry when ready. |
-| 12 | `not_found` | A requested part, group, view or transport-level project path is missing. |
+| 12 | `not_found` | A requested guide, part, group, view or transport-level project path is missing. |
 
 Unknown internal error categories use exit 1. No successful retained scene is
 returned as acknowledgement of a failed current edit.

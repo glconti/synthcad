@@ -1,5 +1,6 @@
 #include "agent_entry.h"
 #include "agent_cli.h"
+#include "agent_knowledge.h"
 #include "agent_transport.h"
 #include "project_contract.h"
 #include <filesystem>
@@ -59,7 +60,7 @@ std::vector<std::string> ProcessArguments(int argc,char** argv){
 }
 bool IsAgentCommand(const std::vector<std::string>& arguments){
   if(arguments.size()<2)return false;
-  const std::set<std::string> commands={"open","sessions","snapshot","selection","state","revision","wait","highlight","frame","view","screenshot","capabilities","version","help","--help","-h","--version","--json","--session","-s"};
+  const std::set<std::string> commands={"docs","open","sessions","snapshot","selection","state","revision","wait","highlight","frame","view","screenshot","capabilities","version","help","--help","-h","--version","--json","--session","-s"};
   if(commands.count(arguments[1]))return true;
   return arguments[1].rfind("--",0)==0&&arguments[1]!="--render-scene"&&arguments[1]!="--profile-scene"&&arguments[1]!="--check-scene"&&arguments[1]!="--ui-preview"&&arguments[1]!="--agent-session";
 }
@@ -76,6 +77,7 @@ int RunAgentCli(const std::vector<std::string>& arguments,const std::string& exe
   try{
     if(options.version||options.command=="version")response=Success("version",{{"product","SynthCAD"},{"version","0.1.0"},{"protocolVersion",1}});
     else if(options.command=="capabilities")response=Success("capabilities",Capabilities());
+    else if(options.command=="docs")response=Success("docs",options.arguments.contains("topic")?ReadDoc(options.arguments.at("topic").get<std::string>()):ListDocs());
     else if(options.command=="sessions")response=ListSessions();
     else if(options.command=="open"){
       const auto project=LoadProject(std::filesystem::u8path(options.arguments.at("path").get<std::string>()));
@@ -91,7 +93,8 @@ int RunAgentCli(const std::vector<std::string>& arguments,const std::string& exe
       if(options.command=="screenshot")options.arguments["path"]=std::filesystem::absolute(std::filesystem::u8path(options.arguments.at("path").get<std::string>())).u8string();
       response=Request(options.session,{{"protocolVersion",1},{"command",options.command},{"arguments",options.arguments},{"expectRevision",options.expectRevision},{"timeoutMs",options.timeoutMs}},options.timeoutMs+500);
     }
-  }catch(const std::exception& error){response=Error(options.command,"invalid_argument",error.what());}
+  }catch(const KnowledgeError& error){response=Error(options.command,error.code,error.what());}
+  catch(const std::exception& error){response=Error(options.command,"invalid_argument",error.what());}
   std::cout<<FormatResponse(response,options.jsonOutput);
   return response.value("ok",false)?0:ExitCode(response.value("error",nlohmann::json::object()).value("code","io_error"));
 }

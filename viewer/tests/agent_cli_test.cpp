@@ -42,6 +42,11 @@ void CheckParsing() {
   Require(ParseCli({"--version", "--json"}).options.command == "version", "version discovery missing");
   Require(bool(ParseCli({"highlight", "--clear"})), "highlight clear must parse");
   Require(bool(ParseCli({"frame"})), "whole-scene framing must parse");
+  Require(bool(ParseCli({"docs"})), "guidance discovery must parse");
+  auto docs = ParseCli({"docs", "print-design", "--json"});
+  Require(bool(docs) && docs.options.arguments.at("topic") == "print-design", "guide topic missing");
+  Require(!ParseCli({"docs", "a", "b"}) && !ParseCli({"docs", ""}) &&
+          !ParseCli({"docs", "start", "--replace"}), "invalid guidance arguments accepted");
 }
 void CheckResponses() {
   auto success = synthcad::Success("snapshot", {{"parts", nlohmann::json::array()}}, "bracket", "abc");
@@ -64,6 +69,12 @@ void CheckResponses() {
   Require(synthcad::Help("screenshot").find("--replace") != std::string::npos, "command help missing options");
   Require(synthcad::Capabilities().at("geometryEditing") == false, "discovery must not promise geometry edits");
   Require(synthcad::Capabilities().at("export") == false, "discovery must not promise exports");
+  Require(synthcad::Capabilities().at("bundledGuidance") == true, "guidance discovery missing");
+  Require(synthcad::Help().find("Printing & assembly") != std::string::npos &&
+          synthcad::Help("docs").find("bambu-handoff") != std::string::npos, "area help missing");
+  const auto guide = synthcad::Success("docs", {{"content", u8"# Pièce\n\nExact instructions.\n"}});
+  Require(synthcad::FormatResponse(guide, false) == u8"# Pièce\n\nExact instructions.\n", "guide stdout must be raw text");
+  Require(nlohmann::json::parse(synthcad::FormatResponse(guide, true)) == guide, "guide JSON envelope changed");
 }
 }
 

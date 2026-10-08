@@ -10,6 +10,7 @@ namespace synthcad {
 namespace {
 using nlohmann::json;
 const std::map<std::string, std::string> kUsage = {
+    {"docs", "docs [AREA]"},
     {"open", "open PATH [--session NAME] [--hidden]"},
     {"sessions", "sessions"}, {"snapshot", "snapshot"},
     {"selection", "selection"}, {"state", "state"},
@@ -21,6 +22,7 @@ const std::map<std::string, std::string> kUsage = {
     {"screenshot", "screenshot PATH [--replace]"},
     {"capabilities", "capabilities"}, {"version", "version"}};
 const std::map<std::string, std::string> kDescriptions = {
+    {"docs", "List guidance areas, or print one complete guide to stdout. No viewer or skill installation required."},
     {"open", "Open or reuse a persistent project session. --hidden is for automation."},
     {"sessions", "List live local sessions."},
     {"snapshot", "Read semantic scene state, without meshes."},
@@ -130,6 +132,10 @@ CliParseResult ParseCli(const std::vector<std::string>& arguments) {
     if (positional.size() != 1 || positional.front().empty())
       return fail("Usage: synthcad " + kUsage.at(options.command));
     options.arguments[options.command == "view" ? "name" : "path"] = positional.front();
+  } else if (options.command == "docs") {
+    if (positional.size() > 1 || (!positional.empty() && positional.front().empty()))
+      return fail("Usage: synthcad docs [AREA]");
+    if (!positional.empty()) options.arguments["topic"] = positional.front();
   } else if (options.command == "highlight" || options.command == "frame") {
     if (options.command == "highlight" && options.arguments.value("clear", false) && !positional.empty())
       return fail("--clear cannot be combined with part IDs");
@@ -148,15 +154,36 @@ CliParseResult ParseCli(const std::vector<std::string>& arguments) {
 
 std::string Help(const std::string& command) {
   std::ostringstream out;
+  const auto guidance = [&]() {
+    out << "Guidance on demand: synthcad docs AREA\n"
+        << "  Getting started     start, skill\n"
+        << "  Modeling            modeling, api\n"
+        << "  Printing & assembly print-design, fit-and-assembly\n"
+        << "  Plates & handoff     build-plates, bambu-handoff\n"
+        << "  Agent review        cli, projects\n"
+        << "Prints complete instructions to stdout; no skill files to install.\n"
+        << "Use synthcad docs to list guides and their current bundle version.\n";
+  };
   if (!command.empty()) {
     auto usage = kUsage.find(command);
     if (usage == kUsage.end()) return "Unknown command: " + command + "\n";
     out << "Usage: synthcad " << usage->second << "\n\n" << kDescriptions.at(command) << "\n";
+    if (command == "docs") { out << "\n"; guidance(); }
     if (kReview.count(command)) out << "  --expect-revision TOKEN  Reject a stale displayed revision.\n";
   } else {
-    out << "SynthCAD persistent local review CLI\n\nUsage: synthcad COMMAND [OPTIONS]\n\nCommands:\n";
-    for (const auto& entry : kUsage) out << "  " << entry.second << "\n";
-    out << "  help [COMMAND]\n\nExamples:\n"
+    out << "SynthCAD — design with an agent, review in a persistent local viewer\n\nUsage: synthcad COMMAND [OPTIONS]\n\n";
+    guidance();
+    for (const auto& area : std::vector<std::pair<std::string, std::vector<std::string>>>{
+        {"Discovery", {"docs", "capabilities", "version"}},
+        {"Projects & sessions", {"open", "sessions", "view"}},
+        {"Reload & revision checks", {"state", "revision", "wait"}},
+        {"Shared review", {"snapshot", "selection", "highlight", "frame", "screenshot"}}}) {
+      out << "\n" << area.first << ":\n";
+      for (const auto& name : area.second) out << "  " << kUsage.at(name) << "\n";
+    }
+    out << "\n  help [COMMAND]\n\nExamples:\n"
+        << "  synthcad docs start\n"
+        << "  synthcad docs print-design\n"
         << "  synthcad open \"My Project/assembly.js\" --session bracket\n"
         << "  synthcad --session bracket --json snapshot\n"
         << "  synthcad revision -s bracket --json\n"
@@ -182,7 +209,7 @@ json Capabilities() {
   return {{"protocolVersion", 1}, {"commands", commands},
           {"persistentSessions", true}, {"semanticSnapshots", true},
           {"revisionWait", true}, {"agentHighlights", true},
-          {"screenshots", true}, {"geometryEditing", false}, {"export", false}};
+          {"screenshots", true}, {"bundledGuidance", true}, {"geometryEditing", false}, {"export", false}};
 }
 
 json Success(const std::string& command, const json& data,
@@ -219,6 +246,15 @@ std::string FormatResponse(const json& response, bool jsonOutput) {
     return error.value("code", "error") + ": " + error.value("message", "Request failed") + "\n";
   }
   const auto data = response.find("data");
+  if (response.value("command", "") == "docs" && data != response.end()) {
+    if (data->contains("content")) return data->at("content").get<std::string>();
+    std::ostringstream docs;
+    docs << "SynthCAD guidance — print an area with synthcad docs AREA\n\n";
+    for (const auto& topic : data->at("topics"))
+      docs << "  " << topic.at("topic").get<std::string>() << " — " << topic.at("title").get<std::string>() << "\n";
+    docs << "\nBundle: " << data->at("bundleVersion").get<std::string>() << "\n";
+    return docs.str();
+  }
   if (data != response.end() && data->is_string()) return data->get<std::string>() + "\n";
   std::ostringstream out;
   out << response.value("command", "request") << ": ok";
