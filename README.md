@@ -5,6 +5,11 @@ inspecting named components and exporting STL geometry. It uses raylib, Manifold
 and QuickJS. The visible product name is SynthCAD; existing `dingcad_viewer`
 targets, launch scripts and model APIs remain compatible.
 
+The [v1 product requirements](docs/product/PRD.md) and
+[delivery backlog](docs/product/BACKLOG.md) describe the planned agent workflow,
+shared review sessions and printing handoff. They distinguish planned features
+from the current viewer documented below.
+
 Initialize the geometry and JavaScript dependencies with:
 
 ```sh
