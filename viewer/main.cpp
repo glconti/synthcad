@@ -38,6 +38,11 @@ extern "C" {
 #include "parts_panel.h"
 #include "brand.h"
 #include "stl_export.h"
+#include "agent_entry.h"
+#include "agent_cli.h"
+#include "agent_transport.h"
+#include "agent_bridge.h"
+#include "agent_scene.h"
 
 namespace {
 const Color kBaseColor = {210, 210, 220, 255};
@@ -259,13 +264,10 @@ void main(){
 struct ModuleLoaderData {
   std::filesystem::path baseDir;
   std::set<std::filesystem::path> dependencies;
+  synthcad::FileSnapshot files;
 };
 
 ModuleLoaderData g_module_loader_data;
-
-struct WatchedFile {
-  std::optional<std::filesystem::file_time_type> timestamp;
-};
 
 void DestroyModel(Model &model) {
   if (model.meshes != nullptr || model.materials != nullptr) {
@@ -524,16 +526,21 @@ std::optional<std::filesystem::path> FindDefaultScene() {
 }
 
 std::optional<std::string> ReadTextFile(const std::filesystem::path &path) {
-  std::ifstream file(path);
-  if (!file) return std::nullopt;
-  std::ostringstream ss;
-  ss << file.rdbuf();
-  return ss.str();
+  return synthcad::ReadTrackedFile(path,g_module_loader_data.files);
+}
+
+char* FilesystemModuleNormalize(JSContext* ctx,const char* base,const char* name,void*){
+  try {
+    auto path=std::filesystem::u8path(name);
+    if(path.is_relative())path=std::filesystem::u8path(base).parent_path()/path;
+    const auto normalized=synthcad::CanonicalPath(path);
+    return js_strdup(ctx,normalized.c_str());
+  }catch(const std::exception& error){JS_ThrowReferenceError(ctx,"%s",error.what());return nullptr;}
 }
 
 JSModuleDef *FilesystemModuleLoader(JSContext *ctx, const char *module_name, void *opaque) {
   auto *data = static_cast<ModuleLoaderData *>(opaque);
-  std::filesystem::path resolved(module_name);
+  std::filesystem::path resolved=std::filesystem::u8path(module_name);
   if (resolved.is_relative()) {
     const std::filesystem::path base = data && !data->baseDir.empty()
                                            ? data->baseDir
@@ -543,17 +550,16 @@ JSModuleDef *FilesystemModuleLoader(JSContext *ctx, const char *module_name, voi
   resolved = std::filesystem::absolute(resolved).lexically_normal();
 
   if (data) {
-    data->baseDir = resolved.parent_path();
     data->dependencies.insert(resolved);
   }
 
   auto source = ReadTextFile(resolved);
   if (!source) {
-    JS_ThrowReferenceError(ctx, "Unable to load module '%s'", resolved.string().c_str());
+    JS_ThrowReferenceError(ctx, "Unable to load module '%s'", resolved.u8string().c_str());
     return nullptr;
   }
 
-  const std::string moduleName = resolved.string();
+  const std::string moduleName = resolved.u8string();
   JSValue funcVal = JS_Eval(ctx, source->c_str(), source->size(), moduleName.c_str(),
                             JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY);
   if (JS_IsException(funcVal)) {
@@ -577,25 +583,23 @@ struct LoadResult {
   std::vector<std::filesystem::path> dependencies;
   std::vector<dingcad::Dimension> dimensions;
   dingcad::Appearance appearance;
+  synthcad::FileSnapshot files;
 };
 
 LoadResult LoadSceneFromFile(JSRuntime *runtime, const std::filesystem::path &path) {
   LoadResult result;
   const auto loadStarted=std::chrono::steady_clock::now();
   const auto absolutePath = std::filesystem::absolute(path);
-  if (!std::filesystem::exists(absolutePath)) {
-    result.dependencies.push_back(absolutePath);
-    result.message = "Scene file not found: " + absolutePath.u8string();
-    return result;
-  }
   g_module_loader_data.baseDir = absolutePath.parent_path();
   g_module_loader_data.dependencies.clear();
+  g_module_loader_data.files.clear();
   g_module_loader_data.dependencies.insert(absolutePath);
   auto sourceOpt = ReadTextFile(absolutePath);
   if (!sourceOpt) {
-    result.message = "Unable to read scene file: " + absolutePath.string();
+    result.message = "Unable to read scene file: " + absolutePath.u8string();
     result.dependencies.assign(g_module_loader_data.dependencies.begin(),
                                g_module_loader_data.dependencies.end());
+    result.files=g_module_loader_data.files;
     return result;
   }
   JSContext *ctx = JS_NewContext(runtime);
@@ -616,9 +620,10 @@ LoadResult LoadSceneFromFile(JSRuntime *runtime, const std::filesystem::path &pa
   auto assignDependencies = [&]() {
     result.dependencies.assign(g_module_loader_data.dependencies.begin(),
                                g_module_loader_data.dependencies.end());
+    result.files=g_module_loader_data.files;
   };
 
-  JSValue moduleFunc = JS_Eval(ctx, sourceOpt->c_str(), sourceOpt->size(), absolutePath.string().c_str(),
+  JSValue moduleFunc = JS_Eval(ctx, sourceOpt->c_str(), sourceOpt->size(), absolutePath.u8string().c_str(),
                                JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY);
   if (JS_IsException(moduleFunc)) {
     captureException();
@@ -698,7 +703,7 @@ LoadResult LoadSceneFromFile(JSRuntime *runtime, const std::filesystem::path &pa
 
   result.manifold = sceneHandle;
   result.success = true;
-  result.message = "Loaded " + absolutePath.string();
+  result.message = "Loaded " + absolutePath.u8string();
   result.dimensions = std::move(annotations.entries);
   for (const auto &diagnostic : annotations.diagnostics) {
     TraceLog(LOG_WARNING, "%s", diagnostic.c_str());
@@ -753,11 +758,44 @@ struct PartModels {
 }  // namespace
 
 int main(int argc, char *argv[]) {
+  auto utf8Args=synthcad::ProcessArguments(argc,argv);
+  if(synthcad::IsAgentCommand(utf8Args))return synthcad::RunAgentCli(
+    std::vector<std::string>(utf8Args.begin()+1,utf8Args.end()),utf8Args.front());
+  std::vector<char*> utf8Pointers;for(auto& arg:utf8Args)utf8Pointers.push_back(arg.data());
+  argc=static_cast<int>(utf8Pointers.size());argv=utf8Pointers.data();
+  std::string agentSession,agentProject;
+  bool agentHidden=false;
+  if(argc>1&&std::string(argv[1])=="--agent-session"){
+    for(int i=1;i<argc;++i){const std::string flag=argv[i];
+      if(flag=="--agent-session"&&i+1<argc)agentSession=argv[++i];
+      else if(flag=="--agent-project"&&i+1<argc)agentProject=argv[++i];
+      else if(flag=="--agent-hidden")agentHidden=true;
+      else {std::cerr<<"Invalid agent viewer option\n";return 2;}
+    }
+    if(agentSession.empty()||agentProject.empty()){std::cerr<<"Agent session and project are required\n";return 2;}
+  }
+  std::optional<synthcad::Project> project;
+  std::string activeView;
+  std::unique_ptr<synthcad::AgentBridge> agent;
+  synthcad::SessionServer agentServer;
+  struct SessionCleanup {
+    std::unique_ptr<synthcad::AgentBridge>& bridge;synthcad::SessionServer& server;
+    ~SessionCleanup(){if(bridge)bridge->Close();server.Stop();}
+  } sessionCleanup{agent,agentServer};
+  if(!agentSession.empty()){
+    try{project=synthcad::LoadProject(std::filesystem::u8path(agentProject));activeView=project->defaultView;}
+    catch(const std::exception& error){std::cerr<<error.what()<<'\n';return 2;}
+    agent=std::make_unique<synthcad::AgentBridge>(agentSession);
+    std::string error;
+    if(!agentServer.Start(agentSession,project->path.u8string(),[&](const nlohmann::json& request){return agent->Handle(request);},error)){
+      std::cerr<<error<<'\n';return 10;
+    }
+  }
   // Deterministic preview using the same mesh colors, creases and default
   // material as the interactive Windows view. Never exports or changes solids.
   if (argc==4 && std::string(argv[1])=="--render-scene") {
     JSRuntime *runtime=JS_NewRuntime();EnsureManifoldClass(runtime);
-    JS_SetModuleLoaderFunc(runtime,nullptr,FilesystemModuleLoader,&g_module_loader_data);
+    JS_SetModuleLoaderFunc(runtime,FilesystemModuleNormalize,FilesystemModuleLoader,&g_module_loader_data);
     auto load=LoadSceneFromFile(runtime,argv[2]);
     if (!load.success) {std::cerr<<load.message<<'\n';JS_FreeRuntime(runtime);return 1;}
     SetConfigFlags(FLAG_WINDOW_HIDDEN|FLAG_MSAA_4X_HINT);InitWindow(1600,1000,"dingcad preview");
@@ -783,7 +821,7 @@ int main(int argc, char *argv[]) {
   if(argc==3&&std::string(argv[1])=="--profile-scene"){
     const auto started=std::chrono::steady_clock::now();
     JSRuntime *runtime=JS_NewRuntime();EnsureManifoldClass(runtime);
-    JS_SetModuleLoaderFunc(runtime,nullptr,FilesystemModuleLoader,&g_module_loader_data);
+    JS_SetModuleLoaderFunc(runtime,FilesystemModuleNormalize,FilesystemModuleLoader,&g_module_loader_data);
     auto load=LoadSceneFromFile(runtime,argv[2]);
     if(!load.success){std::cerr<<load.message<<'\n';JS_FreeRuntime(runtime);return 1;}
     const auto meshStarted=std::chrono::steady_clock::now();
@@ -803,7 +841,7 @@ int main(int argc, char *argv[]) {
   if (argc == 3 && std::string(argv[1]) == "--check-scene") {
     JSRuntime *runtime = JS_NewRuntime();
     EnsureManifoldClass(runtime);
-    JS_SetModuleLoaderFunc(runtime, nullptr, FilesystemModuleLoader, &g_module_loader_data);
+    JS_SetModuleLoaderFunc(runtime, FilesystemModuleNormalize, FilesystemModuleLoader, &g_module_loader_data);
     auto load = LoadSceneFromFile(runtime, argv[2]);
     std::cout << load.message << '\n';
     if (load.success) {
@@ -819,7 +857,7 @@ int main(int argc, char *argv[]) {
   // Keep event polling nonblocking while minimized so live reload still runs.
   const bool uiPreview=argc>=4 && std::string(argv[1])=="--ui-preview";
   int previewFrames=0;
-  SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_WINDOW_RESIZABLE | FLAG_WINDOW_ALWAYS_RUN | (uiPreview?FLAG_WINDOW_HIDDEN:0));
+  SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_WINDOW_RESIZABLE | FLAG_WINDOW_ALWAYS_RUN | ((uiPreview||agentHidden)?FLAG_WINDOW_HIDDEN:0));
   dingcad::SetApplicationIdentity();
   InitWindow(1280, 720, "SynthCAD");
   dingcad::SetApplicationIcons();
@@ -848,7 +886,7 @@ int main(int argc, char *argv[]) {
     if(std::filesystem::exists(uiFontPath)){
       std::vector<int> glyphs;for(int c=32;c<384;++c)glyphs.push_back(c);
       glyphs.push_back(0x2014);glyphs.push_back(0x2026);
-      brandingFont=LoadFontEx(uiFontPath.string().c_str(),int(32*uiScale),glyphs.data(),int(glyphs.size()));
+      brandingFont=LoadFontEx(uiFontPath.u8string().c_str(),int(32*uiScale),glyphs.data(),int(glyphs.size()));
       SetTextureFilter(brandingFont.texture,TEXTURE_FILTER_BILINEAR);brandingFontCustom=true;
     }
   };
@@ -868,7 +906,7 @@ int main(int argc, char *argv[]) {
 
   JSRuntime *runtime = JS_NewRuntime();
   EnsureManifoldClass(runtime);
-  JS_SetModuleLoaderFunc(runtime, nullptr, FilesystemModuleLoader, &g_module_loader_data);
+  JS_SetModuleLoaderFunc(runtime, FilesystemModuleNormalize, FilesystemModuleLoader, &g_module_loader_data);
 
   std::shared_ptr<manifold::Manifold> scene = nullptr;
   std::vector<dingcad::Dimension> dimensions;
@@ -878,10 +916,14 @@ int main(int argc, char *argv[]) {
   dingcad::WorkspaceUi workspace;
   bool exportValid=false;
   std::filesystem::path scriptPath;
-  std::unordered_map<std::filesystem::path, WatchedFile> watchedFiles;
+  synthcad::FileSnapshot watchedFiles,attemptedFiles,displayedFiles;
+  std::string attemptedRevision,displayedRevision,loadStatus="loading",loadDiagnostic;
+  std::vector<std::string> agentHighlights;
   std::optional<std::filesystem::path> defaultScript;
-  if (argc > 1) {
-    defaultScript = std::filesystem::path(argv[uiPreview?2:1]);
+  if(project){defaultScript=synthcad::ResolveView(*project,activeView);}
+  else if (argc > 1) {
+    defaultScript = std::filesystem::u8path(argv[uiPreview?2:1]);
+    if(!uiPreview){try{project=synthcad::LoadProject(*defaultScript);activeView=project->defaultView;defaultScript=synthcad::ResolveView(*project,activeView);}catch(const std::exception&) {}}
   } else {
     defaultScript = FindDefaultScene();
   }
@@ -890,22 +932,33 @@ int main(int argc, char *argv[]) {
     TraceLog(LOG_INFO, "%s", statusMessage.c_str());
     std::cout << statusMessage << std::endl;
   };
-  auto setWatchedFiles = [&](const std::vector<std::filesystem::path> &deps) {
-    std::unordered_map<std::filesystem::path, WatchedFile> updated;
-    for (const auto &dep : deps) {
-      WatchedFile entry;
-      std::error_code ec;
-      auto ts = std::filesystem::last_write_time(dep, ec);
-      if (!ec) {
-        entry.timestamp = ts;
+  auto recordLoad = [&](LoadResult& load) {
+    if(project&&!project->standalone)load.files.insert(project->files.begin(),project->files.end());
+    attemptedFiles=load.files;attemptedRevision=synthcad::Revision(attemptedFiles);
+    if(load.success&&!synthcad::MatchesDisk(attemptedFiles)){
+      load.success=false;load.message="Source changed during evaluation; waiting for a stable revision.";loadStatus="loading";
+    }else loadStatus=load.success?"ready":"failed";
+    loadDiagnostic=load.success?"":load.message;
+    // Preserve old dependency keys after failure without recapturing consumed
+    // file digests. Newly edited bytes must still trigger another attempt.
+    if(load.success)watchedFiles=attemptedFiles;
+    else {
+      for(auto& f:watchedFiles)if(!attemptedFiles.count(f.first)){
+        synthcad::FileSnapshot current;synthcad::ReadTrackedFile(std::filesystem::u8path(f.first),current);f.second=current.begin()->second;
       }
-      updated.emplace(dep, entry);
+      for(const auto& f:attemptedFiles)watchedFiles[f.first]=f.second;
     }
-    watchedFiles = std::move(updated);
+    if(load.success){displayedFiles=attemptedFiles;displayedRevision=attemptedRevision;}
   };
   if (defaultScript) {
     scriptPath = std::filesystem::absolute(*defaultScript);
+    if(agent){
+      auto initial=synthcad::CaptureFiles({scriptPath,project->path});
+      agent->Publish({{"status","loading"},{"view",activeView},{"projectPath",project->path.u8string()},
+        {"displayedRevision",""},{"attemptedRevision",""},{"exportValid",false},{"selection",nullptr}},initial);
+    }
     auto load = LoadSceneFromFile(runtime, scriptPath);
+    recordLoad(load);
     if (load.success) {
       scene = load.manifold;
       exportValid=true;
@@ -916,9 +969,6 @@ int main(int argc, char *argv[]) {
     } else {
       workspace.Failed(load.message);
       reportStatus(load.message);
-    }
-    if (!load.dependencies.empty()) {
-      setWatchedFiles(load.dependencies);
     }
   }
   if (!scene) {
@@ -943,7 +993,7 @@ int main(int argc, char *argv[]) {
   if(!scriptPath.empty())panel.sceneName=scriptPath.filename().u8string();
   SetWindowTitle((std::string("SynthCAD \xE2\x80\x94 ")+panel.sceneName).c_str());
   std::unordered_map<std::string,dingcad::TreeSession> sessions;
-  std::string liveSceneKey=scriptPath.string();
+  std::string liveSceneKey=scriptPath.u8string();
   auto viewport=panel.Viewport(GetScreenWidth(),GetScreenHeight());
   BoundingBox renderBounds{{-20,-0.1f,-20},{20,2,20}};
   auto updateBounds=[&](){
@@ -959,7 +1009,20 @@ int main(int argc, char *argv[]) {
     }
   };
   updateBounds();frameParts(false);
-  const auto defaultExportPath=dingcad::SuggestedExportPath(GetHomeDirectory().value_or(std::filesystem::current_path()),scriptPath).u8string();
+  auto publishAgent=[&](){if(!agent)return;
+    auto snapshot=synthcad::ReviewSnapshot(tree,dimensions,camera,agentHighlights);
+    snapshot["status"]=loadStatus;snapshot["attemptedRevision"]=attemptedRevision;
+    snapshot["displayedRevision"]=displayedRevision;snapshot["exportValid"]=exportValid;
+    snapshot["diagnostic"]=loadDiagnostic;snapshot["view"]=activeView;
+    snapshot["projectPath"]=project?project->path.u8string():scriptPath.u8string();
+    snapshot["views"]=nlohmann::json::object();
+    if(project)for(const auto& view:project->views)snapshot["views"][view.first]=view.second.u8string();
+    snapshot["dependencies"]=nlohmann::json::array();for(const auto& f:watchedFiles)snapshot["dependencies"].push_back(f.first);
+    agent->Publish(std::move(snapshot),loadStatus=="ready"?displayedFiles:attemptedFiles);
+  };
+  publishAgent();
+  auto defaultExportPath=dingcad::SuggestedExportPath(GetHomeDirectory().value_or(std::filesystem::current_path()),scriptPath).u8string();
+  std::vector<std::shared_ptr<synthcad::AgentAction>> pendingScreenshots;
   if(uiPreview&&argc>4){
     const std::string mode=argv[4];
     if(mode=="closed")panel.open=false;
@@ -1117,46 +1180,91 @@ int main(int argc, char *argv[]) {
     const auto input=dingcad::LogicalInput(dingcad::ReadPanelInput(),uiScale);
 
     auto reloadScene = [&]() {
-      auto load = LoadSceneFromFile(runtime, scriptPath);
+      loadStatus="loading";exportValid=false;publishAgent();
+      LoadResult load;
+      try {
+        if(project){auto next=synthcad::LoadProject(project->path);
+          auto nextPath=synthcad::ResolveView(next,activeView);project=std::move(next);scriptPath=nextPath;}
+        load=LoadSceneFromFile(runtime,scriptPath);
+      }catch(const std::exception& error){load.message=error.what();
+        if(project)synthcad::ReadTrackedFile(project->path,load.files);
+      }
+      recordLoad(load);
       if (load.success) {
         sessions[liveSceneKey]=tree.state;
-        const auto key=scriptPath.string();
+        const auto key=scriptPath.u8string();
         tree.state=sessions.count(key)?sessions.at(key):dingcad::TreeSession{};
         scene = load.manifold;
         tree.Reload(SceneParts(scene,load.appearance));
         partModels.Reload(tree);updateBounds();liveSceneKey=key;
         exportValid=true;exportDialog.overwrite=false;workspace.Loaded();
         dimensions = std::move(load.dimensions);
+        agentHighlights.erase(std::remove_if(agentHighlights.begin(),agentHighlights.end(),[&](const auto& id){
+          return std::none_of(tree.parts.begin(),tree.parts.end(),[&](const auto& part){return part.id==id;});}),agentHighlights.end());
+        panel.scenePath=scriptPath.u8string();panel.sceneName=scriptPath.filename().u8string();
+        SetWindowTitle((std::string("SynthCAD \xE2\x80\x94 ")+panel.sceneName).c_str());
+        defaultExportPath=dingcad::SuggestedExportPath(GetHomeDirectory().value_or(std::filesystem::current_path()),scriptPath).u8string();
         reportStatus(load.message);
       } else {
         exportValid=false;exportDialog.overwrite=false;workspace.Failed(load.message);
         reportStatus(load.message+" | export disabled until corrected");
       }
-      if (!load.dependencies.empty()) {
-        setWatchedFiles(load.dependencies);
-      }
+      publishAgent();
     };
 
     if (!scriptPath.empty() && frameStarted >= nextSceneCheck) {
       nextSceneCheck = frameStarted + kSceneCheckInterval;
-      bool changed = false;
-      for (const auto &entry : watchedFiles) {
-        std::error_code ec;
-        auto currentTs = std::filesystem::last_write_time(entry.first, ec);
-        if (ec) {
-          if (entry.second.timestamp.has_value()) {
-            changed = true;
-            break;
-          }
-        } else if (!entry.second.timestamp.has_value() ||
-                   currentTs != *entry.second.timestamp) {
-          changed = true;
-          break;
-        }
-      }
+      const bool changed = !synthcad::MatchesDisk(watchedFiles);
       if (changed) {
         reloadRequested = true;
       }
+    }
+
+    if(agent)for(auto& action:agent->Drain()){
+      const auto& request=action->request;
+      const std::string command=request.value("command","");
+      const auto args=request.value("arguments",nlohmann::json::object());
+      auto fail=[&](const std::string& code,const std::string& message){action->result.set_value(synthcad::Error(command,code,message,{},agentSession,displayedRevision));};
+      if(std::chrono::steady_clock::now()>=action->deadline){fail("timeout","Request expired before processing");continue;}
+      if(exportDialog.open){fail("busy","Close the export dialog before changing the review view");continue;}
+      const auto guard=request.value("expectRevision","");
+      if(!guard.empty()&&(guard!=displayedRevision||loadStatus!="ready"||!synthcad::MatchesDisk(displayedFiles))){fail("stale_revision","Displayed revision is no longer current");continue;}
+      try{
+        if(command=="view"){
+          if(!project){fail("not_found","This scene has no named project views");continue;}
+          const auto name=args.at("name").get<std::string>();
+          synthcad::ResolveView(*project,name);activeView=name;agentHighlights.clear();reloadScene();
+          if(loadStatus!="ready"){fail("load_failed",loadDiagnostic);continue;}
+          action->result.set_value(synthcad::Success(command,{{"view",activeView}},agentSession,displayedRevision));continue;
+        }
+        if(command=="screenshot"){
+          if(minimized){fail("busy","Restore the viewer before capturing a screenshot");continue;}
+          auto path=std::filesystem::u8path(args.at("path").get<std::string>());
+          if(path.extension()!=".png"){fail("invalid_argument","Screenshot destination must end in .png");continue;}
+          if(std::filesystem::exists(path)&&!args.value("replace",false)){fail("io_error","Destination exists; use --replace to overwrite");continue;}
+          pendingScreenshots.push_back(action);continue;
+        }
+        if(command!="highlight"&&command!="frame"){fail("invalid_argument","Unknown review command");continue;}
+        const auto ids=args.value("partIds",std::vector<std::string>{});
+        const bool clear=args.value("clear",false);
+        auto indices=clear?std::vector<size_t>{}:synthcad::ResolveReviewParts(tree,ids,args.value("selection",false));
+        if(command=="highlight"){
+          agentHighlights.clear();for(auto i:indices)agentHighlights.push_back(tree.parts[i].id);
+        }
+        if(command=="frame"||args.value("frame",false)){
+          std::optional<BoundingBox> bounds;
+          for(auto i:indices)if(tree.Visible(i)&&partModels.models[i].meshCount){
+            const auto& b=partModels.bounds[i];
+            if(bounds){bounds->min=Vector3Min(bounds->min,b.min);bounds->max=Vector3Max(bounds->max,b.max);}else bounds=b;
+          }
+          if(bounds){camera=FrameScene(*bounds,static_cast<int>(viewport.width),static_cast<int>(viewport.height));
+            orbitDistance=Vector3Distance(camera.position,camera.target);
+            orbitYaw=atan2f(camera.position.x-camera.target.x,camera.position.z-camera.target.z);
+            orbitPitch=asinf((camera.position.y-camera.target.y)/orbitDistance);}
+        }
+        publishAgent();
+        action->result.set_value(synthcad::Success(command,{{"highlights",agentHighlights}},agentSession,displayedRevision));
+      }catch(const std::exception& error){fail("not_found",error.what());}
     }
 
     const bool modalWasOpen=exportDialog.open;
@@ -1195,6 +1303,7 @@ int main(int argc, char *argv[]) {
       dimensionControls.mode=dingcad::NextDimensionMode(dimensionControls.mode);
     if(workspaceActions.fitAll)frameParts(false);
     if(actions.frame)frameParts(true);
+    if(!captureKeyboard&&IsKeyPressed(KEY_ESCAPE))agentHighlights.clear();
     updateBounds();
 
     if (!captureMouse && !captureKeyboard && IsMouseButtonDown(MOUSE_BUTTON_LEFT) && !dimensionControls.buttonGesture) {
@@ -1233,6 +1342,7 @@ int main(int argc, char *argv[]) {
         orbitDistance * cosf(orbitPitch) * cosf(orbitYaw)};
     camera.position = Vector3Add(camera.target, offsets);
     camera.up = worldUp;
+    publishAgent();
 
     if (minimized) {
       finishFrame();
@@ -1289,6 +1399,9 @@ int main(int argc, char *argv[]) {
       partModels.Draw(tree,&toonMat);
     }else partModels.Draw(tree);
     if(auto selected=partModels.Bounds(tree,true))DrawBoundingBox(*selected,{218,151,44,255});
+    for(size_t i=0;i<tree.parts.size();++i)if(tree.Visible(i)&&
+      std::find(agentHighlights.begin(),agentHighlights.end(),tree.parts[i].id)!=agentHighlights.end())
+      DrawBoundingBox(partModels.bounds[i],{48,136,192,255});
     EndMode3D();EndTextureMode();
     if(kUsePostProcessing){
       BeginTextureMode(rtNormalDepth);ClearBackground({127,127,255,0});BeginMode3D(camera);
@@ -1311,7 +1424,27 @@ int main(int argc, char *argv[]) {
     panel.Draw(tree,brandingFont,uiWidth,uiHeight);
     workspace.Draw(brandingFont,uiWidth,uiHeight,dimensionControls.mode,GetTime());
     exportDialog.Draw(brandingFont,uiWidth,uiHeight,tree.ExportIndices(exportDialog.visibleOnly).size(),exportValid);
+    if(!agentHighlights.empty())DrawTextEx(brandingFont,"Agent highlight - Esc to clear",{380.f,62.f},16,0,{48,106,142,255});
     rlPopMatrix();
+    for(auto& action:pendingScreenshots){
+      const auto args=action->request.at("arguments");const auto path=args.at("path").get<std::string>();
+      if(std::chrono::steady_clock::now()>=action->deadline){
+        action->result.set_value(synthcad::Error("screenshot","timeout","Screenshot request expired",{},agentSession,displayedRevision));continue;
+      }
+      const auto guard=action->request.value("expectRevision","");
+      if(!guard.empty()&&(guard!=displayedRevision||loadStatus!="ready"||!synthcad::MatchesDisk(displayedFiles))){
+        action->result.set_value(synthcad::Error("screenshot","stale_revision","Displayed revision changed before capture",{},agentSession,displayedRevision));continue;
+      }
+      try{
+        rlDrawRenderBatchActive();Image shot=LoadImageFromScreen();int size=0;
+        auto* bytes=ExportImageToMemory(shot,".png",&size);UnloadImage(shot);
+        if(!bytes||size<=0){if(bytes)MemFree(bytes);throw std::runtime_error("Screenshot encoding failed");}
+        std::string encoded(reinterpret_cast<char*>(bytes),size);MemFree(bytes);
+        synthcad::WriteOutputFile(std::filesystem::u8path(path),encoded,args.value("replace",false));
+        action->result.set_value(synthcad::Success("screenshot",{{"path",path}},agentSession,displayedRevision));
+      }catch(const std::exception& error){action->result.set_value(synthcad::Error("screenshot","io_error",error.what(),{},agentSession,displayedRevision));}
+    }
+    pendingScreenshots.clear();
     if(uiPreview&&previewFrames==previewFrameLimit-1){
       TraceLog(LOG_INFO,"UI QA: %zu parts, export %s, error %s",tree.parts.size(),exportValid?"enabled":"disabled",workspace.loadError.empty()?"clear":"present");
       rlDrawRenderBatchActive();Image shot=LoadImageFromScreen();ExportImage(shot,argv[3]);UnloadImage(shot);
@@ -1327,6 +1460,7 @@ int main(int argc, char *argv[]) {
     if(uiPreview&&++previewFrames>=previewFrameLimit)break;
   }
 
+  if(agent){agent->Close();agentServer.Stop();}
   UnloadRenderTexture(rtColor);
   UnloadRenderTexture(rtNormalDepth);
   UnloadMaterial(toonMat);

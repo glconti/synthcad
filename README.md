@@ -69,6 +69,30 @@ That directory is ignored by Git and is not part of the public development branc
 Preserve relative imports when moving a scene and its supporting modules there.
 Avoid force-adding personal files; `.gitignore` is a safeguard, not access control.
 
+## Agent CLI and shared review
+
+Release builds also produce `synthcad` (`synthcad.exe` on Windows). Start with
+`synthcad --help`, or pass the same commands to `dingcad_viewer`. The existing
+Windows launcher accepts them too:
+
+```powershell
+.\scripts\run-windows.ps1 open .\scene.js --session review
+.\out\build\windows-x64-release\viewer\synthcad.exe snapshot --session review --json
+```
+
+The CLI opens or reuses a persistent session. Agents edit model files normally;
+the viewer hot-reloads them. Capture a requested revision with `revision`, then
+use `wait --revision TOKEN` to acknowledge the loaded result. Highlights, framing,
+named project views, selection readback and PNG screenshots share that viewer.
+These commands do not edit geometry, generate print layouts or export STL.
+
+See the [agent CLI guide](docs/agent-cli.md) for commands, errors and session
+lifecycle, and the [project/revision contract](docs/agent-contract.md) for optional
+`synthcad.json` projects. Standalone `.js` scenes remain supported. Named sessions
+are created through `open`; legacy direct scene launches keep their existing
+viewer behavior. Linux transport is tested; Linux GUI/distribution validation
+remains part of the v1 backlog.
+
 ## Viewer controls
 
 - Left-drag to orbit, right-drag to pan (the model follows the mouse), and scroll to zoom.
@@ -140,6 +164,10 @@ For a window-free scene validation, run the built viewer with
 
 
 ## Viewer checks
+
+The agent review loop has [focused tests and a live acceptance script](docs/batch-1-validation.md),
+including Windows/Linux transport checks. Its CLI and project contracts are
+documented separately from the geometry API.
 
 Build `dingcad_appearance_tests`, `dingcad_parts_tests`, `dingcad_camera_tests`
 and `dingcad_dimension_tests` with CMake, then run the executables in the viewer

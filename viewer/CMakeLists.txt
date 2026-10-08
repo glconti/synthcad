@@ -1,4 +1,19 @@
 find_package(raylib 4.0 REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
+find_package(Threads REQUIRED)
+
+add_library(synthcad_agent STATIC agent_cli.cpp project_contract.cpp agent_transport.cpp agent_bridge.cpp agent_entry.cpp)
+target_include_directories(synthcad_agent PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(synthcad_agent PUBLIC nlohmann_json::nlohmann_json Threads::Threads)
+if(WIN32)
+  target_link_libraries(synthcad_agent PUBLIC advapi32 shell32)
+endif()
+if(MSVC)
+  target_compile_options(synthcad_agent PRIVATE /utf-8)
+  target_compile_definitions(synthcad_agent PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+endif()
+add_executable(synthcad cli_main.cpp)
+target_link_libraries(synthcad PRIVATE synthcad_agent)
 
 add_library(dingcad_quickjs STATIC
   ${PROJECT_SOURCE_DIR}/vendor/quickjs/quickjs.c
@@ -29,6 +44,7 @@ add_executable(dingcad_viewer
   parts_panel.cpp
   brand.cpp
   stl_export.cpp
+  agent_scene.cpp
 )
 
 target_include_directories(dingcad_viewer
@@ -42,7 +58,25 @@ target_link_libraries(dingcad_viewer
     manifold
     raylib
     dingcad_quickjs
+    synthcad_agent
 )
+
+foreach(test project_contract agent_cli agent_transport agent_bridge)
+  add_executable(synthcad_${test}_tests EXCLUDE_FROM_ALL tests/${test}_test.cpp)
+  target_link_libraries(synthcad_${test}_tests PRIVATE synthcad_agent)
+  if(MSVC)
+    target_compile_options(synthcad_${test}_tests PRIVATE /utf-8 /UNDEBUG)
+  else()
+    target_compile_options(synthcad_${test}_tests PRIVATE -UNDEBUG)
+  endif()
+endforeach()
+add_executable(synthcad_agent_scene_tests EXCLUDE_FROM_ALL tests/agent_scene_test.cpp agent_scene.cpp part_tree.cpp)
+target_link_libraries(synthcad_agent_scene_tests PRIVATE manifold raylib dingcad_quickjs synthcad_agent)
+if(MSVC)
+  target_compile_options(synthcad_agent_scene_tests PRIVATE /utf-8 /UNDEBUG)
+else()
+  target_compile_options(synthcad_agent_scene_tests PRIVATE -UNDEBUG)
+endif()
 
 # Run directly; the optional --render argument saves overlay QA images.
 add_executable(dingcad_dimension_tests EXCLUDE_FROM_ALL

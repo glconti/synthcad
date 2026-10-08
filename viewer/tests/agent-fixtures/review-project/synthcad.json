@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "name": "Public agent review fixture",
+  "defaultView": "assembly",
+  "views": {
+    "assembly": "assembly.js",
+    "inspection": "inspection.js"
+  }
+}
