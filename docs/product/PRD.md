@@ -5,12 +5,12 @@ Status: Draft for review. Updated: 2026-10-08.
 SynthCAD helps people design better printable objects with an external AI agent.
 The agent authors local model files; a shared CAD viewer reloads those files and
 lets the person and agent inspect the same design. The finished deliverable is
-an STL or a prepared Bambu Studio 3MF project, with an explicit distinction
+an STL or standard 3MF plate, with an explicit distinction
 between geometric checks, printing recommendations and physical evidence.
 
 This document defines v1. [BACKLOG.md](BACKLOG.md) breaks it into deliverable work.
 The [GitHub v1 milestone](https://github.com/glconti/synthcad/milestone/1) tracks
-the 22 release stories and their live status; deferred ideas have no milestone.
+the release stories and their live status; deferred ideas have no milestone.
 Requirements below describe intended behavior, not capabilities already shipped.
 [API.md](../../API.md) remains the contract for the implemented model API.
 
@@ -40,8 +40,8 @@ printable designs; reducing coordination overhead supports that outcome.
 | Platforms | Windows and Linux are release targets. Manual build/runtime checks pass on Windows and Ubuntu X11/Mesa; automated CI and distribution validation remain backlog work. |
 | Knowledge | Versioned domain guidance is available in full through the CLI. Application checks enforce measurable constraints. |
 | Design scope | Any object supported by the available geometry tools, including functional, assembled and decorative designs. |
-| Printing | Build-plate preparation is a core user story. Account for printer, nozzle, material, orientation, support access and assembly. |
-| Delivery | STL plus Bambu Studio project 3MF first. The user reviews and slices in Bambu Studio. |
+| Printing | Build volume is sufficient to begin plate preparation. Optimize orientation, support access, assembly and placement; use nozzle/material context when supplied. Known-printer catalogs are deferred. |
+| Delivery | STL plus standard 3MF for the current plate. The user chooses printer/material settings and slices in their slicer. Exact Bambu project/preset interoperability is deferred. |
 | Iteration | Physical samples and test feedback are supported, optional flows. They are not prerequisites for ordinary export. |
 | Workspace | One unified view of the current project. Assemblies, groups and special views reference shared source parts through distinct instances. No multi-project library in v1. |
 
@@ -56,9 +56,9 @@ SynthCAD account or cloud service for its own workflow.
    `synthcad docs AREA` prints that area's complete guidance. The agent creates
    or opens project files and opens the project in SynthCAD. The user can also
    open a project directly. No filesystem skill setup is needed.
-2. **Establish constraints.** Capture intended use, dimensions and the printer,
-   nozzle and material when known. Record provisional measurements explicitly.
-   Missing printer settings should not prevent initial design review.
+2. **Establish constraints.** Capture intended use, dimensions and usable build
+   volume. No known printer profile is required. Nozzle and material are optional
+   context; record provisional measurements and unknown exclusions explicitly.
 3. **Design.** The agent writes parametric model files and reload checks report
    whether the new design loaded. The agent considers printing and assembly
    throughout, proposing consequential tradeoffs such as splitting a continuous
@@ -70,8 +70,8 @@ SynthCAD account or cloud service for its own workflow.
 5. **Prepare plates.** The agent writes print-layout placements that reference
    the same source parts as the assembly. SynthCAD shows the plate boundaries,
    orientations, quantities, warnings and reasons for important choices.
-6. **Export.** Review included parts and profile, then export STL or a prepared
-   Bambu Studio 3MF. The user opens the latter in Bambu Studio to inspect and slice.
+6. **Export.** Review included parts and placement, then export STL or a standard
+   3MF plate. The user chooses settings in their slicer to inspect and slice.
    Report warnings and allow an explicit export-anyway choice when a valid file
    can still be produced.
 7. **Optionally iterate physically.** Print samples or full parts, provide fit or
@@ -206,10 +206,12 @@ do not independently wake an external agent; that agent owns the read/wait loop.
 
 ### R06 Printer and material context
 
-Store printer identity, usable build volume, relevant bed exclusions, nozzle
-diameter and material/profile identity per project. Offer concise guided setup
-and allow custom profiles. Avoid a global default that silently inherits another
-project's printer or material. Show missing or provisional values.
+Store usable build volume per project as the minimum context for plate layout.
+Relevant bed exclusions, nozzle diameter, material and printer identity are
+optional refinements. Known-printer catalogs and preset selection are later
+work. Preserve the existing custom `profiles` manifest container for compatibility;
+it need not identify an actual printer. Never inherit another project's settings.
+Show missing or provisional values without blocking checks that have enough data.
 
 The agent uses this context during design and plate preparation. Separate advice
 from settings actually supported by the target slicer. Unknown machine profiles
@@ -260,15 +262,16 @@ objective is a reviewable, printer-aware arrangement with explicit tradeoffs.
 
 ### R09 Export and slicer handoff
 
-Retain STL export and add Bambu Studio project 3MF with separate named objects,
-plate assignments, transforms and supported printer/material/nozzle/process
-settings. Map display colors to filament assignments only when explicitly
-configured. A colored model alone does not specify multiple filaments.
+Retain STL export and add standard 3MF for the current plate or assembly, with
+separate named objects, shared source meshes, physical instances and transforms.
+Export one current arrangement per file. The agent's printing knowledge and
+reviewed orientations, splits, joints and placement are the primary value;
+the file carries that arrangement to the user's slicer.
 
-Pin and document the Bambu Studio versions and profile combinations exercised
-by interoperability tests. Preserve supported settings on opening the project;
-surface unsupported mappings rather than silently substituting settings. A
-generic geometry-only 3MF must not be described as a configured slicer project.
+Scope revised on 2026-10-08: exact Bambu Studio project metadata, multiple native
+slicer plates and printer/material/nozzle/process preset interoperability are
+deferred. Users choose those settings in the slicer. Standard 3MF must not be
+described as a configured slicer project or a verified printable layout.
 
 Allow all-exportable and visible-exportable selections, with external references
 excluded by default. Distinguish exporting assembly coordinates from prepared

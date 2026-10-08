@@ -192,18 +192,17 @@ json PrinterProfileContext(const json& project) {
         if (Present(profile, "provenance") && !Identifier(profile["provenance"], "type")) result["missing"].push_back("provenance.type");
         if (Present(profile, "provisional") && profile["provisional"].is_array()) result["provisional"] = profile["provisional"];
     }
-    for (const auto* check : {"buildVolume", "nozzle", "material"}) {
+    for (const auto* check : {"buildVolume", "exclusions", "nozzle", "material"}) {
         const std::string field = std::string(check) == "nozzle" ? "nozzleDiameter" : check;
         std::string status = "missing", reason = "No active project profile";
         if (!errors.empty()) { status = "invalid"; reason = "Project profile metadata has validation errors"; }
         else if (selected) {
             const auto& profile = result["profile"];
             bool ready = Present(profile, field.c_str());
-            if (field == "buildVolume") ready = ready && Present(profile, "exclusions");
             if (field == "material") ready = ready && (Identifier(profile["material"], "id") || Identifier(profile["material"], "name"));
             bool provisional = false;
             for (const auto& marked : result["provisional"])
-                if (marked == field || (field == "buildVolume" && marked == "exclusions")) provisional = true;
+                if (marked == field) provisional = true;
             status = !ready ? "missing" : provisional ? "provisional" : "ready";
             reason = !ready ? "Required metadata is incomplete" : provisional ? "Authored metadata is provisional" : "Metadata available for this check";
         }

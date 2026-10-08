@@ -248,11 +248,15 @@ json ManufacturingChecks(const std::vector<DisplayPart>& parts, const json& desi
         }
         if (selected.contains("exclusions") && selected["exclusions"].is_array()) exclusions = selected["exclusions"];
     }
-    bedReady = bedReady && bedSize.is_array() && exclusions.is_array();
+    bedReady = bedReady && bedSize.is_array();
+    const bool exclusionsKnown = profileStatus != "invalid" && exclusions.is_array();
     const auto provisional = Array(profile, "provisional");
-    bool bedProvisional = false;
-    for (const auto& field : provisional) if (field == "buildVolume" || field == "exclusions" || field == "printer") bedProvisional = true;
-    if (bedReady) output["bed"] = {{"size", bedSize}, {"exclusions", exclusions}, {"origin", {0, 0}}};
+    bool bedProvisional = false, exclusionsProvisional = false;
+    for (const auto& field : provisional) {
+        if (field == "buildVolume") bedProvisional = true;
+        if (field == "exclusions") exclusionsProvisional = true;
+    }
+    if (bedReady) output["bed"] = {{"size", bedSize}, {"exclusions", exclusions}, {"exclusionsKnown", exclusionsKnown}, {"origin", {0, 0}}};
     json outside = json::array(), tooTall = json::array(), floating = json::array(), below = json::array(), excluded = json::array();
     for (const auto& solid : solids) {
         const auto& box = solid.bounds; const auto& id = solid.part->id;
@@ -260,7 +264,7 @@ json ManufacturingChecks(const std::vector<DisplayPart>& parts, const json& desi
         if (bedReady) {
             if (box.min.x < -kBoundsEpsilon || box.min.y < -kBoundsEpsilon || box.max.x > bedSize[0].get<double>() + kBoundsEpsilon || box.max.y > bedSize[1].get<double>() + kBoundsEpsilon) outside.push_back(id);
             if (box.max.z > bedSize[2].get<double>() + kBoundsEpsilon) tooTall.push_back(id);
-            for (size_t i = 0; i < exclusions.size(); ++i) {
+            for (size_t i = 0; exclusionsKnown && i < exclusions.size(); ++i) {
                 const auto& rect = exclusions[i];
                 if (!rect.is_object() || !rect.contains("min") || !rect.contains("max") || !rect["min"].is_array() || !rect["max"].is_array() || rect["min"].size() != 2 || rect["max"].size() != 2) continue;
                 if (std::min(box.max.x, rect["max"][0].get<double>()) > std::max(box.min.x, rect["min"][0].get<double>()) && std::min(box.max.y, rect["max"][1].get<double>()) > std::max(box.min.y, rect["min"][1].get<double>())) excluded.push_back({{"partId", id}, {"exclusionIndex", i}});
@@ -278,9 +282,9 @@ json ManufacturingChecks(const std::vector<DisplayPart>& parts, const json& desi
     add("plate-bed-contact", "Bed contact", !canPlate || !contactValid ? "not-checked" : !floating.empty() || !below.empty() ? "failed" : bedProvisional ? "warning" : "passed", "geometry", floating.empty() && below.empty() ? activeIds : Affected(json::array({floating, below})),
         "Minimum Z within explicit numeric tolerance of bed Z=0; does not prove a stable contact area or adhesion", {{"floatingParts", floating}, {"belowBedParts", below}, {"contactTolerance", tolerance}},
         canPlate && floating.empty() && below.empty() ? json::array() : json::array({"Place parts on Z=0 and inspect stable first-layer contact in the slicer."}));
-    add("plate-exclusions", "Excluded bed regions", !canPlate ? "not-checked" : !excluded.empty() || bedProvisional ? "warning" : "passed", "heuristic", excluded.empty() ? activeIds : Affected(excluded),
-        "Conservative XY AABB footprints versus excluded rectangles; a footprint intersection is a possible conflict, not proven solid contact", {{"possibleConflicts", excluded}, {"profileProvisional", bedProvisional}},
-        excluded.empty() ? json::array() : json::array({"Move parts away from clips/exclusions or inspect the exact footprint before slicing."}));
+    add("plate-exclusions", "Excluded bed regions", !canPlate || !exclusionsKnown ? "not-checked" : !excluded.empty() || exclusionsProvisional ? "warning" : "passed", "heuristic", excluded.empty() ? activeIds : Affected(excluded),
+        "Conservative XY AABB footprints versus authored excluded rectangles; an unknown exclusion list is not checked; a footprint intersection is a possible conflict, not proven solid contact", {{"possibleConflicts", excluded}, {"exclusionsKnown", exclusionsKnown}, {"profileProvisional", exclusionsProvisional}},
+        !exclusionsKnown ? json::array({"Record excluded bed regions, or explicitly confirm an empty exclusions list."}) : excluded.empty() ? json::array() : json::array({"Move parts away from clips/exclusions or inspect the exact footprint before slicing."}));
 
     size_t considered = 0, skipped = 0, exact = 0, broadDisjoint = 0, trianglesUsed = 0, triangleSkipped = 0;
     json overlaps = json::array(), overlapErrors = json::array(), clearanceConflicts = json::array();
@@ -292,15 +296,15 @@ json ManufacturingChecks(const std::vector<DisplayPart>& parts, const json& desi
     if (allowances && bedReady) for (const auto& solid : solids) {
         const auto& box = solid.bounds;
         if (box.min.x - envelope < -kBoundsEpsilon || box.min.y - envelope < -kBoundsEpsilon || box.max.x + envelope > bedSize[0].get<double>() + kBoundsEpsilon || box.max.y + envelope > bedSize[1].get<double>() + kBoundsEpsilon) envelopeOutside.push_back(solid.part->id);
-        for (size_t i = 0; i < exclusions.size(); ++i) {
+        for (size_t i = 0; exclusionsKnown && i < exclusions.size(); ++i) {
             const auto& rect = exclusions[i];
             if (!rect.is_object() || !rect.contains("min") || !rect.contains("max") || !rect["min"].is_array() || !rect["max"].is_array() || rect["min"].size() != 2 || rect["max"].size() != 2) continue;
             if (std::min(box.max.x + envelope, rect["max"][0].get<double>()) > std::max(box.min.x - envelope, rect["min"][0].get<double>()) && std::min(box.max.y + envelope, rect["max"][1].get<double>()) > std::max(box.min.y - envelope, rect["min"][1].get<double>())) envelopeExclusions.push_back({{"partId", solid.part->id}, {"exclusionIndex", i}});
         }
     }
-    add("plate-allowance-bounds", "Brim and support envelope versus usable bed", !canPlate || !allowances ? "not-checked" : !envelopeOutside.empty() || !envelopeExclusions.empty() || bedProvisional ? "warning" : "passed", "heuristic", envelopeOutside.empty() && envelopeExclusions.empty() ? activeIds : Affected(json::array({envelopeOutside, envelopeExclusions})),
-        "Conservative XY AABB inflated by brim+support on each side; expanded footprint versus bed edges and exclusion rectangles; possible conflicts only",
-        {{"envelopePerSide", allowances ? json(envelope) : json(nullptr)}, {"boundsEpsilon", kBoundsEpsilon}, {"possiblyOutsideParts", envelopeOutside}, {"possibleExclusionConflicts", envelopeExclusions}},
+    add("plate-allowance-bounds", "Brim and support envelope versus usable bed", !canPlate || !allowances ? "not-checked" : !envelopeOutside.empty() || !envelopeExclusions.empty() || bedProvisional || (exclusionsKnown && exclusionsProvisional) ? "warning" : !exclusionsKnown ? "not-checked" : "passed", "heuristic", envelopeOutside.empty() && envelopeExclusions.empty() ? activeIds : Affected(json::array({envelopeOutside, envelopeExclusions})),
+        "Conservative XY AABB inflated by brim+support on each side; bed edges are checked from build dimensions; unknown exclusion regions remain unchecked; possible conflicts only",
+        {{"envelopePerSide", allowances ? json(envelope) : json(nullptr)}, {"boundsEpsilon", kBoundsEpsilon}, {"possiblyOutsideParts", envelopeOutside}, {"possibleExclusionConflicts", envelopeExclusions}, {"exclusionsKnown", exclusionsKnown}, {"bedBoundsResult", !canPlate || !allowances ? "not-checked" : !envelopeOutside.empty() || bedProvisional ? "warning" : "passed"}},
         {"Confirm slicer-generated brims/supports remain inside the usable bed and clear all excluded regions."});
     const auto totalPairs = solids.empty() ? size_t(0) : solids.size() * (solids.size() - 1) / 2;
     const auto omittedPairs = totalPairs > kPairLimit ? totalPairs - kPairLimit : 0;

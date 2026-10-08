@@ -4,7 +4,7 @@ Status: Tracked in GitHub Issues. Updated: 2026-10-08.
 
 This backlog implements [the v1 PRD](PRD.md). The
 [v1 release milestone](https://github.com/glconti/synthcad/milestone/1) contains
-SC01–SC22. The five delivery phases below sequence that single release; they are
+the release stories below. SC15 is now deferred. The five delivery phases sequence that single release; they are
 not separate GitHub milestones. No release date is set.
 
 GitHub Issues is the source of truth for status, discussion and completion.
@@ -34,8 +34,8 @@ Dependencies name backlog IDs. PRD references use its R01–R11 requirement IDs.
 | SC12 | [#13 Define shared source parts, instances and view layouts](https://github.com/glconti/synthcad/issues/13) | v1 |
 | SC13 | [#14 Add the build plate view and deterministic layout checks](https://github.com/glconti/synthcad/issues/14) | v1 |
 | SC14 | [#15 Add manufacturing guidance and scoped check results](https://github.com/glconti/synthcad/issues/15) | v1 |
-| SC15 | [#16 Prove the Bambu Studio project format and profile mapping](https://github.com/glconti/synthcad/issues/16) | v1 |
-| SC16 | [#17 Implement prepared project 3MF export](https://github.com/glconti/synthcad/issues/17) | v1 |
+| SC15 | [#16 Prove the Bambu Studio project format and profile mapping](https://github.com/glconti/synthcad/issues/16) | Deferred |
+| SC16 | [#17 Export the current plate as standard 3MF](https://github.com/glconti/synthcad/issues/17) | v1 |
 | SC17 | [#18 Unify export review, CLI results and provenance](https://github.com/glconti/synthcad/issues/18) | v1 |
 | SC18 | [#19 Support optional samples and physical feedback](https://github.com/glconti/synthcad/issues/19) | v1 |
 | SC19 | [#20 Establish Windows and Linux CI](https://github.com/glconti/synthcad/issues/20) | v1 |
@@ -206,8 +206,9 @@ the user can inspect plate constraints and understand remaining uncertainties.
 
 P1 · R06 · Dependencies: SC01 · New
 
-- Provide short setup for bed/build volume, exclusions, nozzle and material,
-  profile provenance and custom dimensions.
+- Start with custom build volume alone. Exclusions, nozzle, material, printer
+  identity and provenance are optional refinements; known-printer catalogs are
+  deferred. Keep the existing manifest container for compatibility.
 - Expose active and missing values to the viewer and CLI. Project switching does
   not silently carry another project's profile into the design.
 - Allow review before setup is complete; flag which printing checks cannot run.
@@ -268,12 +269,13 @@ P1 · R01, R07 · Dependencies: SC06, SC11, SC13 · Extends guidance/checks
 
 ## Delivery phase 4 Reliable printing handoff and optional iteration
 
-Exit: the same reviewed design produces traceable STL files or a tested Bambu
-Studio project. Physical sample workflows are available but never mandatory.
+Exit: the same reviewed design produces traceable STL files or a standard 3MF
+plate. Physical sample workflows are available but never mandatory. Printing
+orientation and placement guidance take priority over slicer-specific settings.
 
 ### SC15 Prove the Bambu Studio project format and profile mapping
 
-P1 · R09 · Dependencies: SC11, SC12 · Technical spike
+Deferred by user on 2026-10-08 · R09 · Dependencies: SC11, SC12 · Technical spike
 
 - Select and record the initial Bambu Studio version/profile matrix.
 - Produce a minimal interoperable multi-object, multi-plate project containing
@@ -283,17 +285,19 @@ P1 · R09 · Dependencies: SC11, SC12 · Technical spike
 - Deliver public fixtures and an implementation decision; shared ancestry with
   another slicer does not count as verification.
 
-### SC16 Implement prepared project 3MF export
+### SC16 Export the current plate as standard 3MF
 
-P1 · R09 · Dependencies: SC13, SC15 · New
+P1 · R09 · Dependencies: SC12, SC13 · New
 
-- Export named objects, instances, plate assignments, transforms and the supported
-  settings established by SC15 without requiring an installed slicer.
-- Preserve explicit filament assignment; do not infer it from display colors.
-- Report unsupported profiles/settings and distinguish geometry-only delivery
-  from a configured project. Validate archive contents and Bambu open behavior.
-- Run interoperability fixtures against the declared version matrix; no slicing
-  engine or generated G-code is included in this story.
+- Export the current arrangement as standard 3MF with named objects, shared
+  source meshes, physical instances and transforms, without an installed slicer.
+- Keep STL, reference exclusions, visible/all selection and file-safety behavior.
+- Validate archive contents, shared references, units and world geometry, with
+  a basic import check in an available slicer.
+- Printer, filament, nozzle and process settings are selected in the slicer;
+  native multi-plate projects and exact preset interop remain deferred in SC15.
+- Publish actionable orientation, support, splitting, joint and placement
+  guidance through CLI stdout. No slicing engine or G-code is included.
 
 ### SC17 Unify export review, CLI results and provenance
 
@@ -399,8 +403,10 @@ event readback build on this selection contract; see [Batch 5](../batch-5-valida
 **SC10–SC11** project overview and printer profiles are integrated in
 [Batch 6](../batch-6-validation.md). **SC13–SC14** build-plate review and scoped
 manufacturing results build on those profiles and shared instances; see
-[Batch 7](../batch-7-validation.md). Next, prove the Bambu Studio format/profile
-matrix in **SC15** before implementing **SC16–SC17** prepared export and provenance.
+[Batch 7](../batch-7-validation.md). The user deferred exact Bambu interop on
+2026-10-08. Standard current-plate 3MF in **SC16**, strengthened printing guidance
+and build-volume-only checks are verified in [Batch 8](../batch-8-validation.md).
+Next is **SC17** export provenance and shared CLI/GUI actions.
 Start Linux CI and licensing
 resolution in parallel when resources are available; do not leave either until
 packaging. The Bambu-format spike should precede promises about exact export

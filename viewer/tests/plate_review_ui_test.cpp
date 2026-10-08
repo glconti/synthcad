@@ -362,6 +362,18 @@ void CheckEmptyMalformedAndScroll() {
                     "Bed dimensions: Unknown; bed data is incomplete.") !=
               layout.document.end(),
           "Malformed bed dimensions are represented as unknown");
+  report["bed"] = {{"size", {220, 220, 250}}, {"exclusions", nullptr}};
+  report["current"] = true;
+  report["profile"]["profile"] = {{"buildVolume", {220, 220, 250}}};
+  layout = ui.Layout(report, 640, 400, noFont, TestMeasure);
+  Require(CanDrawPlateBed(report), "Build volume alone provides drawable plate geometry");
+  Require(std::find(layout.document.begin(), layout.document.end(),
+                    "Bed exclusions: Unknown; exclusion checks are not checked.") != layout.document.end(),
+          "Unknown exclusion list is never presented as none recorded");
+  report["bed"]["exclusions"] = json::array();
+  layout = ui.Layout(report, 640, 400, noFont, TestMeasure);
+  Require(std::find(layout.document.begin(), layout.document.end(), "Bed exclusions: None recorded.") != layout.document.end(),
+          "Explicit empty exclusion list is distinguished from unknown");
   DrawPlateBed({{"kind", "plate"}});
   DrawPlateBed({{"kind", "plate"}, {"bed", nullptr}, {"current", true}});
   DrawPlateBed({{"kind", "plate"},

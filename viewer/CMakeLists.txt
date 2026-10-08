@@ -76,6 +76,7 @@ add_executable(dingcad_viewer
   parts_panel.cpp
   brand.cpp
   stl_export.cpp
+  three_mf_export.cpp
   agent_scene.cpp
 )
 
@@ -216,6 +217,17 @@ add_executable(dingcad_parts_tests EXCLUDE_FROM_ALL
 target_include_directories(dingcad_parts_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
   ${PROJECT_SOURCE_DIR}/vendor/manifold/include ${PROJECT_SOURCE_DIR}/vendor/quickjs)
 target_link_libraries(dingcad_parts_tests PRIVATE manifold raylib dingcad_quickjs)
+
+add_executable(synthcad_three_mf_export_tests EXCLUDE_FROM_ALL
+  tests/three_mf_export_test.cpp three_mf_export.cpp part_tree.cpp)
+target_include_directories(synthcad_three_mf_export_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+  ${PROJECT_SOURCE_DIR}/vendor/manifold/include ${PROJECT_SOURCE_DIR}/vendor/quickjs)
+target_link_libraries(synthcad_three_mf_export_tests PRIVATE manifold raylib dingcad_quickjs)
+if(MSVC)
+  target_compile_options(synthcad_three_mf_export_tests PRIVATE /utf-8 /UNDEBUG)
+else()
+  target_compile_options(synthcad_three_mf_export_tests PRIVATE -UNDEBUG)
+endif()
 
 if(WIN32)
   # Keep the viewer self-contained: Windows only probes the executable's

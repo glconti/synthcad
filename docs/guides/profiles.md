@@ -1,12 +1,31 @@
-# Printer and material profiles
+# Build volume and optional context
 
 Printer context lives in the current project's `synthcad.json`. No global defaults
 or previously opened project's profile are inherited. `profiles` is an object
 keyed by stable, nonempty IDs; `activeProfile` explicitly selects one of those IDs.
 Every declared profile is validated, including profiles that are not selected.
 An incomplete profile can be reviewed and geometry can still be evaluated.
+For plate placement, only the build volume is required. `profiles` is the
+existing project metadata container, not a catalog of known printers or verified
+presets. Printer, nozzle, material and provenance can be added later; they are
+not prerequisites for bounds, height or bed display.
 
-For a short setup conversation, ask:
+Start with this fragment in the existing manifest:
+
+```json
+{
+  "activeProfile": "custom",
+  "profiles": {
+    "custom": { "buildVolume": [220, 220, 250] }
+  }
+}
+```
+
+These dimensions are illustrative. Supply the intended bed width, depth and
+maximum height in millimetres. Missing exclusions remain unknown and their
+check stays `not-checked`; add `"exclusions": []` only after confirming none.
+
+When further process context is needed, ask:
 
 1. Which printer, or what custom bed width, depth, and maximum height in mm?
 2. Are there bed clips or other rectangular excluded regions? Confirm `[]` for none.
@@ -71,9 +90,13 @@ authoring fragment.
 Setup completeness requires printer, volume, exclusions, nozzle, material, and
 provenance including its type. Missing printer/material IDs are reported
 separately in `missingIdentifiers`; names are optional. Provisional values keep
-setup incomplete. `checkReadiness` reports `buildVolume`, `nozzle`, and `material`
+setup incomplete. That overall status does not block placement checks when
+dimensions are available. `checkReadiness` reports `buildVolume`, `exclusions`, `nozzle`, and `material`
 as `ready`, `missing`, `provisional`, or `invalid`, each with a reason. Volume
-readiness requires dimensions and explicit exclusions; material readiness needs
+readiness requires dimensions only; exclusions have their own readiness.
+Only provisional dimensions make volume readiness provisional. A provisional
+printer, material or exclusion list does not downgrade authored dimensions.
+Material readiness needs
 a nonempty material ID or name. Missing IDs remain visible independently of
 readiness. Any validation error makes these readiness states invalid.
 

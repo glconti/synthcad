@@ -1,7 +1,7 @@
 ## SynthCAD
 
 SynthCAD is a live-reloading CAD workspace for reviewing agent-generated models,
-inspecting named components and exporting STL geometry. It uses raylib, Manifold
+inspecting named components and exporting STL or standard 3MF geometry. It uses raylib, Manifold
 and QuickJS. The visible product name is SynthCAD; existing `dingcad_viewer`
 targets, launch scripts and model APIs remain compatible.
 
@@ -163,16 +163,16 @@ not implied by a passing geometric check.
 - **Parts** opens/closes the left tree. Search filters rows only, keeping ancestors.
   Expand groups with the arrow; click a name to select a part or group. A box
   outlines the visible selection. The **eye** icon controls visibility; the **export arrow** controls
-  STL inclusion independently. Green icons are on, slashed icons are off, and
+  export inclusion independently. Green icons are on, slashed icons are off, and
   amber icons with a minus badge indicate mixed groups. Hover for the current
   state and action. Group icons affect
   every descendant, including rows hidden by search.
 - **Isolate** temporarily shows the selection. **Exit isolation** restores the previous
   visibility (changes made during isolation are temporary). **Show all**
   ends isolation and shows every part; **Frame selection** frames the visible selection.
-- **P** or **Export STL** opens the STL dialog: all exportable parts (initial mode,
+- **P** or **Export** opens the 3MF/STL dialog: all exportable parts (initial mode,
   including hidden parts) or only visible exportable parts. Edit the suggested
-  `Downloads/<scene-name>.stl` path; existing files require **Replace file** confirmation.
+  `Downloads/<scene-name>.3mf` path; existing files require **Replace file** confirmation.
   No selected parts means no file is written.
 
 The parts panel is a subtle translucent overlay over the full-window scene.
@@ -194,8 +194,11 @@ visible with expandable, scrollable diagnostics and Reload until a valid scene
 loads. The last valid view stays visible and export remains disabled.
 
 Export preserves the current arrangement, without creating or validating a print
-layout. The suggested destination is `Downloads/<scene-name>.stl` (or
-`synthcad.stl` for the built-in sample); an edited path is retained for the session.
+layout. The suggested destination is `Downloads/<scene-name>.3mf` (or
+`synthcad.3mf` for the built-in sample); an edited path is retained for the session.
+3MF retains separate named instances and shared source meshes; STL remains
+available. Select printer and material settings in your slicer. See
+[standard 3MF export](docs/three-mf-export.md).
 Visibility, export overrides, selection and group expansion persist across reload
 within the running session, using stable IDs; they reset after closing the viewer.
 External references should start with `exportable:false`. Hiding them alone does
@@ -208,7 +211,7 @@ to add labels to other scenes.
 Scenes can export `displayParts` for separate component colors. The Windows
 viewer uses soft lighting and preserves CAD creases instead of smoothing across
 sharp edges. With `displayParts`, the listed solids are also the source for
-selective STL export. Scenes without this list retain the original single-solid
+selective export. Scenes without this list retain the original single-solid
 export. Invalid part metadata keeps the last valid view but disables export until
 corrected. See [parts and colors](API.md#parts-groups-and-display-colors) for the
 contract and PNG preview commands.

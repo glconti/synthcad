@@ -172,14 +172,36 @@ int main(){try{
   longPanel.Update(longTree,wheel,640,400);Require(longPanel.scroll>0,"Long tree scrolls inside capped panel");
   longPanel.search="missing";longPanel.Update(longTree,PanelInput{},640,400);Require(longPanel.scroll==0,"Empty search resets scroll bounds");
 
-  Require(SuggestedExportPath("home","a/assembly.js").filename()=="assembly.stl"&&SuggestedExportPath("home",{}).filename()=="synthcad.stl","Scene-based destination");
-  ExportDialog dialog;dialog.Open("unused.stl");auto save=center(ExportDialog::Layout(1280,720).save);
+  Require(SuggestedExportPath("home","a/assembly.js").filename()=="assembly.3mf"&&SuggestedExportPath("home",{}).filename()=="synthcad.3mf","Scene-based 3MF destination");
+  Require(SuggestedExportPath("home","a/assembly.js",false).filename()=="assembly.stl","Explicit STL destination");
+  ExportDialog dialog;dialog.Open("unused.3mf");auto save=center(ExportDialog::Layout(1280,720).save);
+  Require(dialog.threeMf,"New export defaults to 3MF");
   Require(!dialog.Update(save,1280,720,0,true).save,"Empty export blocked");Require(!dialog.Update(save,1280,720,2,false).save,"Invalid export blocked");
   Require(dialog.Update(save,1280,720,2,true).save,"Valid export request");
   dialog.overwrite=true;dialog.Update(center(ExportDialog::Layout(1280,720).visible),1280,720,2,true);
   Require(dialog.visibleOnly&&!dialog.overwrite,"Mode resets confirmation");
+  dialog.path=u8"folder città/custom.part.3mf";dialog.overwrite=true;
+  dialog.Update(center(ExportDialog::Layout(1280,720).stl),1280,720,2,true);
+  Require(!dialog.threeMf&&dialog.path==u8"folder città/custom.part.stl"&&!dialog.overwrite,"Format switch preserves Unicode directory and basename, resets confirmation");
+  Require(dialog.Update(save,1280,720,2,true).save,"STL format exports matching destination");
+  dialog.overwrite=true;dialog.Update(center(ExportDialog::Layout(1280,720).threeMf),1280,720,2,true);
+  Require(dialog.threeMf&&dialog.path==u8"folder città/custom.part.3mf"&&!dialog.overwrite,"3MF switch restores suffix");
+  dialog.path="wrong.stl";dialog.overwrite=true;
+  Require(!dialog.Update(save,1280,720,2,true).save&&!dialog.error.empty()&&!dialog.overwrite,"Mismatched suffix blocks export and overwrite confirmation");
+  dialog.path="upper.3MF";Require(dialog.Update(save,1280,720,2,true).save,"Extension validation is case insensitive");
+  dialog.path="missing-extension";Require(!dialog.Update(save,1280,720,2,true).save,"Missing suffix blocks export");
+  dialog.path="destination.3mf";dialog.overwrite=true;
+  dialog.Update(center(ExportDialog::Layout(1280,720).path),1280,720,2,true);
+  PanelInput replacePath;replacePath.selectAll=true;dialog.Update(replacePath,1280,720,2,true);
+  replacePath={};replacePath.text="edited.3mf";dialog.Update(replacePath,1280,720,2,true);
+  Require(dialog.path=="edited.3mf"&&!dialog.overwrite,"Destination edits reset overwrite confirmation");
   dialog.path="custom.stl";PanelInput esc;esc.escape=true;Require(!dialog.Update(esc,1280,720,2,true).save&&!dialog.open,"Cancel does not save");
   dialog.Open("another.stl");Require(dialog.path=="custom.stl","Edited destination persists");
+  Require(dialog.threeMf,"Reopening preserves selected format");
+  auto compactExport=ExportDialog::Layout(640,400);
+  Require(compactExport.card.y>=12&&compactExport.card.y+compactExport.card.height<=388&&compactExport.save.y+compactExport.save.height<=compactExport.card.y+compactExport.card.height,"Compact export dialog fits viewport");
+  dialog.overwrite=true;dialog.Update(center(ExportDialog::Layout(1280,720).cancel),1280,720,2,true);
+  Require(!dialog.open&&!dialog.overwrite,"Cancel button clears confirmation");
 
   const auto path=std::filesystem::temp_directory_path()/("dingcad-export-test-"+
       std::to_string(std::chrono::steady_clock::now().time_since_epoch().count())+".stl");

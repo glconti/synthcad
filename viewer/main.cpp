@@ -39,6 +39,7 @@ extern "C" {
 #include "parts_panel.h"
 #include "brand.h"
 #include "stl_export.h"
+#include "three_mf_export.h"
 #include "agent_entry.h"
 #include "agent_cli.h"
 #include "agent_transport.h"
@@ -1563,8 +1564,9 @@ int main(int argc, char *argv[]) {
       if(dialogAction.save){
         try {
           const auto savePath=std::filesystem::u8path(exportDialog.path);
-          const auto result=dingcad::ExportParts(tree,exportDialog.visibleOnly,exportValid,savePath,
-                                                exportDialog.overwrite,exportDialog.error);
+          const auto writer=exportDialog.threeMf?dingcad::ExportParts3mf:dingcad::ExportParts;
+          const auto result=writer(tree,exportDialog.visibleOnly,exportValid,savePath,
+                                   exportDialog.overwrite,exportDialog.error);
           if(result==dingcad::ExportResult::ConfirmOverwrite)exportDialog.overwrite=true;
           else if(result==dingcad::ExportResult::Saved){
             reportStatus("Saved "+savePath.u8string());workspace.Saved(savePath.filename().u8string(),GetTime());exportDialog.open=false;

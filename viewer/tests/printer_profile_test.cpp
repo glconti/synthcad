@@ -65,7 +65,14 @@ int main() {
         }
         project = Complete();
         project["profiles"]["custom"].erase("exclusions");
-        Check(PrinterProfileContext(project)["checkReadiness"]["buildVolume"]["status"] == "missing", "unknown exclusions prevent bed readiness");
+        Check(PrinterProfileContext(project)["checkReadiness"]["buildVolume"]["status"] == "ready", "dimensions enable bed readiness independently of exclusions");
+        Check(PrinterProfileContext(project)["checkReadiness"]["exclusions"]["status"] == "missing", "unknown exclusions have separate readiness");
+        const json volumeOnly = {{"activeProfile", "custom"}, {"profiles", {{"custom", {{"buildVolume", {220, 220, 250}}}}}}};
+        context = PrinterProfileContext(volumeOnly);
+        Check(context["status"] == "incomplete" && context["checkReadiness"]["buildVolume"]["status"] == "ready", "volume-only metadata enables placement without printer nozzle or material");
+        project = Complete();project["profiles"]["custom"]["provisional"] = {"printer", "exclusions"};
+        context = PrinterProfileContext(project);
+        Check(context["checkReadiness"]["buildVolume"]["status"] == "ready" && context["checkReadiness"]["exclusions"]["status"] == "provisional", "provisional printer and exclusions do not downgrade authored dimensions");
 
         project = Complete();
         project["profiles"]["custom"]["material"].erase("id");

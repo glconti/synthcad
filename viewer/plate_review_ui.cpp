@@ -378,8 +378,8 @@ struct DocumentBuilder {
 
     const auto *readiness = Field(profileContext, "checkReadiness");
     for (const auto &[key, label] :
-         std::array<std::pair<const char *, const char *>, 3>{{
-             {"buildVolume", "Build volume"}, {"nozzle", "Nozzle"},
+         std::array<std::pair<const char *, const char *>, 4>{{
+             {"buildVolume", "Build volume"}, {"exclusions", "Bed exclusions"}, {"nozzle", "Nozzle"},
              {"material", "Material"}}}) {
       const auto *item = readiness ? Field(*readiness, key) : nullptr;
       if (item && item->is_object())
@@ -467,7 +467,11 @@ struct DocumentBuilder {
       Add("Bed origin: " + VectorText(origin, 2) + " mm");
 
     const auto *exclusions = Field(*bed, "exclusions");
-    if (!exclusions || !exclusions->is_array() || exclusions->empty()) {
+    if (!exclusions || !exclusions->is_array()) {
+      Add("Bed exclusions: Unknown; exclusion checks are not checked.");
+      return;
+    }
+    if (exclusions->empty()) {
       Add("Bed exclusions: None recorded.");
       return;
     }

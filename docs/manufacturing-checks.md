@@ -14,12 +14,24 @@ pose replaces the assembly pose without changing other views.
 
 ## Profile and plate settings
 
-The active project profile supplies build volume, rectangular bed exclusions,
-nozzle and material metadata. The bed origin is `[0, 0]`, with positive X and Y
-across the usable bed and positive Z above it. Record the source and certainty
-of the supplied machine values. An unknown or provisional profile leaves
-dependent checks unresolved; it is not permission to substitute another
-project's machine or invent a default material.
+Build dimensions alone enable plate bounds, height, bed contact and bed display.
+The existing `profiles` container can hold just the intended volume; it is not
+a known-printer catalog. Merge this fragment into the existing manifest:
+
+```json
+{"activeProfile":"custom","profiles":{"custom":{"buildVolume":[220,220,250]}}}
+```
+
+Supply the intended dimensions in millimetres; the example is illustrative.
+The bed origin is `[0, 0]`, with positive X and Y across the rectangular bed and
+positive Z above it. Printer identity, nozzle, material and provenance are
+optional context for later process review. The overall profile may remain
+`incomplete` while these geometric placement checks run. Only provisional
+dimensions downgrade volume checks. Unknown exclusion zones stay explicitly
+`not-checked`; `exclusions: []` confirms none. Brim/support envelope evidence
+still reports the bed-edge comparison when exclusions are unknown, and a
+known edge conflict still warns. No missing metadata is inherited from another
+project.
 
 Optional manifest settings are keyed by view ID:
 
@@ -68,6 +80,10 @@ reported numeric thresholds as engine comparison limits, not print tolerances.
 Bed XY bounds, maximum height and envelope comparisons use a fixed `0.0001` mm
 numerical epsilon reported in evidence. Changing `contactTolerance` changes
 only the minimum-Z bed-contact comparison.
+Bounds use the actual placed and rotated solid. A long narrow part can fit
+diagonally even when its longest dimension exceeds the bed width; its full
+transformed footprint, including its thickness, must remain inside the bed.
+A length below the bed diagonal alone does not establish a fit.
 
 `passed`, `warning`, `failed` and `not-checked` describe that check's method and
 inputs. A passing bounds test establishes only the reported geometric

@@ -96,7 +96,7 @@ use the design's default view. Existing `scene`/`displayParts` files still work.
 ## Parts, groups and display colors
 
 The optional `displayParts` export defines **both** the viewer's components and
-its selective STL export source. Include every component that should be viewed
+its selective export source. Include every component that should be viewed
 or offered for export; solids present only in `scene` are not added automatically.
 With this legacy `displayParts` contract, the module must also export a valid
 `scene` (used for CLI CAD bounds). The shared `design` contract above replaces
@@ -139,21 +139,29 @@ follows the model's latest default. Reload preserves the camera. Separate GPU
 meshes remain resident; tree visibility does not reevaluate JavaScript, booleans
 or triangulation.
 
-The **Export STL** button and **P** open the same dialog:
+The **Export** button and **P** open the same dialog, with standard **3MF**
+(initial format) or **STL**:
 
 - **All exportable parts** (initial mode) includes hidden exportable parts.
 - **Visible exportable parts** includes only currently visible exportable parts,
   including isolation's temporary visibility.
 
-The dialog shows the part count, starts at `Downloads/<scene-stem>.stl`
-(`synthcad.stl` for the built-in sample), accepts an edited
+The dialog shows the part count, starts at `Downloads/<scene-stem>.3mf`
+(`synthcad.3mf` for the built-in sample), accepts an edited
 path retained during the session and requires **Replace file** confirmation before replacing an existing file. Cancel, an
 empty selection and invalid metadata produce no file and do not overwrite one.
-A non-exportable reference is included only after the user enables its STL flag.
+A non-exportable reference is included only after the user enables its export flag.
 Selected source solids are composed in their original CAD coordinates, without
 translation, scaling or automatic boolean union. Overlapping bodies remain
 separate; the tree does not arrange print plates. STL contains no colors or
 annotations. Export from a print-layout scene when a bed arrangement is needed.
+
+3MF preserves separate named instances, millimetre units and the current
+placements, with shared source mesh resources for shared design parts. It
+contains one current arrangement, not a native multi-plate slicer project or
+printer/material presets. Choose those settings in the slicer. Switching format
+updates the filename extension; the destination must match the selected format.
+See [standard 3MF export](docs/three-mf-export.md).
 
 The Windows view uses soft baked lighting and sharp CAD creases. Save a PNG
 without opening a visible window with

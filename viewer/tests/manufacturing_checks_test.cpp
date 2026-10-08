@@ -102,6 +102,22 @@ int main() {
         for (const auto* id : {"plate-bounds", "plate-height", "plate-bed-contact", "plate-clearance"})
             Require(Result(Run({a}, Design(), invalid), id) == "not-checked", "invalid profile dependent checks notchecked");
         Require(Result(Run({a}, Design(), synthcad::PrinterProfileContext(json::object())), "plate-bounds") == "not-checked", "missing profile never inferred");
+        const auto volumeOnly = synthcad::PrinterProfileContext({{"activeProfile", "custom"}, {"profiles", {{"custom", {{"buildVolume", {220, 220, 250}}}}}}});
+        const auto volumeReport = Run({a}, Design(), volumeOnly);
+        Require(volumeReport["profileStatus"] == "incomplete" && volumeReport["bed"]["size"] == json({220, 220, 250}) && volumeReport["bed"]["exclusions"].is_null(), "volume-only context retains drawable bed without inventing exclusions");
+        for (const auto* id : {"plate-bounds", "plate-height", "plate-bed-contact"}) Require(Result(volumeReport, id) == "passed", "volume alone enables placement checks");
+        Require(Result(volumeReport, "plate-exclusions") == "not-checked" && Check(volumeReport, "plate-exclusions")["evidence"]["exclusionsKnown"] == false, "unknown exclusions never pass");
+        Require(Result(volumeReport, "plate-allowance-bounds") == "not-checked" && Check(volumeReport, "plate-allowance-bounds")["evidence"]["bedBoundsResult"] == "passed", "allowance bed bounds remain computed while unknown exclusions remain unchecked");
+        const auto outsideEnvelope = Run({Part("a", cube.Translate({1, 10, 0}))}, Design(), volumeOnly, Settings(2, 2));
+        Require(Result(outsideEnvelope, "plate-allowance-bounds") == "warning" && Check(outsideEnvelope, "plate-allowance-bounds")["evidence"]["exclusionsKnown"] == false, "known envelope overflow warns even when exclusions unknown");
+        auto unrelatedProvisional = Profile();unrelatedProvisional["status"] = "incomplete";unrelatedProvisional["provisional"] = {"printer", "material", "exclusions"};
+        Require(Result(Run({a}, Design(), unrelatedProvisional), "plate-bounds") == "passed" && Result(Run({a}, Design(), unrelatedProvisional), "plate-exclusions") == "warning", "only volume uncertainty affects volume checks");
+        const auto longBar = manifold::Manifold::Cube({280, 10, 5});
+        Require(Result(Run({Part("a", longBar)}, Design(), volumeOnly), "plate-bounds") == "failed", "long bar straight placement exceeds square bed");
+        const auto diagonal = Run({Part("a", longBar.Rotate(0, 0, 45).Translate({10, 0, 0}))}, Design(), volumeOnly);
+        Require(Result(diagonal, "plate-bounds") == "passed", "actual diagonal placement fits despite long dimension exceeding bed width");
+        const auto thickDiagonal = Run({Part("a", manifold::Manifold::Cube({280, 40, 5}).Rotate(0, 0, 45).Translate({29, 0, 0}))}, Design(), volumeOnly);
+        Require(Result(thickDiagonal, "plate-bounds") == "failed", "part width can prevent diagonal fit despite long axis below bed diagonal");
         auto invalidSettings = Settings(); invalidSettings["plateSettings"]["plate"]["brim"] = -1;
         Require(Result(Run({a}, Design(), Profile(), invalidSettings), "plate-clearance") == "not-checked", "invalid allowance cannot pass");
         invalidSettings["plateSettings"]["plate"]["brim"] = std::numeric_limits<double>::infinity();

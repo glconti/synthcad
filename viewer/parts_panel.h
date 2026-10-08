@@ -36,9 +36,9 @@ struct PartsPanel {
   bool CapturesMouse(const PartTree &tree,const PanelInput &input,int width,int height) const;
   void Draw(const PartTree &tree,Font font,int width,int height) const;
 };
-struct ExportLayout {Rectangle card,all,visible,path,cancel,save;};
+struct ExportLayout {Rectangle card,threeMf,stl,all,visible,path,cancel,save;};
 struct ExportDialog {
-  bool open=false,visibleOnly=false,pathFocus=false,overwrite=false;
+  bool open=false,visibleOnly=false,pathFocus=false,overwrite=false,threeMf=true;
   std::string path,error;TextEdit editor;
   static ExportLayout Layout(int width,int height);
   void Open(const std::string &defaultPath);
@@ -58,5 +58,5 @@ struct WorkspaceUi {
   PanelActions Update(const PanelInput &input,int width,int height,double now);
   void Draw(Font font,int width,int height,DimensionMode mode,double now) const;
 };
-std::filesystem::path SuggestedExportPath(const std::filesystem::path &home,const std::filesystem::path &scene);
+std::filesystem::path SuggestedExportPath(const std::filesystem::path &home,const std::filesystem::path &scene,bool threeMf=true);
 }

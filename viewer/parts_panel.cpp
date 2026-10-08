@@ -178,7 +178,7 @@ void PartsPanel::Draw(const PartTree &tree,Font f,int w,int h) const{
  auto l=Layout(tree,w,h);Card(l.card);
  if(!open){DrawBrandMark({22,22,24,24});Label("Parts",f,55,26,60);Chevron(139,34,true);return;}
  DrawBrandMark({24,26,28,28});Label("SynthCAD",f,60,29,l.exportButton.x-66,18);
- Button(l.exportButton,"Export STL",f,true,true);if(Over(l.collapse))Card(l.collapse,{223,232,216,255});Chevron(l.collapse.x+12,40,false);
+ Button(l.exportButton,"Export",f,true,true);if(Over(l.collapse))Card(l.collapse,{223,232,216,255});Chevron(l.collapse.x+12,40,false);
  Label(sceneName,f,l.file.x,l.file.y+3,l.file.width,15,muted);
  Button(l.overview,"Project",f);
  Button(l.checks,"Checks",f);
@@ -191,7 +191,7 @@ void PartsPanel::Draw(const PartTree &tree,Font f,int w,int h) const{
  std::string tip;if(Over(l.file))tip=scenePath.empty()?sceneName:scenePath;
  if(Over(l.frame))tip="Frame selection";if(Over(l.isolate))tip=tree.state.isolated?"Exit isolation":"Isolate selection";
  if(Over(l.collapse))tip="Collapse parts";if(Over(l.clear)&&!search.empty())tip="Clear search";
- if(Over({l.visibilityX,173,24,24}))tip="Visibility";if(Over({l.exportX,173,24,24}))tip="Include in STL export";
+ if(Over({l.visibilityX,173,24,24}))tip="Visibility";if(Over({l.exportX,173,24,24}))tip="Include in export";
  Clip(l.list);auto rows=tree.Rows(search);auto mouse=Mouse();
  for(size_t n=0;n<rows.size();++n){
   float y=l.list.y+n*rowHeight-scroll;if(y+rowHeight<l.list.y||y>=l.list.y+l.list.height)continue;
@@ -210,33 +210,53 @@ void PartsPanel::Draw(const PartTree &tree,Font f,int w,int h) const{
  Tooltip(tip,f,w,h);
 }
 ExportLayout ExportDialog::Layout(int w,int h){
- ExportLayout l;auto &r=l.card;r={std::max(12.f,(w-620.f)/2),std::max(12.f,(h-344.f)/2),std::min(620.f,w-24.f),344};
- l.all={r.x+20,r.y+56,r.width-40,32};l.visible={r.x+20,r.y+92,r.width-40,32};l.path={r.x+20,r.y+164,r.width-40,32};
- l.cancel={r.x+20,r.y+292,88,32};l.save={r.x+r.width-150,r.y+292,130,32};return l;
+ ExportLayout l;auto &r=l.card;const float height=std::max(0.f,std::min(376.f,h-24.f));
+ r={std::max(12.f,(w-620.f)/2),std::max(12.f,(h-height)/2),std::max(0.f,std::min(620.f,w-24.f)),height};
+ const float scale=height/376.f;
+ auto row=[&](float y,float width){return Rectangle{r.x+20,r.y+y*scale,width,32*scale};};
+ l.threeMf=row(54,(r.width-48)/2);l.stl=l.threeMf;l.stl.x+=l.threeMf.width+8;
+ l.all=row(94,r.width-40);l.visible=row(130,r.width-40);l.path=row(194,r.width-40);
+ l.cancel=row(324,88);l.save=row(324,130);l.save.x=r.x+r.width-150;return l;
+}
+static bool ExportExtensionMatches(const std::string &path,bool threeMf){
+ if(path.empty()||path.find('\0')!=std::string::npos)return false;
+ auto extension=std::filesystem::u8path(path).extension().u8string();
+ for(auto &c:extension)if(c>='A'&&c<='Z')c=char(c-'A'+'a');
+ return extension==(threeMf?".3mf":".stl");
 }
 void ExportDialog::Open(const std::string &p){open=true;if(path.empty())path=p;error.clear();overwrite=false;pathFocus=false;editor.Focus(path);}
 PanelActions ExportDialog::Update(const PanelInput &i,int w,int h,size_t count,bool valid){
  PanelActions a;if(!open)return a;auto l=Layout(w,h);
  if(i.escape||Hit(i,l.cancel)){open=false;overwrite=false;return a;}
+ if(Hit(i,l.threeMf)||Hit(i,l.stl)){
+  const bool format=Hit(i,l.threeMf);
+  if(format!=threeMf){threeMf=format;if(!path.empty()){auto p=std::filesystem::u8path(path);p.replace_extension(threeMf?".3mf":".stl");path=p.u8string();}overwrite=false;error.clear();editor.Focus(path);}
+  pathFocus=false;return a;
+ }
  if(Hit(i,l.all)||Hit(i,l.visible)){visibleOnly=Hit(i,l.visible);overwrite=false;error.clear();return a;}
  if(i.pressed){pathFocus=CheckCollisionPointRec(i.mouse,l.path);if(pathFocus)editor.Focus(path);}
  if(pathFocus){auto before=path;editor.Update(path,i);if(before!=path){overwrite=false;error.clear();}}
- if(Hit(i,l.save)&&count&&valid&&!path.empty())a.save=true;return a;
+ if(Hit(i,l.save)&&count&&valid&&!path.empty()){
+  if(ExportExtensionMatches(path,threeMf))a.save=true;
+  else {error=threeMf?"Use a .3mf destination for 3MF export.":"Use a .stl destination for STL export.";overwrite=false;}
+ }return a;
 }
 void ExportDialog::Draw(Font f,int w,int h,size_t count,bool valid) const{
  if(!open)return;DrawRectangle(0,0,w,h,{33,43,37,72});auto l=Layout(w,h);auto r=l.card;Card(r,paper);
- Label("Export STL",f,r.x+20,r.y+18,r.width-40,23);
+ Label("Export",f,r.x+20,r.y+18,r.width-40,23);const float scale=r.height/376.f;
  auto radio=[&](Rectangle a,bool active,const char *s){if(Over(a))Card(a,{226,234,220,180});DrawCircleLines(int(a.x+10),int(a.y+16),8,accent);if(active)DrawCircleV({a.x+10,a.y+16},4.5f,accent);Label(s,f,a.x+28,a.y+7,a.width-30);};
+ radio(l.threeMf,threeMf,"3MF");radio(l.stl,!threeMf,"STL");
  radio(l.all,!visibleOnly,"All exportable parts");radio(l.visible,visibleOnly,"Visible exportable parts");
- Label("Destination",f,r.x+20,r.y+140,r.width-40,14,muted);Field(l.path,path,"Choose an STL file path",editor,pathFocus,f);
- Label(valid?std::to_string(count)+(count==1?" part included":" parts included"):"Export disabled - correct the scene error",f,r.x+20,r.y+209,r.width-40,16,valid?ink:MAROON);
- Label("Keeps the current arrangement. No print layout is created.",f,r.x+20,r.y+235,r.width-40,14,muted);
- Label(overwrite?"This file already exists. Replace it?":error,f,r.x+20,r.y+263,r.width-40,14,MAROON);
- Button(l.cancel,"Cancel",f);Button(l.save,overwrite?"Replace file":"Export STL",f,count>0&&valid&&!path.empty(),true);
- if(!error.empty()&&Over({r.x+20,r.y+260,r.width-40,28}))Tooltip(error,f,w,h);
+ Label("Destination",f,r.x+20,r.y+174*scale,r.width-40,14,muted);Field(l.path,path,threeMf?"Choose a .3mf file path":"Choose a .stl file path",editor,pathFocus,f);
+ Label(valid?std::to_string(count)+(count==1?" part included":" parts included"):"Export disabled - correct the scene error",f,r.x+20,r.y+236*scale,r.width-40,16,valid?ink:MAROON);
+ Label("Keeps the current arrangement.",f,r.x+20,r.y+260*scale,r.width-40,14,muted);
+ Label(threeMf?"Choose printer and material settings in your slicer.":"STL contains geometry only.",f,r.x+20,r.y+278*scale,r.width-40,14,muted);
+ Label(overwrite?"This file already exists. Replace it?":error,f,r.x+20,r.y+302*scale,r.width-40,14,MAROON);
+ Button(l.cancel,"Cancel",f);Button(l.save,overwrite?"Replace file":"Export",f,count>0&&valid&&!path.empty(),true);
+ if(!error.empty()&&Over({r.x+20,r.y+300*scale,r.width-40,24*scale}))Tooltip(error,f,w,h);
 }
-std::filesystem::path SuggestedExportPath(const std::filesystem::path &home,const std::filesystem::path &scene){
- auto name=scene.empty()?std::filesystem::path("synthcad"):scene.stem();name+=".stl";return home/"Downloads"/name;
+std::filesystem::path SuggestedExportPath(const std::filesystem::path &home,const std::filesystem::path &scene,bool threeMf){
+ auto name=scene.empty()?std::filesystem::path("synthcad"):scene.stem();name+=threeMf?".3mf":".stl";return home/"Downloads"/name;
 }
 void WorkspaceUi::Loaded(){loadError.clear();details=false;detailScroll=0;}
 void WorkspaceUi::Failed(const std::string &s){if(loadError!=s){details=false;detailScroll=0;}loadError=s;}
