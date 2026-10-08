@@ -1,0 +1,4 @@
+interface:
+  display_name: "Dingcad Design"
+  short_description: "Progettazione CAD parametrica e verificabile"
+  default_prompt: "Usa $dingcad-design per creare o modificare un modello CAD in questo repository."

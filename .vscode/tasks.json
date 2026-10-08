@@ -1,0 +1,30 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build dingcad",
+      "type": "cmake",
+      "command": "build",
+      "targets": ["dingcad_viewer"],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Run dingcad",
+      "type": "shell",
+      "command": "${workspaceFolder}\\scripts\\run-windows.ps1",
+      "args": ["${workspaceFolder}\\scene.js"],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "shell": {
+          "executable": "pwsh.exe",
+          "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"]
+        }
+      },
+      "problemMatcher": []
+    }
+  ]
+}

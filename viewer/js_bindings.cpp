@@ -22,6 +22,14 @@ void PrintLoadMeshError(const std::string &message) {
   std::fflush(stderr);
 }
 
+std::optional<std::filesystem::path> GetHomeDirectory() {
+  for (const char *variable : {"HOME", "USERPROFILE"}) {
+    if (const char *value = std::getenv(variable); value && *value) {
+      return std::filesystem::path(value);
+    }
+  }
+  return std::nullopt;
+}
 
 struct JsManifold {
   std::shared_ptr<manifold::Manifold> handle;
@@ -1008,13 +1016,13 @@ JSValue JsLoadMesh(JSContext *ctx, JSValueConst, int argc, JSValueConst *argv) {
 
   std::filesystem::path fsPath;
   if (!path.empty() && path[0] == '~') {
-    const char *home = std::getenv("HOME");
+    const auto home = GetHomeDirectory();
     if (!home) {
-      const std::string msg = "loadMesh: HOME is not set; cannot resolve '~'";
+      const std::string msg = "loadMesh: no home directory is set; cannot resolve '~'";
       PrintLoadMeshError(msg);
       return JS_ThrowInternalError(ctx, "%s", msg.c_str());
     }
-    std::filesystem::path homePath(home);
+    const std::filesystem::path &homePath = *home;
     if (path.size() == 1) {
       fsPath = homePath;
     } else if (path[1] == '/') {

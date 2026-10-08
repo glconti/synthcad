@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <cstdlib>
@@ -18,6 +19,7 @@
 #include <sstream>
 #include <string>
 #include <system_error>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 #include <utility>
@@ -29,12 +31,46 @@ extern "C" {
 #include "manifold/manifold.h"
 #include "manifold/polygon.h"
 #include "js_bindings.h"
+#include "dimensions.h"
+#include "camera_controls.h"
+#include "appearance.h"
+#include "part_tree.h"
+#include "parts_panel.h"
+#include "brand.h"
+#include "stl_export.h"
 
 namespace {
 const Color kBaseColor = {210, 210, 220, 255};
-const char *kBrandText = "dingcad";
-constexpr float kBrandFontSize = 28.0f;
-constexpr float kSceneScale = 0.1f;  // convert mm scene units to renderer units
+
+using dingcad::kSceneScale;
+using dingcad::FrameScene;
+using FrameClock = std::chrono::steady_clock;
+constexpr int kFocusedFps = 60;
+constexpr int kBackgroundFps = 15;
+constexpr int kMinimizedFps = 5;
+constexpr auto kSceneCheckInterval = std::chrono::milliseconds(250);
+constexpr int kGridHalfLines = 40;
+constexpr float kGridSpacing = 0.5f;
+constexpr float kAxesLength = 2.0f;
+
+// The post-processing pipeline works on the original macOS target, but the
+// vcpkg raylib/OpenGL stack on Windows can hang in its first custom-shader
+// draw.  Keep the Windows viewer responsive with raylib's default material
+// while retaining the higher-fidelity pipeline on macOS.
+#if defined(_WIN32)
+constexpr bool kUsePostProcessing = false;
+#else
+constexpr bool kUsePostProcessing = true;
+#endif
+
+std::optional<std::filesystem::path> GetHomeDirectory() {
+  for (const char *variable : {"HOME", "USERPROFILE"}) {
+    if (const char *value = std::getenv(variable); value && *value) {
+      return std::filesystem::path(value);
+    }
+  }
+  return std::nullopt;
+}
 
 // GLSL 330 core (desktop). Uses raylib's default attribute/uniform names.
 const char* kOutlineVS = R"glsl(
@@ -74,12 +110,15 @@ const char* kToonVS = R"glsl(
 #version 330
 in vec3 vertexPosition;
 in vec3 vertexNormal;
+in vec4 vertexColor;
+out vec4 vColor;
 uniform mat4 mvp;
 uniform mat4 matModel;
 uniform mat4 matView;
 out vec3 vNvs;
 out vec3 vVdir; // view dir in view space
 void main() {
+    vColor = vertexColor;
     vec4 wpos = matModel * vec4(vertexPosition, 1.0);
     vec3 nvs  = mat3(matView) * mat3(matModel) * vertexNormal;
     vNvs      = normalize(nvs);
@@ -93,6 +132,7 @@ const char* kToonFS = R"glsl(
 #version 330
 in vec3 vNvs;
 in vec3 vVdir;
+in vec4 vColor;
 out vec4 finalColor;
 
 uniform vec3 lightDirVS;     // normalized, in view space
@@ -125,7 +165,7 @@ void main() {
     spec = step(0.5, spec) * specWeight;
 
     float shade = clamp(ambient + diffuseWeight*cel + rimWeight*rim + spec, 0.0, 1.0);
-    finalColor  = vec4(baseColor.rgb * shade, 1.0);
+    finalColor  = vec4(vColor.rgb * shade, 1.0);
 }
 )glsl";
 
@@ -216,12 +256,6 @@ void main(){
 }
 )glsl";
 
-struct Vec3f {
-  float x;
-  float y;
-  float z;
-};
-
 struct ModuleLoaderData {
   std::filesystem::path baseDir;
   std::set<std::filesystem::path> dependencies;
@@ -233,80 +267,6 @@ struct WatchedFile {
   std::optional<std::filesystem::file_time_type> timestamp;
 };
 
-Vec3f FetchVertex(const manifold::MeshGL &mesh, uint32_t index) {
-  const size_t offset = static_cast<size_t>(index) * mesh.numProp;
-  return {
-      static_cast<float>(mesh.vertProperties[offset + 0]),
-      static_cast<float>(mesh.vertProperties[offset + 1]),
-      static_cast<float>(mesh.vertProperties[offset + 2])
-  };
-}
-
-Vec3f Subtract(const Vec3f &a, const Vec3f &b) {
-  return {a.x - b.x, a.y - b.y, a.z - b.z};
-}
-
-Vec3f Cross(const Vec3f &a, const Vec3f &b) {
-  return {a.y * b.z - a.z * b.y,
-          a.z * b.x - a.x * b.z,
-          a.x * b.y - a.y * b.x};
-}
-
-Vec3f Normalize(const Vec3f &v) {
-  const float lenSq = v.x * v.x + v.y * v.y + v.z * v.z;
-  if (lenSq <= 0.0f) return {0.0f, 0.0f, 0.0f};
-  const float invLen = 1.0f / std::sqrt(lenSq);
-  return {v.x * invLen, v.y * invLen, v.z * invLen};
-}
-
-bool WriteMeshAsBinaryStl(const manifold::MeshGL &mesh,
-                          const std::filesystem::path &path,
-                          std::string &error) {
-  const uint32_t triCount = static_cast<uint32_t>(mesh.NumTri());
-  if (triCount == 0) {
-    error = "Export failed: mesh is empty";
-    return false;
-  }
-
-  std::ofstream out(path, std::ios::binary);
-  if (!out) {
-    error = "Export failed: cannot open " + path.string();
-    return false;
-  }
-
-  std::array<char, 80> header{};
-  constexpr const char kHeader[] = "dingcad export";
-  std::memcpy(header.data(), kHeader, std::min(header.size(), std::strlen(kHeader)));
-  out.write(header.data(), header.size());
-  out.write(reinterpret_cast<const char *>(&triCount), sizeof(uint32_t));
-
-  for (uint32_t tri = 0; tri < triCount; ++tri) {
-    const uint32_t i0 = mesh.triVerts[tri * 3 + 0];
-    const uint32_t i1 = mesh.triVerts[tri * 3 + 1];
-    const uint32_t i2 = mesh.triVerts[tri * 3 + 2];
-
-    const Vec3f v0 = FetchVertex(mesh, i0);
-    const Vec3f v1 = FetchVertex(mesh, i1);
-    const Vec3f v2 = FetchVertex(mesh, i2);
-
-    const Vec3f normal = Normalize(Cross(Subtract(v1, v0), Subtract(v2, v0)));
-
-    out.write(reinterpret_cast<const char *>(&normal), sizeof(Vec3f));
-    out.write(reinterpret_cast<const char *>(&v0), sizeof(Vec3f));
-    out.write(reinterpret_cast<const char *>(&v1), sizeof(Vec3f));
-    out.write(reinterpret_cast<const char *>(&v2), sizeof(Vec3f));
-    const uint16_t attr = 0;
-    out.write(reinterpret_cast<const char *>(&attr), sizeof(uint16_t));
-  }
-
-  if (!out) {
-    error = "Export failed: write error";
-    return false;
-  }
-
-  return true;
-}
-
 void DestroyModel(Model &model) {
   if (model.meshes != nullptr || model.materials != nullptr) {
     UnloadModel(model);
@@ -314,7 +274,7 @@ void DestroyModel(Model &model) {
   model = Model{};
 }
 
-Model CreateRaylibModelFrom(const manifold::MeshGL &meshGL) {
+Model CreateRaylibModelFrom(const manifold::MeshGL &meshGL, bool vertexColors=false, bool bakeLighting=true) {
   Model model = {0};
   const int vertexCount = meshGL.NumVert();
   const int triangleCount = meshGL.NumTri();
@@ -362,7 +322,7 @@ Model CreateRaylibModelFrom(const manifold::MeshGL &meshGL) {
 
   std::vector<Vector3> normals(vertexCount);
   std::vector<Color> colors(vertexCount);
-  const Vector3 lightDir = Vector3Normalize({0.45f, 0.85f, 0.35f});
+  const Vector3 lightDir = Vector3Normalize({0.3f, 0.85f, -0.4f});
   for (int v = 0; v < vertexCount; ++v) {
     const Vector3 n = accum[v];
     const float length = std::sqrt(n.x * n.x + n.y * n.y + n.z * n.z);
@@ -375,18 +335,11 @@ Model CreateRaylibModelFrom(const manifold::MeshGL &meshGL) {
 
     float intensity = Vector3DotProduct(normal, lightDir);
     intensity = Clamp(intensity, 0.0f, 1.0f);
-    constexpr int toonSteps = 3;
-    int level = static_cast<int>(std::floor(intensity * toonSteps));
-    if (level >= toonSteps) level = toonSteps - 1;
-    const float toon = (toonSteps > 1)
-                           ? static_cast<float>(level) /
-                                 static_cast<float>(toonSteps - 1)
-                           : intensity;
-    const float ambient = 0.3f;
-    const float diffuse = 0.7f;
-    float finalIntensity = Clamp(ambient + diffuse * toon, 0.0f, 1.0f);
-
-    const Color base = kBaseColor;
+    const float finalIntensity = bakeLighting ? 0.55f + 0.45f * intensity : 1.0f;
+    const Color base = vertexColors ? Color{
+      static_cast<unsigned char>(meshGL.vertProperties[v*stride+3]),
+      static_cast<unsigned char>(meshGL.vertProperties[v*stride+4]),
+      static_cast<unsigned char>(meshGL.vertProperties[v*stride+5]),255} : kBaseColor;
     Color color = {0};
     color.r = static_cast<unsigned char>(
         Clamp(base.r * finalIntensity, 0.0f, 255.0f));
@@ -548,11 +501,23 @@ void DrawXZGrid(int halfLines, float spacing, Color color) {
   }
 }
 
+BoundingBox SceneRenderBounds(const Model &model) {
+  // Include the grid and the full axis geometry even for an empty scene.
+  constexpr float extent = kGridHalfLines * kGridSpacing;
+  BoundingBox bounds{{-extent, -0.1f, -extent}, {extent, kAxesLength, extent}};
+  if (model.meshCount > 0) {
+    const BoundingBox modelBounds = GetModelBoundingBox(model);
+    bounds.min = Vector3Min(bounds.min, modelBounds.min);
+    bounds.max = Vector3Max(bounds.max, modelBounds.max);
+  }
+  return bounds;
+}
+
 std::optional<std::filesystem::path> FindDefaultScene() {
   auto cwdCandidate = std::filesystem::current_path() / "scene.js";
   if (std::filesystem::exists(cwdCandidate)) return cwdCandidate;
-  if (const char *home = std::getenv("HOME")) {
-    std::filesystem::path homeCandidate = std::filesystem::path(home) / "scene.js";
+  if (const auto home = GetHomeDirectory()) {
+    std::filesystem::path homeCandidate = *home / "scene.js";
     if (std::filesystem::exists(homeCandidate)) return homeCandidate;
   }
   return std::nullopt;
@@ -600,18 +565,27 @@ JSModuleDef *FilesystemModuleLoader(JSContext *ctx, const char *module_name, voi
   return module;
 }
 
+double ElapsedMilliseconds(std::chrono::steady_clock::time_point start) {
+  return std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count();
+}
+
 struct LoadResult {
   bool success = false;
+  double loadMilliseconds=0, evaluationMilliseconds=0;
   std::shared_ptr<manifold::Manifold> manifold;
   std::string message;
   std::vector<std::filesystem::path> dependencies;
+  std::vector<dingcad::Dimension> dimensions;
+  dingcad::Appearance appearance;
 };
 
 LoadResult LoadSceneFromFile(JSRuntime *runtime, const std::filesystem::path &path) {
   LoadResult result;
+  const auto loadStarted=std::chrono::steady_clock::now();
   const auto absolutePath = std::filesystem::absolute(path);
   if (!std::filesystem::exists(absolutePath)) {
-    result.message = "Scene file not found: " + absolutePath.string();
+    result.dependencies.push_back(absolutePath);
+    result.message = "Scene file not found: " + absolutePath.u8string();
     return result;
   }
   g_module_loader_data.baseDir = absolutePath.parent_path();
@@ -630,8 +604,11 @@ LoadResult LoadSceneFromFile(JSRuntime *runtime, const std::filesystem::path &pa
   auto captureException = [&]() {
     JSValue exc = JS_GetException(ctx);
     JSValue stack = JS_GetPropertyStr(ctx, exc, "stack");
-    const char *stackStr = JS_ToCString(ctx, JS_IsUndefined(stack) ? exc : stack);
-    result.message = stackStr ? stackStr : "JavaScript error";
+    const char *exceptionStr=JS_ToCString(ctx,exc);
+    const char *stackStr=JS_IsUndefined(stack)?nullptr:JS_ToCString(ctx,stack);
+    result.message=exceptionStr?exceptionStr:"JavaScript error";
+    if(stackStr)result.message+=std::string("\n")+stackStr;
+    JS_FreeCString(ctx,exceptionStr);
     JS_FreeCString(ctx, stackStr);
     JS_FreeValue(ctx, stack);
     JS_FreeValue(ctx, exc);
@@ -659,12 +636,21 @@ LoadResult LoadSceneFromFile(JSRuntime *runtime, const std::filesystem::path &pa
   }
 
   auto *module = static_cast<JSModuleDef *>(JS_VALUE_GET_PTR(moduleFunc));
+  const auto evaluationStarted=std::chrono::steady_clock::now();
   JSValue evalResult = JS_EvalFunction(ctx, moduleFunc);
+  result.evaluationMilliseconds=ElapsedMilliseconds(evaluationStarted);
   if (JS_IsException(evalResult)) {
     captureException();
     assignDependencies();
     JS_FreeContext(ctx);
     return result;
+  }
+  // QuickJS module evaluation returns a promise, including synchronous throws.
+  // Preserve its rejection before touching uninitialized namespace exports.
+  if(JS_PromiseState(ctx,evalResult)==JS_PROMISE_REJECTED){
+    JS_Throw(ctx,JS_PromiseResult(ctx,evalResult));
+    captureException();assignDependencies();
+    JS_FreeValue(ctx,evalResult);JS_FreeContext(ctx);return result;
   }
   JS_FreeValue(ctx, evalResult);
 
@@ -684,7 +670,14 @@ LoadResult LoadSceneFromFile(JSRuntime *runtime, const std::filesystem::path &pa
     JS_FreeContext(ctx);
     return result;
   }
+  auto annotations = dingcad::ReadDimensions(ctx, moduleNamespace);
+  result.appearance = dingcad::ReadAppearance(ctx, moduleNamespace);
   JS_FreeValue(ctx, moduleNamespace);
+
+  if(!result.appearance.diagnostic.empty()){
+    result.message=result.appearance.diagnostic;
+    JS_FreeValue(ctx,sceneVal);JS_FreeContext(ctx);assignDependencies();return result;
+  }
 
   if (JS_IsUndefined(sceneVal)) {
     JS_FreeValue(ctx, sceneVal);
@@ -706,35 +699,160 @@ LoadResult LoadSceneFromFile(JSRuntime *runtime, const std::filesystem::path &pa
   result.manifold = sceneHandle;
   result.success = true;
   result.message = "Loaded " + absolutePath.string();
+  result.dimensions = std::move(annotations.entries);
+  for (const auto &diagnostic : annotations.diagnostics) {
+    TraceLog(LOG_WARNING, "%s", diagnostic.c_str());
+  }
+  if (!annotations.diagnostics.empty()) {
+    result.message += " (" + std::to_string(annotations.diagnostics.size()) + " dimension warning(s))";
+  }
   assignDependencies();
   JS_FreeValue(ctx, sceneVal);
   JS_FreeContext(ctx);
+  result.loadMilliseconds=ElapsedMilliseconds(loadStarted);
   return result;
 }
 
-bool ReplaceScene(Model &model,
-                  const std::shared_ptr<manifold::Manifold> &scene) {
-  if (!scene) return false;
-  Model newModel = CreateRaylibModelFrom(scene->GetMeshGL());
-  DestroyModel(model);
-  model = newModel;
-  return true;
+std::vector<dingcad::DisplayPart> SceneParts(const std::shared_ptr<manifold::Manifold> &scene,
+                                           const dingcad::Appearance &appearance){
+  if(appearance.specified)return appearance.parts;
+  return {{scene,kBaseColor,"@scene","Scene",{},true}};
 }
+struct PartModels {
+  std::vector<Model> models;
+  std::vector<BoundingBox> bounds;
+  void Clear(){for(auto &m:models)DestroyModel(m);models.clear();bounds.clear();}
+  void Reload(const dingcad::PartTree &tree){
+    const auto started=std::chrono::steady_clock::now();
+    Clear();for(const auto &part:tree.parts){
+      models.push_back(CreateRaylibModelFrom(dingcad::DisplayMesh({part}),true,!kUsePostProcessing));
+      bounds.push_back(GetModelBoundingBox(models.back()));
+    }
+    TraceLog(LOG_INFO,"Display mesh conversion and GPU upload: %.1f ms",ElapsedMilliseconds(started));
+  }
+  std::optional<BoundingBox> Bounds(const dingcad::PartTree &tree,bool selected=false) const{
+    std::optional<BoundingBox> result;const auto node=tree.Selection();
+    if(selected&&!node)return result;
+    for(size_t i=0;i<models.size();++i){
+      if(!tree.Visible(i)||models[i].meshCount==0)continue;
+      if(selected&&std::find(tree.nodes[*node].parts.begin(),tree.nodes[*node].parts.end(),i)==tree.nodes[*node].parts.end())continue;
+      const auto &b=bounds[i];
+      if(result){result->min=Vector3Min(result->min,b.min);result->max=Vector3Max(result->max,b.max);}else result=b;
+    }
+    return result;
+  }
+  void Draw(const dingcad::PartTree &tree,const Material *material=nullptr) const{
+    for(size_t p=0;p<models.size();++p)if(tree.Visible(p)){
+      const auto &m=models[p];
+      if(material){for(int i=0;i<m.meshCount;++i)DrawMesh(m.meshes[i],*material,m.transform);}
+      else DrawModel(m,{0,0,0},1,WHITE);
+    }
+  }
+};
 
 }  // namespace
 
-int main() {
-  SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_WINDOW_RESIZABLE);
-  InitWindow(1280, 720, "dingcad");
-  SetTargetFPS(60);
+int main(int argc, char *argv[]) {
+  // Deterministic preview using the same mesh colors, creases and default
+  // material as the interactive Windows view. Never exports or changes solids.
+  if (argc==4 && std::string(argv[1])=="--render-scene") {
+    JSRuntime *runtime=JS_NewRuntime();EnsureManifoldClass(runtime);
+    JS_SetModuleLoaderFunc(runtime,nullptr,FilesystemModuleLoader,&g_module_loader_data);
+    auto load=LoadSceneFromFile(runtime,argv[2]);
+    if (!load.success) {std::cerr<<load.message<<'\n';JS_FreeRuntime(runtime);return 1;}
+    SetConfigFlags(FLAG_WINDOW_HIDDEN|FLAG_MSAA_4X_HINT);InitWindow(1600,1000,"dingcad preview");
+    auto mesh=dingcad::DisplayMesh(!load.appearance.specified?
+      std::vector<dingcad::DisplayPart>{{load.manifold,kBaseColor}}:load.appearance.parts);
+    Model model=CreateRaylibModelFrom(mesh,true,true);
+    const auto bounds=model.meshCount>0?GetModelBoundingBox(model):SceneRenderBounds(model);
+    const auto camera=FrameScene(bounds,1600,1000);
+    rlSetClipPlanes(0.01,dingcad::CameraFarClip(camera.position,bounds,1000));
+    bool saved=false;
+    for (int frame=0;frame<3;++frame){
+      BeginDrawing();ClearBackground({242,242,236,255});BeginMode3D(camera);
+      DrawModel(model,{0,0,0},1,WHITE);EndMode3D();
+      rlDrawRenderBatchActive();
+      if(frame==2){Image preview=LoadImageFromScreen();saved=ExportImage(preview,argv[3]);UnloadImage(preview);}
+      EndDrawing();
+    }
+    DestroyModel(model);CloseWindow();load.appearance.parts.clear();load.manifold.reset();JS_FreeRuntime(runtime);
+    return saved?0:1;
+  }
+  // Separate eager model evaluation from deferred tessellation. This headless
+  // diagnostic never writes geometry and uses the same parts as the viewer.
+  if(argc==3&&std::string(argv[1])=="--profile-scene"){
+    const auto started=std::chrono::steady_clock::now();
+    JSRuntime *runtime=JS_NewRuntime();EnsureManifoldClass(runtime);
+    JS_SetModuleLoaderFunc(runtime,nullptr,FilesystemModuleLoader,&g_module_loader_data);
+    auto load=LoadSceneFromFile(runtime,argv[2]);
+    if(!load.success){std::cerr<<load.message<<'\n';JS_FreeRuntime(runtime);return 1;}
+    const auto meshStarted=std::chrono::steady_clock::now();
+    size_t triangles=0;
+    const auto parts=SceneParts(load.manifold,load.appearance);
+    for(const auto &part:parts)triangles+=dingcad::DisplayMesh({part}).NumTri();
+    const double meshMilliseconds=ElapsedMilliseconds(meshStarted);
+    std::cout<<"Scene load (ms): "<<load.loadMilliseconds<<'\n'
+             <<"  JavaScript/model evaluation (ms): "<<load.evaluationMilliseconds<<'\n'
+             <<"Display mesh conversion (ms): "<<meshMilliseconds<<'\n'
+             <<"Total before GPU (ms): "<<ElapsedMilliseconds(started)<<'\n'
+             <<"Parts: "<<parts.size()<<", triangles: "<<triangles<<'\n';
+    JS_FreeRuntime(runtime);return 0;
+  }
+  // Validate scene code and annotations without opening a window, useful for
+  // agents and automated checks before replacing the live scene.
+  if (argc == 3 && std::string(argv[1]) == "--check-scene") {
+    JSRuntime *runtime = JS_NewRuntime();
+    EnsureManifoldClass(runtime);
+    JS_SetModuleLoaderFunc(runtime, nullptr, FilesystemModuleLoader, &g_module_loader_data);
+    auto load = LoadSceneFromFile(runtime, argv[2]);
+    std::cout << load.message << '\n';
+    if (load.success) {
+      const auto bounds = load.manifold->BoundingBox();
+      std::cout << "Bounds (mm): " << bounds.Size().x << " x " << bounds.Size().y << " x " << bounds.Size().z << '\n';
+      for (const auto &dimension : load.dimensions) std::cout << dingcad::FormatDimension(dimension) << '\n';
+      std::cout << "Colored display parts: " << load.appearance.parts.size() << '\n';
+    }
+    load.manifold.reset();
+    JS_FreeRuntime(runtime);
+    return load.success ? 0 : 1;
+  }
+  // Keep event polling nonblocking while minimized so live reload still runs.
+  const bool uiPreview=argc>=4 && std::string(argv[1])=="--ui-preview";
+  int previewFrames=0;
+  SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_WINDOW_RESIZABLE | FLAG_WINDOW_ALWAYS_RUN | (uiPreview?FLAG_WINDOW_HIDDEN:0));
+  dingcad::SetApplicationIdentity();
+  InitWindow(1280, 720, "SynthCAD");
+  dingcad::SetApplicationIcons();
+  const std::string previewMode=uiPreview&&argc>4?argv[4]:"";
+  auto hasPreview=[&](const char *m){return previewMode.find(m)!=std::string::npos;};
+  const float forcedScale=hasPreview("scale200")?2.f:hasPreview("scale150")?1.5f:0.f;
+  const int previewFrameLimit=hasPreview("watch")?120:3;
+  float uiScale=forcedScale?forcedScale:std::max(1.f,GetWindowScaleDPI().x);
+  if(uiPreview)SetWindowSize(int((hasPreview("small")?720:1280)*uiScale),int((hasPreview("small")?480:720)*uiScale));
+  SetWindowMinSize(int(640*uiScale),int(400*uiScale));
+  if(!uiPreview)SetWindowSize(int(1280*uiScale),int(720*uiScale));
+  // Pace frames ourselves: this raylib build's WaitTime() spins a CPU core.
+  SetTargetFPS(0);
+  SetExitKey(KEY_NULL);
 
   Font brandingFont = GetFontDefault();
   bool brandingFontCustom = false;
-  const std::filesystem::path consolasPath("/System/Library/Fonts/Supplemental/Consolas.ttf");
-  if (std::filesystem::exists(consolasPath)) {
-    brandingFont = LoadFontEx(consolasPath.string().c_str(), static_cast<int>(kBrandFontSize), nullptr, 0);
-    brandingFontCustom = true;
-  }
+#if defined(_WIN32)
+  const std::filesystem::path uiFontPath("C:/Windows/Fonts/segoeui.ttf");
+#else
+  const std::filesystem::path uiFontPath("/System/Library/Fonts/Supplemental/Arial.ttf");
+#endif
+  auto loadUiFont=[&](){
+    if(brandingFontCustom)UnloadFont(brandingFont);
+    brandingFont=GetFontDefault();brandingFontCustom=false;
+    if(std::filesystem::exists(uiFontPath)){
+      std::vector<int> glyphs;for(int c=32;c<384;++c)glyphs.push_back(c);
+      glyphs.push_back(0x2014);glyphs.push_back(0x2026);
+      brandingFont=LoadFontEx(uiFontPath.string().c_str(),int(32*uiScale),glyphs.data(),int(glyphs.size()));
+      SetTextureFilter(brandingFont.texture,TEXTURE_FILTER_BILINEAR);brandingFontCustom=true;
+    }
+  };
+  loadUiFont();
 
   Camera3D camera = {0};
   camera.position = {4.0f, 4.0f, 4.0f};
@@ -747,20 +865,26 @@ int main() {
   float orbitYaw = atan2f(camera.position.x - camera.target.x,
                           camera.position.z - camera.target.z);
   float orbitPitch = asinf((camera.position.y - camera.target.y) / orbitDistance);
-  const Vector3 initialTarget = camera.target;
-  const float initialDistance = orbitDistance;
-  const float initialYaw = orbitYaw;
-  const float initialPitch = orbitPitch;
 
   JSRuntime *runtime = JS_NewRuntime();
   EnsureManifoldClass(runtime);
   JS_SetModuleLoaderFunc(runtime, nullptr, FilesystemModuleLoader, &g_module_loader_data);
 
   std::shared_ptr<manifold::Manifold> scene = nullptr;
+  std::vector<dingcad::Dimension> dimensions;
+  dingcad::Appearance appearance;
+  dingcad::DimensionControls dimensionControls;
   std::string statusMessage;
+  dingcad::WorkspaceUi workspace;
+  bool exportValid=false;
   std::filesystem::path scriptPath;
   std::unordered_map<std::filesystem::path, WatchedFile> watchedFiles;
-  auto defaultScript = FindDefaultScene();
+  std::optional<std::filesystem::path> defaultScript;
+  if (argc > 1) {
+    defaultScript = std::filesystem::path(argv[uiPreview?2:1]);
+  } else {
+    defaultScript = FindDefaultScene();
+  }
   auto reportStatus = [&](const std::string &message) {
     statusMessage = message;
     TraceLog(LOG_INFO, "%s", statusMessage.c_str());
@@ -784,8 +908,13 @@ int main() {
     auto load = LoadSceneFromFile(runtime, scriptPath);
     if (load.success) {
       scene = load.manifold;
+      exportValid=true;
+      dimensions = std::move(load.dimensions);
+      appearance = std::move(load.appearance);
       reportStatus(load.message);
+      TraceLog(LOG_INFO,"Scene load: %.1f ms (model evaluation %.1f ms)",load.loadMilliseconds,load.evaluationMilliseconds);
     } else {
+      workspace.Failed(load.message);
       reportStatus(load.message);
     }
     if (!load.dependencies.empty()) {
@@ -796,13 +925,56 @@ int main() {
     manifold::Manifold cube = manifold::Manifold::Cube({2.0, 2.0, 2.0}, true);
     manifold::Manifold sphere = manifold::Manifold::Sphere(1.2, 0);
     manifold::Manifold combo = cube + sphere.Translate({0.0, 0.8, 0.0});
-    scene = std::make_shared<manifold::Manifold>(combo);
+    scene = std::make_shared<manifold::Manifold>(defaultScript?manifold::Manifold{}:combo);
+    if(defaultScript)appearance.specified=true;
+    if (!defaultScript) exportValid=true;
     if (statusMessage.empty()) {
       reportStatus("No scene.js found. Using built-in sample.");
     }
   }
 
-  Model model = CreateRaylibModelFrom(scene->GetMeshGL());
+  dingcad::PartTree tree;
+  tree.Reload(SceneParts(scene,appearance));
+  appearance.parts.clear();
+  PartModels partModels;partModels.Reload(tree);
+  dingcad::PartsPanel panel;
+  dingcad::ExportDialog exportDialog;
+  panel.scenePath=scriptPath.u8string();
+  if(!scriptPath.empty())panel.sceneName=scriptPath.filename().u8string();
+  SetWindowTitle((std::string("SynthCAD \xE2\x80\x94 ")+panel.sceneName).c_str());
+  std::unordered_map<std::string,dingcad::TreeSession> sessions;
+  std::string liveSceneKey=scriptPath.string();
+  auto viewport=panel.Viewport(GetScreenWidth(),GetScreenHeight());
+  BoundingBox renderBounds{{-20,-0.1f,-20},{20,2,20}};
+  auto updateBounds=[&](){
+    renderBounds={{-20,-0.1f,-20},{20,2,20}};
+    if(auto b=partModels.Bounds(tree)){renderBounds.min=Vector3Min(renderBounds.min,b->min);renderBounds.max=Vector3Max(renderBounds.max,b->max);}
+  };
+  auto frameParts=[&](bool selected){
+    if(auto b=partModels.Bounds(tree,selected)){
+      camera=FrameScene(*b,static_cast<int>(viewport.width),static_cast<int>(viewport.height));
+      orbitDistance=Vector3Distance(camera.position,camera.target);
+      orbitYaw=atan2f(camera.position.x-camera.target.x,camera.position.z-camera.target.z);
+      orbitPitch=asinf((camera.position.y-camera.target.y)/orbitDistance);
+    }
+  };
+  updateBounds();frameParts(false);
+  const auto defaultExportPath=dingcad::SuggestedExportPath(GetHomeDirectory().value_or(std::filesystem::current_path()),scriptPath).u8string();
+  if(uiPreview&&argc>4){
+    const std::string mode=argv[4];
+    if(mode=="closed")panel.open=false;
+
+    if(mode=="selected"||mode=="isolated"){
+      for(size_t n=0;n<tree.nodes.size();++n)if(tree.nodes[n].name=="Oggetto progettato")tree.Select(n);
+      if(mode=="isolated")tree.Isolate();
+    }
+    if(mode=="dimensions")dimensionControls.mode=dingcad::DimensionMode::All;
+    if(hasPreview("export")){exportDialog.Open(defaultExportPath);if(hasPreview("edit")){exportDialog.pathFocus=true;exportDialog.editor.Focus(exportDialog.path,true);}}
+    if(mode=="hidden")for(auto &[_,f]:tree.state.flags)f.visible=false;
+    if(hasPreview("empty")){tree.Reload({});partModels.Reload(tree);}
+    if(hasPreview("error")){workspace.Failed("Model evaluation failed\nError: displayParts[2]: duplicate id 'saddle-left'\nCheck the component IDs in assembly.js.\nLa geometria precedente resta visibile.\n\n"+scriptPath.u8string());workspace.details=true;exportValid=false;}
+    if(hasPreview("toast"))workspace.Saved("assembly.stl",GetTime());
+  }
 
   Shader outlineShader = LoadShaderFromMemory(kOutlineVS, kOutlineFS);
   Shader toonShader = LoadShaderFromMemory(kToonVS, kToonFS);
@@ -811,11 +983,12 @@ int main() {
 
   if (outlineShader.id == 0 || toonShader.id == 0 || normalDepthShader.id == 0 || edgeShader.id == 0) {
     TraceLog(LOG_ERROR, "Failed to load one or more shaders.");
-    DestroyModel(model);
+    partModels.Clear();
     if (brandingFontCustom) {
       UnloadFont(brandingFont);
     }
     JS_FreeRuntime(runtime);
+    dingcad::UnloadApplicationIcons();
     CloseWindow();
     return 1;
   }
@@ -898,8 +1071,8 @@ int main() {
   SetShaderValue(edgeShader, locInkColor, inkColor, SHADER_UNIFORM_VEC4);
 
   auto makeRenderTargets = [&]() {
-    const int width = std::max(GetScreenWidth(), 1);
-    const int height = std::max(GetScreenHeight(), 1);
+    const int width = std::max(static_cast<int>(viewport.width), 1);
+    const int height = std::max(static_cast<int>(viewport.height), 1);
     RenderTexture2D color = LoadRenderTexture(width, height);
     RenderTexture2D normDepth = LoadRenderTexture(width, height);
     return std::make_pair(color, normDepth);
@@ -912,29 +1085,60 @@ int main() {
       1.0f / static_cast<float>(rtNormalDepth.texture.height)};
   SetShaderValue(edgeShader, locTexel, initialTexel, SHADER_UNIFORM_VEC2);
 
-  int prevScreenWidth = GetScreenWidth();
-  int prevScreenHeight = GetScreenHeight();
-  const float zNear = 0.01f;
-  const float zFar = 1000.0f;
+  int prevScreenWidth = static_cast<int>(viewport.width);
+  int prevScreenHeight = static_cast<int>(viewport.height);
+  const float zNear = static_cast<float>(rlGetCullDistanceNear());
+  const double defaultFar = rlGetCullDistanceFar();
+  auto nextSceneCheck = FrameClock::now();
 
   while (!WindowShouldClose()) {
+    const auto frameStarted = FrameClock::now();
+    const bool minimized = IsWindowMinimized();
+    const int targetFps = minimized ? kMinimizedFps : (IsWindowFocused() ? kFocusedFps : kBackgroundFps);
+    const auto frameBudget = std::chrono::duration_cast<FrameClock::duration>(
+        std::chrono::duration<double>(1.0 / targetFps));
+    auto finishFrame = [&]() {
+#if defined(_WIN32)
+      // Custom frame control leaves event pumping to the application.
+      PollInputEvents();
+#else
+      // Visible frames already poll in EndDrawing(); minimized frames skip it.
+      if (minimized) PollInputEvents();
+#endif
+      // Includes rendering/reload time and never spins or catches up missed frames.
+      std::this_thread::sleep_until(frameStarted + frameBudget);
+    };
     const Vector2 mouseDelta = GetMouseDelta();
+    bool reloadRequested = false;
+    const float currentScale=forcedScale?forcedScale:std::max(1.f,GetWindowScaleDPI().x);
+    if(currentScale!=uiScale){uiScale=currentScale;loadUiFont();SetWindowMinSize(int(640*uiScale),int(400*uiScale));}
+    const int uiWidth=int(GetScreenWidth()/uiScale),uiHeight=int(GetScreenHeight()/uiScale);
+    dingcad::SetUiDrawScale(uiScale);
+    const auto input=dingcad::LogicalInput(dingcad::ReadPanelInput(),uiScale);
 
     auto reloadScene = [&]() {
       auto load = LoadSceneFromFile(runtime, scriptPath);
       if (load.success) {
+        sessions[liveSceneKey]=tree.state;
+        const auto key=scriptPath.string();
+        tree.state=sessions.count(key)?sessions.at(key):dingcad::TreeSession{};
         scene = load.manifold;
-        ReplaceScene(model, scene);
+        tree.Reload(SceneParts(scene,load.appearance));
+        partModels.Reload(tree);updateBounds();liveSceneKey=key;
+        exportValid=true;exportDialog.overwrite=false;workspace.Loaded();
+        dimensions = std::move(load.dimensions);
         reportStatus(load.message);
       } else {
-        reportStatus(load.message);
+        exportValid=false;exportDialog.overwrite=false;workspace.Failed(load.message);
+        reportStatus(load.message+" | export disabled until corrected");
       }
       if (!load.dependencies.empty()) {
         setWatchedFiles(load.dependencies);
       }
     };
 
-    if (!scriptPath.empty()) {
+    if (!scriptPath.empty() && frameStarted >= nextSceneCheck) {
+      nextSceneCheck = frameStarted + kSceneCheckInterval;
       bool changed = false;
       for (const auto &entry : watchedFiles) {
         std::error_code ec;
@@ -951,115 +1155,77 @@ int main() {
         }
       }
       if (changed) {
-        reloadScene();
+        reloadRequested = true;
       }
     }
 
-    if (IsKeyPressed(KEY_R) && !scriptPath.empty()) {
-      reloadScene();
+    const bool modalWasOpen=exportDialog.open;
+    const bool keyboardWasCaptured=modalWasOpen||panel.searchFocus;
+    dingcad::PanelActions actions;
+    dingcad::PanelActions workspaceActions;
+    if(!modalWasOpen){
+      workspaceActions=workspace.Update(input,uiWidth,uiHeight,GetTime());
+      if(!workspace.CapturesMouse(input,uiWidth,uiHeight,GetTime())||input.find)
+        actions=panel.Update(tree,input,uiWidth,uiHeight);
     }
-
-    static bool prevPDown = false;
-    bool exportRequested = false;
-
-    for (int key = GetKeyPressed(); key != 0; key = GetKeyPressed()) {
-      TraceLog(LOG_INFO, "Key pressed: %d", key);
-      std::cout << "Key pressed: " << key << std::endl;
-      if (key == KEY_P) {
-        exportRequested = true;
-      }
-    }
-
-    for (int ch = GetCharPressed(); ch != 0; ch = GetCharPressed()) {
-      TraceLog(LOG_INFO, "Char pressed: %d", ch);
-      std::cout << "Char pressed: " << ch << std::endl;
-      if (ch == 'p' || ch == 'P') {
-        exportRequested = true;
-      }
-    }
-
-    const bool pDown = IsKeyDown(KEY_P);
-    if (pDown && !prevPDown) {
-      TraceLog(LOG_INFO, "P key down edge detected");
-      std::cout << "P key down edge detected" << std::endl;
-      exportRequested = true;
-    }
-    prevPDown = pDown;
-
-    if (!exportRequested && IsKeyPressed(KEY_P)) {
-      exportRequested = true;
-    }
-
-    if (exportRequested) {
-      TraceLog(LOG_INFO, "Export trigger detected");
-      std::cout << "Export trigger detected" << std::endl;
-      if (scene) {
-        std::filesystem::path downloads;
-        if (const char *home = std::getenv("HOME")) {
-          downloads = std::filesystem::path(home) / "Downloads";
-        } else {
-          downloads = std::filesystem::current_path();
-        }
-
-        std::error_code dirErr;
-        std::filesystem::create_directories(downloads, dirErr);
-        if (dirErr && !std::filesystem::exists(downloads)) {
-          reportStatus("Export failed: cannot access " + downloads.string());
-        } else {
-          std::filesystem::path savePath = downloads / "ding.stl";
-          std::string error;
-          const bool ok = WriteMeshAsBinaryStl(scene->GetMeshGL(), savePath, error);
-          TraceLog(LOG_INFO, "Export path: %s", savePath.string().c_str());
-          if (ok) {
-            reportStatus("Saved " + savePath.string());
-          } else {
-            reportStatus(error);
+    viewport=panel.Viewport(GetScreenWidth(),GetScreenHeight());
+    const bool captureKeyboard=keyboardWasCaptured||panel.searchFocus||exportDialog.open||
+      (panel.CapturesMouse(tree,input,uiWidth,uiHeight)||workspace.CapturesMouse(input,uiWidth,uiHeight,GetTime()));
+    const bool captureMouse=modalWasOpen||exportDialog.open||(panel.CapturesMouse(tree,input,uiWidth,uiHeight)||workspace.CapturesMouse(input,uiWidth,uiHeight,GetTime()));
+    if(workspaceActions.reload||(!captureKeyboard&&IsKeyPressed(KEY_R)))reloadRequested=true;
+    if(reloadRequested&&!scriptPath.empty())reloadScene();
+    if(actions.openExport||(!captureKeyboard&&IsKeyPressed(KEY_P)))exportDialog.Open(defaultExportPath);
+    if(modalWasOpen){
+      const auto dialogAction=exportDialog.Update(input,uiWidth,uiHeight,tree.ExportIndices(exportDialog.visibleOnly).size(),exportValid);
+      if(dialogAction.save){
+        try {
+          const auto savePath=std::filesystem::u8path(exportDialog.path);
+          const auto result=dingcad::ExportParts(tree,exportDialog.visibleOnly,exportValid,savePath,
+                                                exportDialog.overwrite,exportDialog.error);
+          if(result==dingcad::ExportResult::ConfirmOverwrite)exportDialog.overwrite=true;
+          else if(result==dingcad::ExportResult::Saved){
+            reportStatus("Saved "+savePath.u8string());workspace.Saved(savePath.filename().u8string(),GetTime());exportDialog.open=false;
           }
-        }
-      } else {
-        reportStatus("No scene loaded to export");
+        }catch(const std::exception &e){exportDialog.error=e.what();}
+
       }
     }
+    const Vector2 localMouse=input.mouse;
+    if(workspaceActions.dimensions||(!captureKeyboard&&IsKeyPressed(KEY_M)))
+      dimensionControls.mode=dingcad::NextDimensionMode(dimensionControls.mode);
+    if(workspaceActions.fitAll)frameParts(false);
+    if(actions.frame)frameParts(true);
+    updateBounds();
 
-    if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+    if (!captureMouse && !captureKeyboard && IsMouseButtonDown(MOUSE_BUTTON_LEFT) && !dimensionControls.buttonGesture) {
       orbitYaw -= mouseDelta.x * 0.01f;
       orbitPitch += mouseDelta.y * 0.01f;
       const float limit = DEG2RAD * 89.0f;
       orbitPitch = Clamp(orbitPitch, -limit, limit);
     }
 
-    const float wheel = GetMouseWheelMove();
+    const float wheel = captureMouse||captureKeyboard?0:input.wheel;
     if (wheel != 0.0f) {
-      orbitDistance *= (1.0f - wheel * 0.1f);
-      orbitDistance = Clamp(orbitDistance, 1.0f, 50.0f);
+      orbitDistance = dingcad::ZoomCameraDistance(orbitDistance, wheel);
     }
 
     const Vector3 forward = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
     const Vector3 worldUp = {0.0f, 1.0f, 0.0f};
     const Vector3 right = Vector3Normalize(Vector3CrossProduct(worldUp, forward));
-    const Vector3 camUp = Vector3CrossProduct(forward, right);
-
-    if (IsMouseButtonDown(MOUSE_BUTTON_RIGHT)) {
+    if (!captureMouse && !captureKeyboard && IsMouseButtonDown(MOUSE_BUTTON_RIGHT)) {
       camera.target = Vector3Add(camera.target,
-                                 Vector3Scale(right, mouseDelta.x * 0.01f * orbitDistance));
-      camera.target = Vector3Add(camera.target,
-                                 Vector3Scale(camUp, -mouseDelta.y * 0.01f * orbitDistance));
+                                dingcad::PanCameraOffset(camera, mouseDelta, GetScreenHeight()));
     }
 
-    if (IsKeyPressed(KEY_SPACE)) {
-      camera.target = initialTarget;
-      orbitDistance = initialDistance;
-      orbitYaw = initialYaw;
-      orbitPitch = initialPitch;
-    }
+    if (!captureKeyboard && IsKeyPressed(KEY_SPACE)) frameParts(false);
 
     const float moveSpeed = 0.05f * orbitDistance;
-    if (IsKeyDown(KEY_W)) camera.target = Vector3Add(camera.target, Vector3Scale(forward, moveSpeed));
-    if (IsKeyDown(KEY_S)) camera.target = Vector3Add(camera.target, Vector3Scale(forward, -moveSpeed));
-    if (IsKeyDown(KEY_A)) camera.target = Vector3Add(camera.target, Vector3Scale(right, -moveSpeed));
-    if (IsKeyDown(KEY_D)) camera.target = Vector3Add(camera.target, Vector3Scale(right, moveSpeed));
-    if (IsKeyDown(KEY_Q)) camera.target = Vector3Add(camera.target, Vector3Scale(worldUp, -moveSpeed));
-    if (IsKeyDown(KEY_E)) camera.target = Vector3Add(camera.target, Vector3Scale(worldUp, moveSpeed));
+    if (!captureKeyboard && IsKeyDown(KEY_W)) camera.target = Vector3Add(camera.target, Vector3Scale(forward, moveSpeed));
+    if (!captureKeyboard && IsKeyDown(KEY_S)) camera.target = Vector3Add(camera.target, Vector3Scale(forward, -moveSpeed));
+    if (!captureKeyboard && IsKeyDown(KEY_A)) camera.target = Vector3Add(camera.target, Vector3Scale(right, -moveSpeed));
+    if (!captureKeyboard && IsKeyDown(KEY_D)) camera.target = Vector3Add(camera.target, Vector3Scale(right, moveSpeed));
+    if (!captureKeyboard && IsKeyDown(KEY_Q)) camera.target = Vector3Add(camera.target, Vector3Scale(worldUp, -moveSpeed));
+    if (!captureKeyboard && IsKeyDown(KEY_E)) camera.target = Vector3Add(camera.target, Vector3Scale(worldUp, moveSpeed));
 
     const Vector3 offsets = {
         orbitDistance * cosf(orbitPitch) * sinf(orbitYaw),
@@ -1068,8 +1234,13 @@ int main() {
     camera.position = Vector3Add(camera.target, offsets);
     camera.up = worldUp;
 
-    const int screenWidth = std::max(GetScreenWidth(), 1);
-    const int screenHeight = std::max(GetScreenHeight(), 1);
+    if (minimized) {
+      finishFrame();
+      continue;
+    }
+
+    const int screenWidth = std::max(static_cast<int>(viewport.width), 1);
+    const int screenHeight = std::max(static_cast<int>(viewport.height), 1);
     if (screenWidth != prevScreenWidth || screenHeight != prevScreenHeight) {
       UnloadRenderTexture(rtColor);
       UnloadRenderTexture(rtNormalDepth);
@@ -1105,64 +1276,55 @@ int main() {
     }
     setOutlineUniforms(outlineThickness, outlineColor);
 
+    const float zFar = dingcad::CameraFarClip(camera.position, renderBounds, defaultFar);
+    rlSetClipPlanes(zNear, zFar);
     SetShaderValue(normalDepthShader, locNear, &zNear, SHADER_UNIFORM_FLOAT);
     SetShaderValue(normalDepthShader, locFar, &zFar, SHADER_UNIFORM_FLOAT);
 
     BeginTextureMode(rtColor);
-    ClearBackground(RAYWHITE);
-    BeginMode3D(camera);
-    DrawXZGrid(40, 0.5f, Fade(LIGHTGRAY, 0.4f));
-    DrawAxes(2.0f);
-
-    rlDisableBackfaceCulling();
-    for (int i = 0; i < model.meshCount; ++i) {
-      DrawMesh(model.meshes[i], outlineMat, model.transform);
+    ClearBackground({242,242,236,255});BeginMode3D(camera);
+    DrawXZGrid(kGridHalfLines,kGridSpacing,Fade(LIGHTGRAY,0.18f));DrawAxes(kAxesLength);
+    if(kUsePostProcessing){
+      rlDisableBackfaceCulling();partModels.Draw(tree,&outlineMat);rlEnableBackfaceCulling();
+      partModels.Draw(tree,&toonMat);
+    }else partModels.Draw(tree);
+    if(auto selected=partModels.Bounds(tree,true))DrawBoundingBox(*selected,{218,151,44,255});
+    EndMode3D();EndTextureMode();
+    if(kUsePostProcessing){
+      BeginTextureMode(rtNormalDepth);ClearBackground({127,127,255,0});BeginMode3D(camera);
+      partModels.Draw(tree,&normalDepthMat);EndMode3D();EndTextureMode();
     }
-    rlEnableBackfaceCulling();
-
-    for (int i = 0; i < model.meshCount; ++i) {
-      DrawMesh(model.meshes[i], toonMat, model.transform);
+    BeginDrawing();ClearBackground({242,242,236,255});
+    if(kUsePostProcessing)BeginShaderMode(edgeShader);
+    DrawTextureRec(rtColor.texture,{0,0,static_cast<float>(screenWidth),-static_cast<float>(screenHeight)},
+      {viewport.x,viewport.y},WHITE);
+    if(kUsePostProcessing)EndShaderMode();
+    // UI uses logical pixels; 3D projection and render targets stay full-window.
+    rlPushMatrix();rlScalef(uiScale,uiScale,1);
+    if(partModels.Bounds(tree))dingcad::DrawDimensions(dimensions,dimensionControls.mode,camera,brandingFont,localMouse,
+      captureMouse||input.leftDown||input.rightDown,uiWidth,uiHeight);
+    else {
+      const char *empty=tree.parts.empty()?"This scene has no parts":"All parts are hidden. Use Show all to restore them.";
+      const float textWidth=MeasureTextEx(brandingFont,empty,18,0).x;
+      DrawTextEx(brandingFont,empty,{std::max(12.f,(uiWidth-textWidth)/2),uiHeight-80.f},18,0,DARKGRAY);
     }
-    EndMode3D();
-    EndTextureMode();
-
-    BeginTextureMode(rtNormalDepth);
-    ClearBackground({127, 127, 255, 0});
-    BeginMode3D(camera);
-    for (int i = 0; i < model.meshCount; ++i) {
-      DrawMesh(model.meshes[i], normalDepthMat, model.transform);
+    panel.Draw(tree,brandingFont,uiWidth,uiHeight);
+    workspace.Draw(brandingFont,uiWidth,uiHeight,dimensionControls.mode,GetTime());
+    exportDialog.Draw(brandingFont,uiWidth,uiHeight,tree.ExportIndices(exportDialog.visibleOnly).size(),exportValid);
+    rlPopMatrix();
+    if(uiPreview&&previewFrames==previewFrameLimit-1){
+      TraceLog(LOG_INFO,"UI QA: %zu parts, export %s, error %s",tree.parts.size(),exportValid?"enabled":"disabled",workspace.loadError.empty()?"clear":"present");
+      rlDrawRenderBatchActive();Image shot=LoadImageFromScreen();ExportImage(shot,argv[3]);UnloadImage(shot);
     }
-    EndMode3D();
-    EndTextureMode();
-
-    BeginDrawing();
-    ClearBackground(RAYWHITE);
-
-    const float texel[2] = {
-        1.0f / static_cast<float>(rtNormalDepth.texture.width),
-        1.0f / static_cast<float>(rtNormalDepth.texture.height)};
-    SetShaderValue(edgeShader, locTexel, texel, SHADER_UNIFORM_VEC2);
-
-    BeginShaderMode(edgeShader);
-    const Rectangle srcRect = {0.0f, 0.0f, static_cast<float>(rtColor.texture.width),
-                               -static_cast<float>(rtColor.texture.height)};
-    DrawTextureRec(rtColor.texture, srcRect, {0.0f, 0.0f}, WHITE);
-    EndShaderMode();
-
-    const float margin = 20.0f;
-    const Vector2 textSize = MeasureTextEx(brandingFont, kBrandText, kBrandFontSize, 0.0f);
-    const Vector2 brandPos = {
-        static_cast<float>(GetScreenWidth()) - textSize.x - margin,
-        margin};
-    DrawTextEx(brandingFont, kBrandText, brandPos, kBrandFontSize, 0.0f, DARKGRAY);
-
-    if (!statusMessage.empty()) {
-      constexpr float statusFontSize = 18.0f;
-      const Vector2 statusPos = {margin, margin};
-      DrawTextEx(brandingFont, statusMessage.c_str(), statusPos, statusFontSize, 0.0f, DARKGRAY);
-    }
-
     EndDrawing();
+#if defined(_WIN32)
+    // vcpkg's raylib is built with SUPPORT_CUSTOM_FRAME_CONTROL. In that
+    // configuration EndDrawing() only flushes draw commands; presenting the
+    // frame is the application's job. finishFrame() pumps events in every state.
+    SwapScreenBuffer();
+#endif
+    finishFrame();
+    if(uiPreview&&++previewFrames>=previewFrameLimit)break;
   }
 
   UnloadRenderTexture(rtColor);
@@ -1171,11 +1333,12 @@ int main() {
   UnloadMaterial(normalDepthMat);
   UnloadMaterial(outlineMat);   // also releases the shader
   UnloadShader(edgeShader);
-  DestroyModel(model);
+  partModels.Clear();
   if (brandingFontCustom) {
     UnloadFont(brandingFont);
   }
   JS_FreeRuntime(runtime);
+  dingcad::UnloadApplicationIcons();
   CloseWindow();
 
   return 0;

@@ -1,1 +1,6 @@
 build/
+out/
+vcpkg_installed/
+
+# Personal designs and exports stay local, separate from public development.
+/local-scenes/
