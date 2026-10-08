@@ -1,0 +1,43 @@
+# License readiness for packaging
+
+Audit snapshot: 2026-10-08. This is a factual inventory and release checklist, not legal advice or a license grant. It does not certify a distributable package.
+
+## Application license is unresolved
+
+No application-level `LICENSE`, `COPYING`, or `NOTICE` was found in this checkout's root or tracked application files. The [upstream Dingcad repository](https://github.com/yacineMTB/dingcad) also displayed no root license in its file listing or README when checked. This observation does not establish that no separate agreement exists.
+
+The maintainer has acknowledged upstream permission, but its exact terms have not been supplied here. Record the actual grant, covered source/assets, copyright holders, redistribution rights, and conditions before binary distribution. Neither a public repository nor dependency licenses establish the application's license. This audit deliberately does not select a root license.
+
+## Direct dependencies checked
+
+Build relationships come from root `CMakeLists.txt`, `viewer/CMakeLists.txt`, and `vendor/manifold/{src/CMakeLists.txt,cmake/manifoldDeps.cmake}`. License names below follow the inspected text; SPDX identifiers are reported only when explicitly declared in inspected source.
+
+For installed Windows files, `P` below means the exact local directory `out/build/windows-x64-release/vcpkg_installed/x64-windows/share`. It is ignored build output, not a checked-in notice bundle.
+
+| Component | Inclusion and inspected license location | Observed terms / packaging action |
+| --- | --- | --- |
+| Manifold | Vendored submodule source; compiled and linked. `vendor/manifold/LICENSE`. Root gitlink: `f0747c3420e89c027de71950cb5f7ffefc9f1baf`. | Apache License, Version 2.0. Section 4 requires a license copy, prominent modification notices in modified files, retention of applicable source notices, and reproduction of applicable upstream NOTICE attributions if supplied. No NOTICE file was found in this local submodule. Recheck the exact release source. |
+| QuickJS-NG | Vendored source compiled into static `dingcad_quickjs`. `vendor/quickjs/LICENSE`. Root gitlink: `73be8a56f716a1e9563e747487221f2c2ce5eb95`. | MIT License; retain its copyright and permission notice in copies or substantial portions. Preserve the full inspected license, including all listed authors. |
+| raylib | External linked library; Windows package 6.0, Linux CI builds pinned 6.0 source. `P/raylib/copyright`; installed `include/raylib.h` explicitly names zlib/libpng. | Do not misrepresent origin; mark altered source versions; retain notice in source distributions. Product acknowledgment is appreciated, explicitly not required by this text. Embedded third-party code/assets need separate inspection below. |
+| Assimp | External linked dependency of Manifold mesh I/O (`MANIFOLD_EXPORT=ON`). Windows package 6.0.4. `P/assimp/copyright`. | Text requires source notice retention and binary reproduction of copyright, conditions, and disclaimer in accompanying documentation/materials; prohibits endorsement using authors' names without permission. The same file contains additional third-party notices and a separate exception for test models; retain the complete file, not only its opening license. |
+| oneTBB | External linked dependency with `MANIFOLD_PAR=ON`; optionally fetched/static in other configurations. Windows package 2023.1.0. `P/tbb/copyright`. | Apache License, Version 2.0; apply its section 4 requirements as above. No separate NOTICE was present in this installed package directory; the source distribution and actual packaged configuration still need checking. |
+| nlohmann JSON | External header-only code compiled into application/CLI. Windows package 3.12.0. `P/nlohmann-json/copyright`; installed `include/nlohmann/json.hpp`. | MIT License; preserve copyright and permission notice. The header explicitly declares `SPDX-License-Identifier: MIT`. |
+
+Windows dependency registry is pinned by `vcpkg-configuration.json` to `a1cae005c39be7b18ba319fced856b68d7276271`; requested packages are in `vcpkg.json`. These versions are an observed local installation, not proof of every future package's contents. Inspected vcpkg SPDX package metadata reports `NOASSERTION` for declared licenses; this audit does not replace those values with inferred SPDX identifiers. Linux CI pins raylib commit `dbc56a87da87d973a9c5baa4e7438a9d20121d28` in `scripts/ci-configure-linux.sh`; other Linux dependencies come from the distribution and need their own installed notices/version inventory.
+
+## Assets and remaining dependency scope
+
+- **Application icon is bundled.** `viewer/resources/synthcad.svg` is the editable source; `scripts/generate-icons.py` generates PNG/ICO files and `viewer/resources/icon_data.h`, embedded by `viewer/brand.cpp`. No separate artwork license/author grant was found in the SVG. Confirm its provenance and coverage under the eventual application grant. Pillow is a regeneration tool, not a runtime library added by this script.
+- **System fonts are runtime inputs.** `viewer/main.cpp` loads Windows Segoe UI, macOS Arial, or Linux DejaVu Sans from OS paths, with raylib's default font fallback. No TTF/OTF was found in the repository inventory. This does not authorize copying those system fonts into a package. Raylib's embedded default font artwork/provenance remains to be checked in the exact raylib source; its library-level license alone was inspected here.
+- **Repository models have separate terms.** `assemblies/library/models/corne/LICENSE.txt` links [CC Attribution-NonCommercial-ShareAlike 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/); `assemblies/library/models/seedcase/LICENSE.txt` links [CC Attribution 4.0](https://creativecommons.org/licenses/by/4.0/). Their linked terms require attribution/license links and change indications; Corne additionally restricts commercial use and requires the same license for adaptations. Identify creators and supplied attribution before including these assets. Their licenses do not license viewer code. Assimp's own test-model exception is another reason to exclude vendor test assets from an application package unless individually reviewed.
+- **Transitive dependencies are not cleared by this audit.** Installed Windows packages include GLFW, stb, miniaudio, dr_libs, cgltf, NanoSVG, QOI, zlib/minizip, kubazip, Poly2Tri, pugixml, RapidJSON, polyclipping, and utfcpp. Their local notices are at `P/<package>/copyright` (use actual directory names such as `glfw3`, `drlibs`, `jhasse-poly2tri`, and `utfcpp`). Presence in vcpkg does not prove inclusion in a particular executable. Raylib's header also lists embedded dependencies such as glad, sinfl/sdefl, par_shapes, tinyobj_loader_c, and audio loaders; this list is not exhaustive. Inspect the exact enabled source/features, copied DLLs and static code, then retain all applicable notices. Only the six direct component license texts above were reviewed for terms.
+- **Configuration changes alter the inventory.** Root configuration disables Manifold cross-sections, JS/Python bindings, and tests; their separate dependencies/assets are not automatically part of the viewer. Clipper2, optional profiling libraries, compiler runtimes, OS libraries, and graphics stack must be evaluated if included by the final packaging recipe. System-linked libraries and redistributed libraries are different package contents; neither should be inferred from the source list alone.
+
+## Before distributing binaries
+
+- [ ] Obtain and record the maintainer's exact application/upstream license terms, including inherited code and new contributions; resolve asset provenance. Do this before binary distribution.
+- [ ] Freeze the release revision, submodule revisions, build options, package versions, and artifact file list separately for each platform.
+- [ ] Inventory actual runtime DLL/shared-library dependencies and statically compiled third-party code, including raylib's embedded dependencies/default font and compiler runtime redistribution terms.
+- [ ] Assemble a release notice directory containing the complete applicable license/copyright/NOTICE files; include required binary attributions and mark modifications where required. Do not treat this summary as the notice bundle.
+- [ ] Exclude unreviewed model/test/personal assets and OS fonts; review any deliberately included samples against their own terms and attribution requirements.
+- [ ] Verify the final archive/installer contains the approved application license and complete third-party notices. Record unresolved items and withhold distribution until the maintainer resolves them.
