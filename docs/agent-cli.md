@@ -3,7 +3,8 @@
 `synthcad` connects short shell calls to a persistent local viewer. Open a project
 once, edit its JavaScript files using your normal editor or agent, and inspect
 the resulting geometry in the same viewer session. This increment provides
-semantic review, geometric selection references and reload acknowledgement.
+semantic review, geometric selection references, guided human selection and
+reload acknowledgement.
 It does not create or export models through the CLI.
 
 The existing `dingcad_viewer` executable, launch scripts, standalone scene
@@ -147,6 +148,10 @@ an assembly and multiple print views from shared definitions.
 | `snapshot` | Read parts, groups, authored annotations, bounds, selection, highlights, camera and load state. |
 | `selection` | Read the human's part/group or geometric selection, or `null` when absent. |
 | `reference TOKEN` | Resolve a copied selection reference using the current displayed geometry. |
+| `pick --id ID --kind part\|surface\|edge\|vertex --question TEXT` | Ask the human to select geometry and immediately return a request receipt. |
+| `pick-status ID` | Read the pending or retained terminal request outcome. |
+| `pick-cancel ID` | Cancel a request; repeated cancellation is idempotent. |
+| `events --after CURSOR [--wait MS]` | Read retained session events after a cursor, optionally waiting for an event. |
 | `state` | Read published scene and load state, including attempted/displayed revisions and diagnostics. |
 | `revision` | Capture a requested revision from the active session's known source files on disk. |
 | `wait --revision TOKEN` | Wait for that expected source snapshot to complete successfully, or return a specific failure. |
@@ -171,7 +176,7 @@ Global options work before or after the command:
 - `--`: treat remaining positional arguments literally, including paths or IDs
   starting with a dash. Quote paths containing spaces in the shell.
 
-`snapshot`, `selection`, `reference`, `state`, `highlight`, `frame`, `view` and `screenshot`
+`snapshot`, `selection`, `reference`, `state`, `highlight`, `frame`, `view`, `screenshot` and `pick`
 accept `--expect-revision TOKEN`. It requires the currently displayed revision
 to match and its consumed files to remain current on disk. A stale guard returns
 `stale_revision` before acting. Agent highlights are separate from human
@@ -213,6 +218,81 @@ tokens return `invalid_argument`; stale revision references return
 while a mismatched topology or feature returns `stale_revision`. Capture a
 fresh selection after the scene changes. Resolving a reference is a read-only
 review action and does not change the human's selection.
+
+## Ask the human to select geometry
+
+Use a caller-generated request ID when an agent needs a specific human choice:
+
+```text
+synthcad pick --id choose-mount-1 --kind surface --question "Which surface should receive the mount?" -s bracket --expect-revision DISPLAYED_REVISION --json
+synthcad pick-status choose-mount-1 -s bracket --json
+synthcad events --after 0 --wait 30000 -s bracket --json
+synthcad pick-cancel choose-mount-1 -s bracket --json
+```
+
+`pick` accepts only `part`, `surface`, `edge` or `vertex`. A surface can resolve
+to a planar face or curved patch. IDs contain 1–128 UTF-8 bytes and questions
+contain 1–4096 UTF-8 bytes; neither permits NUL. The question supplies human
+context and the pick result supplies geometry context. These commands do not
+edit geometry. The viewer displays the question and permits explicit human
+confirmation or cancellation; ordinary selection does not submit the answer.
+The existing selection is preserved when a question starts. Confirm remains
+disabled until the user makes a fresh selection of the allowed kind. The
+question scrolls independently of the camera; Escape cancels outside text
+entry and modal dialogs. Ending a request restores the previous pick mode.
+
+A successful start returns `data: {created, request, eventCursor}`. The request
+contains `id`, `kind`, `question`, its bound displayed `revision`, and `status`.
+Status is `pending`, `confirmed`, `cancelled` or `invalidated`. A confirmed
+request also contains `selection`, the geometry object described above
+(`snapshot.selection.geometry`), rather than the outer selection wrapper.
+Cancellation and invalidation may include `reason`. `pick-status` and
+`pick-cancel` return `data.request` and `data.eventCursor`, including terminal
+outcomes. Snapshot exposes `guidedPick` (the active request or null) and
+`eventCursor`.
+
+Repeating the same ID with the same kind and question replays the existing
+receipt, including a terminal result, with `created: false`; it creates no
+additional UI event. The request keeps its original bound revision. Reusing an
+ID with a different payload returns `invalid_argument`. A different request
+while one is active returns `busy`. Completed request records remain available
+for the session, up to 1024 requests; reaching that limit returns `busy` and
+requires a new session. Cancellation is idempotent. Changed source/view
+revisions and failed loads invalidate a pending request so that old geometry
+cannot become an answer. A reload of unchanged valid source does not invalidate
+the request, but clears its candidate and requires a fresh selection.
+An explicit stale `--expect-revision` guard still fails on a retried `pick`;
+omit the guard or use `pick-status` when recovering its original receipt.
+
+`events` requires `--after`, an opaque cursor string, or `0` to start at the
+beginning of retained history. It returns `data: {events: [...], cursor}`.
+Each event contains `cursor`, `type`, `requestId` and `revision`, with
+`selection` or `reason` when relevant. Types are `pick-started`,
+`pick-confirmed`, `pick-cancelled`, `pick-invalidated` and `viewer-closed`.
+Persist the returned cursor after processing a successful response, and pass
+it to the next call. Using a cursor captured before starting a pick allows
+that call to observe its start and subsequent outcome.
+
+The session retains at most 256 events. Cursors belong to one viewer session
+and reset when it ends. A cursor from another session or older than retained
+history returns `stale_cursor` (exit 13); inspect `pick-status` for your request
+and use `events --after 0` to recover retained history. This recovery response
+includes `truncated: true` when earlier events have been discarded. Do not parse cursors or
+assume that every prior event is still retained.
+
+`--wait MS` is an integer from 0 to 300000, default 0. Zero reads immediately;
+a positive value waits when no newer event exists. This wait is separate from
+global `--timeout`: for events the effective request deadline is
+`max(timeout, wait + 1000)` milliseconds, plus the normal transport delivery
+grace. A wait that expires returns `timeout` with `error.details.cursor`; it
+does not cancel a pick or advance the caller's cursor. Closing the viewer
+wakes a live wait with `cancelled` and final-event details. Calls after the
+session has closed follow the ordinary session-error behavior.
+
+`pick-status`, `pick-cancel` and `events` reject `--expect-revision`: an agent
+must still be able to recover an outcome after the scene reloads. An external
+agent must explicitly call status or read/wait for events and process the
+response. Viewer events do not automatically wake or message an agent.
 
 ## Session lifecycle and local access
 
@@ -289,6 +369,7 @@ with help returns the help text in a structured envelope.
 | 10 | `io_error` | Check filesystem access, screenshot destination and local transport. |
 | 11 | `busy` | Initial dependencies are unavailable, an existing process is unresponsive, or a GUI modal blocks review; retry when ready. |
 | 12 | `not_found` | A requested guide, part, group, view or transport-level project path is missing. |
+| 13 | `stale_cursor` | The cursor belongs to another session or precedes retained event history; recover via request status and retained history. |
 
 Unknown internal error categories use exit 1. No successful retained scene is
 returned as acknowledgement of a failed current edit.

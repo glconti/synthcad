@@ -48,6 +48,7 @@ struct ExportDialog {
 struct WorkspaceUi {
   bool help=false,gesture=false,details=false;float detailScroll=0;
   std::string loadError,toast;double toastUntil=0;
+  float toastBottom=128;
   void Loaded();void Failed(const std::string &message);void Saved(const std::string &name,double now);
   bool ToastVisible(double now) const;
   Rectangle Toolbar(int width) const;

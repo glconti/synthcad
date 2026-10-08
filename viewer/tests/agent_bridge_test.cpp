@@ -160,6 +160,43 @@ int main() {
         auto cancelledWait = std::async(std::launch::async, [&] { return waitingClose.Handle(Request("wait", {{"revision", closeToken}})); });
         waitingClose.Close();
         ErrorCode(cancelledWait.get(), "cancelled");
+        AgentBridge picks("pick-test", "event-epoch");
+        picks.Publish(Snapshot("ready", recovered, "r1"), recovered);
+        const json pickArgs={{"id","guided"},{"kind","surface"},{"question","Choose a face"}};
+        Check(picks.BeginPick(pickArgs,"r1")["created"]==true,"begin pick bridge wrapper");
+        auto eventData=picks.Handle(Request("events",{{"after","0"},{"waitMs",0}}))["data"];
+        for(const auto& invalidWait:std::vector<json>{-1,300001,json(uint64_t(4294967296)),json(UINT64_MAX),"20",1.5})
+          ErrorCode(picks.Handle(Request("events",{{"after","0"},{"waitMs",invalidWait}})),"invalid_argument");
+        for(const auto* guardedCommand:{"events","pick-status","pick-cancel"}) {
+          auto guardRequest=Request(guardedCommand,{{"after","0"},{"waitMs",0},{"id","guided"}});
+          guardRequest["expectRevision"]="r1";
+          ErrorCode(picks.Handle(guardRequest),"invalid_argument");
+        }
+        Check(eventData["events"].size()==1&&eventData["events"][0]["type"]=="pick-started","started event delivery");
+        auto eventCursor=eventData["cursor"].get<std::string>();
+        auto timeoutEvents=picks.Handle(Request("events",{{"after",eventCursor},{"waitMs",20}}));
+        ErrorCode(timeoutEvents,"timeout");
+        Check(timeoutEvents["error"]["details"]["cursor"]==eventCursor&&picks.ActivePick()["status"]=="pending","event timeout preserves pending pick");
+        Check(picks.Handle(Request("events",{{"after",eventCursor},{"waitMs",0}}))["data"]["events"].empty(),"zero wait succeeds empty");
+        picks.Publish(Snapshot("loading", recovered, "r1"), recovered);
+        Check(!picks.ActivePick().is_null(),"loading old view preserves pick");
+        picks.Publish(Snapshot("failed", recovered, "r1"), recovered);
+        Check(picks.ActivePick().is_null()&&picks.Handle(Request("pick-status",{{"id","guided"}}))["data"]["request"]["reason"]=="load_failed","source failure invalidation");
+        Check(picks.BeginPick(pickArgs,"r2")["created"]==false,"retry returns terminal outcome");
+        Check(picks.Handle(Request("pick",pickArgs))["data"]["request"]["status"]=="invalidated"&&picks.Drain().empty(),"retry bypasses queue after source failure");
+        picks.Publish(Snapshot("ready", recovered, "r1"), recovered);
+        auto secondArgs=pickArgs;secondArgs["id"]="second";picks.BeginPick(secondArgs,"r1");
+        picks.Publish(Snapshot("ready", recovered, "r2"), recovered);
+        Check(picks.Handle(Request("pick-status",{{"id","second"}}))["data"]["request"]["reason"]=="revision_changed","revision invalidation");
+        secondArgs["id"]="third";picks.BeginPick(secondArgs,"r2");
+        Check(picks.Handle(Request("pick-cancel",{{"id","third"}}))["data"]["request"]["status"]=="cancelled","cancel direct thread handler");
+        secondArgs["id"]="fourth";picks.BeginPick(secondArgs,"r2");
+        eventCursor=picks.Handle(Request("state"))["data"]["eventCursor"].get<std::string>();
+        auto eventWait=std::async(std::launch::async,[&]{return picks.Handle(Request("events",{{"after",eventCursor},{"waitMs",1000}},1500));});
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));picks.Close();
+        const auto closedEvents=eventWait.get();ErrorCode(closedEvents,"cancelled");
+        Check(closedEvents["error"]["details"]["events"].size()==2&&closedEvents["error"]["details"]["events"][0]["reason"]=="viewer_closed","close wakes event waiter with final events");
+        Check(picks.Handle(Request("events",{{"after",eventCursor},{"waitMs",0}}))["error"]["details"]["events"].size()==2,"final events replay after close");
         std::cout << "Agent bridge tests passed\n";
         return 0;
     } catch (const std::exception& e) {

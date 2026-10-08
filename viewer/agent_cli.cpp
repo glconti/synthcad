@@ -15,6 +15,9 @@ const std::map<std::string, std::string> kUsage = {
     {"sessions", "sessions"}, {"snapshot", "snapshot"},
     {"selection", "selection"}, {"state", "state"},
     {"reference", "reference TOKEN"},
+    {"pick", "pick --id ID --kind part|surface|edge|vertex --question TEXT"},
+    {"pick-status", "pick-status ID"}, {"pick-cancel", "pick-cancel ID"},
+    {"events", "events --after CURSOR [--wait MS]"},
     {"revision", "revision"},
     {"wait", "wait --revision TOKEN [--timeout MS]"},
     {"highlight", "highlight [PART_IDS...] [--clear] [--frame]"},
@@ -29,6 +32,10 @@ const std::map<std::string, std::string> kDescriptions = {
     {"snapshot", "Read semantic scene state, without meshes."},
     {"selection", "Read the user's current selection."},
     {"reference", "Resolve a copied selection reference against the displayed geometry."},
+    {"pick", "Ask the human to select geometry. Caller ID permits safe retries; this returns a receipt immediately."},
+    {"pick-status", "Read a guided selection request, including its retained terminal outcome."},
+    {"pick-cancel", "Cancel a guided selection request; cancelling again is idempotent."},
+    {"events", "Read session events after an opaque cursor; 0 starts retained history. --wait is 0..300000 ms (default 0)."},
     {"state", "Read load state and attempted/displayed revisions."},
     {"revision", "Compute the desired revision from current files on disk."},
     {"wait", "Wait for the requested revision; default timeout is 10000 ms."},
@@ -39,7 +46,7 @@ const std::map<std::string, std::string> kDescriptions = {
     {"capabilities", "List supported commands and protocol capabilities."},
     {"version", "Print the application and protocol versions."}};
 const std::set<std::string> kReview = {
-    "snapshot", "selection", "reference", "state", "highlight", "frame", "view", "screenshot"};
+    "snapshot", "selection", "reference", "state", "highlight", "frame", "view", "screenshot", "pick"};
 json Envelope(const std::string& command, const std::string& session,
               const std::string& revision, bool ok) {
   json result = {{"protocolVersion", 1}, {"ok", ok}, {"command", command}};
@@ -69,7 +76,8 @@ CliParseResult ParseCli(const std::vector<std::string>& arguments) {
       if (flag == "-h") flag = "--help";
       if (!flags.insert(flag).second) return fail("Repeated option: " + flag);
       const bool needsValue = flag == "--session" || flag == "--timeout" ||
-          flag == "--revision" || flag == "--expect-revision";
+          flag == "--revision" || flag == "--expect-revision" || flag == "--id" ||
+          flag == "--kind" || flag == "--question" || flag == "--after" || flag == "--wait";
       std::string value;
       if (needsValue) {
         if (equal != std::string::npos) value = token.substr(equal + 1);
@@ -91,6 +99,17 @@ CliParseResult ParseCli(const std::vector<std::string>& arguments) {
           return fail("--timeout must be an integer from 0 to 300000 milliseconds");
         options.timeoutMs = timeout;
       } else if (flag == "--revision") options.arguments["revision"] = value;
+      else if (flag == "--id") options.arguments["id"] = value;
+      else if (flag == "--kind") options.arguments["kind"] = value;
+      else if (flag == "--question") options.arguments["question"] = value;
+      else if (flag == "--after") options.arguments["after"] = value;
+      else if (flag == "--wait") {
+        int wait = 0;
+        auto parsed = std::from_chars(value.data(), value.data() + value.size(), wait);
+        if (parsed.ec != std::errc() || parsed.ptr != value.data() + value.size() || wait < 0 || wait > 300000)
+          return fail("--wait must be an integer from 0 to 300000 milliseconds");
+        options.arguments["waitMs"] = wait;
+      }
       else if (flag == "--hidden") options.arguments["hidden"] = true;
       else if (flag == "--clear") options.arguments["clear"] = true;
       else if (flag == "--frame") options.arguments["frame"] = true;
@@ -122,7 +141,9 @@ CliParseResult ParseCli(const std::vector<std::string>& arguments) {
   if (!kUsage.count(options.command)) return fail("Unknown command: " + options.command);
   const std::map<std::string, std::string> owners = {
       {"--hidden", "open"}, {"--revision", "wait"}, {"--clear", "highlight"},
-      {"--frame", "highlight"}, {"--selection", "frame"}, {"--replace", "screenshot"}};
+      {"--frame", "highlight"}, {"--selection", "frame"}, {"--replace", "screenshot"},
+      {"--id", "pick"}, {"--kind", "pick"}, {"--question", "pick"},
+      {"--after", "events"}, {"--wait", "events"}};
   for (const auto& entry : owners) {
     if (flags.count(entry.first) && options.command != entry.second)
       return fail(entry.first + " is only valid for " + entry.second);
@@ -134,6 +155,9 @@ CliParseResult ParseCli(const std::vector<std::string>& arguments) {
     if (positional.size() != 1 || positional.front().empty())
       return fail("Usage: synthcad " + kUsage.at(options.command));
     options.arguments[options.command == "view" ? "name" : options.command == "reference" ? "reference" : "path"] = positional.front();
+  } else if (options.command == "pick-status" || options.command == "pick-cancel") {
+    if (positional.size() != 1) return fail("Usage: synthcad " + kUsage.at(options.command));
+    options.arguments["id"] = positional.front();
   } else if (options.command == "docs") {
     if (positional.size() > 1 || (!positional.empty() && positional.front().empty()))
       return fail("Usage: synthcad docs [AREA]");
@@ -151,6 +175,25 @@ CliParseResult ParseCli(const std::vector<std::string>& arguments) {
   } else if (!positional.empty()) return fail("Unexpected argument: " + positional.front());
   if (options.command == "wait" && !options.arguments.contains("revision"))
     return fail("wait requires --revision TOKEN");
+  if (options.command == "pick") {
+    for (const auto* required : {"id", "kind", "question"})
+      if (!options.arguments.contains(required)) return fail(std::string("pick requires --") + required);
+    const auto kind = options.arguments.at("kind").get<std::string>();
+    if (kind != "part" && kind != "surface" && kind != "edge" && kind != "vertex")
+      return fail("--kind must be part, surface, edge or vertex");
+    const auto question = options.arguments.at("question").get<std::string>();
+    if (question.empty() || question.size() > 4096 || question.find('\0') != std::string::npos)
+      return fail("--question must contain 1 to 4096 bytes without NUL");
+  }
+  if (options.command == "pick" || options.command == "pick-status" || options.command == "pick-cancel") {
+    const auto id = options.arguments.at("id").get<std::string>();
+    if (id.empty() || id.size() > 128 || id.find('\0') != std::string::npos)
+      return fail("Request ID must contain 1 to 128 bytes without NUL");
+  }
+  if (options.command == "events") {
+    if (!options.arguments.contains("after")) return fail("events requires --after CURSOR");
+    if (!options.arguments.contains("waitMs")) options.arguments["waitMs"] = 0;
+  }
   return result;
 }
 
@@ -172,6 +215,11 @@ std::string Help(const std::string& command) {
     out << "Usage: synthcad " << usage->second << "\n\n" << kDescriptions.at(command) << "\n";
     if (command == "docs") { out << "\n"; guidance(); }
     if (kReview.count(command)) out << "  --expect-revision TOKEN  Reject a stale displayed revision.\n";
+    if (command == "events") out << "The session retains 256 events. Cursors reset with the session; stale_cursor exits 13.\n"
+        << "A wait timeout preserves your cursor and does not cancel a pending pick.\n"
+        << "Request deadline: max(--timeout, --wait + 1000) ms, plus transport delivery grace.\n";
+    if (command == "pick") out << "ID: 1..128 bytes; question: 1..4096 bytes; neither permits NUL.\n"
+        << "Repeat the same ID and payload to replay the receipt without another UI event.\n";
   } else {
     out << "SynthCAD — design with an agent, review in a persistent local viewer\n\nUsage: synthcad COMMAND [OPTIONS]\n\n";
     guidance();
@@ -179,7 +227,8 @@ std::string Help(const std::string& command) {
         {"Discovery", {"docs", "capabilities", "version"}},
         {"Projects & sessions", {"open", "sessions", "view"}},
         {"Reload & revision checks", {"state", "revision", "wait"}},
-        {"Shared review", {"snapshot", "selection", "reference", "highlight", "frame", "screenshot"}}}) {
+        {"Shared review", {"snapshot", "selection", "reference", "highlight", "frame", "screenshot"}},
+        {"Guided selection", {"pick", "pick-status", "pick-cancel", "events"}}}) {
       out << "\n" << area.first << ":\n";
       for (const auto& name : area.second) out << "  " << kUsage.at(name) << "\n";
     }
@@ -190,7 +239,9 @@ std::string Help(const std::string& command) {
         << "  synthcad --session bracket --json snapshot\n"
         << "  synthcad revision -s bracket --json\n"
         << "  synthcad wait -s bracket --revision TOKEN --timeout 10000\n"
-        << "  synthcad highlight base lid -s bracket --frame --expect-revision TOKEN\n";
+        << "  synthcad highlight base lid -s bracket --frame --expect-revision TOKEN\n"
+        << "  synthcad pick --id mount-1 --kind surface --question \"Which surface?\" -s bracket\n"
+        << "  synthcad events --after 0 --wait 30000 -s bracket --json\n";
   }
   out << "\nGlobal options (before or after the command):\n"
       << "  --session, -s NAME  Address a session; required when several are running.\n"
@@ -201,7 +252,7 @@ std::string Help(const std::string& command) {
       << "  --                 Treat remaining arguments as literal values.\n\n"
       << "Exit codes: 0 success; 2 invalid_argument; 3 no_session; 4 ambiguous_session;\n"
       << "5 load_failed; 6 timeout; 7 stale_revision; 8 superseded; 9 cancelled;\n"
-      << "10 io_error; 11 busy; 12 not_found.\n";
+      << "10 io_error; 11 busy; 12 not_found; 13 stale_cursor.\n";
   return out.str();
 }
 
@@ -211,7 +262,8 @@ json Capabilities() {
   return {{"protocolVersion", 1}, {"commands", commands},
           {"persistentSessions", true}, {"semanticSnapshots", true},
           {"revisionWait", true}, {"agentHighlights", true},
-          {"screenshots", true}, {"bundledGuidance", true}, {"selectionReferences", true}, {"geometryEditing", false}, {"export", false}};
+          {"screenshots", true}, {"bundledGuidance", true}, {"selectionReferences", true},
+          {"guidedPicking", true}, {"sessionEvents", true}, {"geometryEditing", false}, {"export", false}};
 }
 
 json Success(const std::string& command, const json& data,
@@ -235,7 +287,7 @@ int ExitCode(const std::string& code) {
       {"invalid_argument", 2}, {"no_session", 3}, {"ambiguous_session", 4},
       {"load_failed", 5}, {"timeout", 6}, {"stale_revision", 7},
       {"superseded", 8}, {"cancelled", 9}, {"io_error", 10},
-      {"busy", 11}, {"not_found", 12}};
+      {"busy", 11}, {"not_found", 12}, {"stale_cursor", 13}};
   if (code.empty() || code == "ok") return 0;
   const auto found = codes.find(code);
   return found == codes.end() ? 1 : found->second;

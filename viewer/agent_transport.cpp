@@ -437,7 +437,7 @@ struct SessionServer::Impl {
       int timeout = 10000;
       try {
         json request = json::parse(text);
-        timeout = std::clamp(request.value("timeoutMs", 10000), 0, 300000);
+        timeout = std::clamp(request.value("timeoutMs", 10000), 0, request.value("command","")=="events"?301000:300000);
         request["timeoutMs"] = timeout;
         std::string command = request.value("command", "request");
         if (request.value("sessionNonce", "") != record.at("nonce"))
@@ -451,7 +451,10 @@ struct SessionServer::Impl {
         // DisconnectNamedPipe discards unread bytes. A bounded acknowledgement
         // ensures delivery without a blocking FlushFileBuffers on an untrusted client.
         std::string acknowledgement;
-        ReadMessage(connection, acknowledgement, Deadline(1000), &stop);
+        // A stopping server must still drain a response it already wrote.
+        // On Windows DisconnectNamedPipe discards unread bytes, so cancelling
+        // this bounded acknowledgement wait can lose the final close events.
+        ReadMessage(connection, acknowledgement, Deadline(1000));
       }
     }
 #ifdef _WIN32
@@ -590,13 +593,14 @@ json Request(const std::string& session, const json& request, int timeoutMs) {
   try {
     // The CLI reserves up to 500 ms for response delivery after the viewer's
     // own deadline. Preserve that distinction rather than extending actions.
-    if (timeoutMs < 0 || timeoutMs > 300500)
-      return Error(command, "invalid_argument", "Transport timeout must be from 0 to 300500 milliseconds", {}, session);
+    const int maxRequestTimeout=command=="events"?301000:300000;
+    if (timeoutMs < 0 || timeoutMs > maxRequestTimeout+500)
+      return Error(command, "invalid_argument", "Transport timeout exceeds the command limit", {}, session);
     json timedRequest = request;
-    if (!timedRequest.contains("timeoutMs")) timedRequest["timeoutMs"] = std::min(timeoutMs, 300000);
+    if (!timedRequest.contains("timeoutMs")) timedRequest["timeoutMs"] = std::min(timeoutMs, maxRequestTimeout);
     if (!timedRequest["timeoutMs"].is_number_integer() || timedRequest["timeoutMs"].get<int64_t>() < 0 ||
-        timedRequest["timeoutMs"].get<int64_t>() > 300000)
-      return Error(command, "invalid_argument", "Request timeout must be from 0 to 300000 milliseconds", {}, session);
+        timedRequest["timeoutMs"].get<int64_t>() > maxRequestTimeout)
+      return Error(command, "invalid_argument", "Request timeout exceeds the command limit", {}, session);
     const auto deadline = Deadline(timeoutMs);
     auto records = Records(Root(), true);
     if (records.empty()) return Error(command, "no_session", "No live session; run synthcad open PATH first");

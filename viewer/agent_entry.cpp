@@ -9,6 +9,7 @@
 #include <fstream>
 #include <chrono>
 #include <stdexcept>
+#include <algorithm>
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -60,7 +61,7 @@ std::vector<std::string> ProcessArguments(int argc,char** argv){
 }
 bool IsAgentCommand(const std::vector<std::string>& arguments){
   if(arguments.size()<2)return false;
-  const std::set<std::string> commands={"docs","open","sessions","snapshot","selection","reference","state","revision","wait","highlight","frame","view","screenshot","capabilities","version","help","--help","-h","--version","--json","--session","-s"};
+  const std::set<std::string> commands={"docs","open","sessions","snapshot","selection","reference","pick","pick-status","pick-cancel","events","state","revision","wait","highlight","frame","view","screenshot","capabilities","version","help","--help","-h","--version","--json","--session","-s"};
   if(commands.count(arguments[1]))return true;
   return arguments[1].rfind("--",0)==0&&arguments[1]!="--render-scene"&&arguments[1]!="--profile-scene"&&arguments[1]!="--check-scene"&&arguments[1]!="--ui-preview"&&arguments[1]!="--agent-session";
 }
@@ -91,7 +92,9 @@ int RunAgentCli(const std::vector<std::string>& arguments,const std::string& exe
       response=OpenSession(project.path.u8string(),options.session,options.arguments.value("hidden",false),std::filesystem::absolute(viewer).u8string(),options.timeoutMs);
     }else{
       if(options.command=="screenshot")options.arguments["path"]=std::filesystem::absolute(std::filesystem::u8path(options.arguments.at("path").get<std::string>())).u8string();
-      response=Request(options.session,{{"protocolVersion",1},{"command",options.command},{"arguments",options.arguments},{"expectRevision",options.expectRevision},{"timeoutMs",options.timeoutMs}},options.timeoutMs+500);
+      const int requestTimeout=options.command=="events"?
+          std::max(options.timeoutMs,options.arguments.at("waitMs").get<int>()+1000):options.timeoutMs;
+      response=Request(options.session,{{"protocolVersion",1},{"command",options.command},{"arguments",options.arguments},{"expectRevision",options.expectRevision},{"timeoutMs",requestTimeout}},requestTimeout+500);
     }
   }catch(const KnowledgeError& error){response=Error(options.command,error.code,error.what());}
   catch(const std::exception& error){response=Error(options.command,"invalid_argument",error.what());}

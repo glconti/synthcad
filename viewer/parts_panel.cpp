@@ -87,7 +87,7 @@ std::string IconHint(bool exp,CheckState s){
  return s==CheckState::All?"Visible - click to hide":s==CheckState::Mixed?"Mixed visibility - click to show all":"Hidden - click to show";
 }
 Rectangle HelpRect(int w){return {std::max(12.f,w-316.f),56,304,222};}
-Rectangle ToastRect(int w,int h){return {std::max(12.f,w-432.f),std::max(12.f,h-188.f),std::min(420.f,w-24.f),48};}
+Rectangle ToastRect(int w,int h,float bottom){return {std::max(12.f,w-432.f),std::max(12.f,h-bottom-60.f),std::min(420.f,w-24.f),48};}
 std::vector<std::string> DiagnosticLines(const std::string &s,float width){
  std::vector<std::string> lines;std::string line;int n=0,limit=std::max(12,int(width/14));
  for(size_t p=0;p<s.size();){auto q=Next(s,p);if(s[p]=='\n'||n>=limit){lines.push_back(line);line.clear();n=0;}if(s[p]!='\n'){line+=s.substr(p,q-p);++n;}p=q;}
@@ -238,11 +238,11 @@ void WorkspaceUi::Loaded(){loadError.clear();details=false;detailScroll=0;}
 void WorkspaceUi::Failed(const std::string &s){if(loadError!=s){details=false;detailScroll=0;}loadError=s;}
 void WorkspaceUi::Saved(const std::string &s,double now){toast="Exported "+s;toastUntil=now+4;}
 bool WorkspaceUi::ToastVisible(double now) const{return !toast.empty()&&now<toastUntil;}
-Rectangle WorkspaceUi::ToastCard(int w,int h) const{return ToastRect(w,h);}
+Rectangle WorkspaceUi::ToastCard(int w,int h) const{return ToastRect(w,h,toastBottom);}
 Rectangle WorkspaceUi::Toolbar(int w) const{return {std::max(12.f,w-300.f),12,288,40};}
 Rectangle WorkspaceUi::ErrorCard(int w,int h) const{return {std::max(12.f,w-492.f),h-12-(details?std::min(310.f,h-84.f):112.f),std::min(480.f,w-24.f),details?std::min(310.f,h-84.f):112.f};}
 bool WorkspaceUi::CapturesMouse(const PanelInput &i,int w,int h,double now) const{
- return gesture||CheckCollisionPointRec(i.mouse,Toolbar(w))||(help&&CheckCollisionPointRec(i.mouse,HelpRect(w)))||(!loadError.empty()&&CheckCollisionPointRec(i.mouse,ErrorCard(w,h)))||(ToastVisible(now)&&CheckCollisionPointRec(i.mouse,ToastRect(w,h)));
+ return gesture||CheckCollisionPointRec(i.mouse,Toolbar(w))||(help&&CheckCollisionPointRec(i.mouse,HelpRect(w)))||(!loadError.empty()&&CheckCollisionPointRec(i.mouse,ErrorCard(w,h)))||(ToastVisible(now)&&CheckCollisionPointRec(i.mouse,ToastCard(w,h)));
 }
 PanelActions WorkspaceUi::Update(const PanelInput &i,int w,int h,double now){
  PanelActions a;if(i.pressed||i.rightPressed)gesture=CapturesMouse(i,w,h,now);if(!i.leftDown&&!i.rightDown&&!i.pressed&&!i.rightPressed)gesture=false;
@@ -254,7 +254,7 @@ PanelActions WorkspaceUi::Update(const PanelInput &i,int w,int h,double now){
   Rectangle content{e.x+12,e.y+112,e.width-24,std::max(0.f,e.height-124)};
   if(details&&CheckCollisionPointRec(i.mouse,content)){detailScroll-=i.wheel*54;detailScroll=Clamp(detailScroll,0,std::max(0.f,DiagnosticLines(loadError,content.width).size()*18-content.height));}
  }
- auto t=ToastRect(w,h);if(ToastVisible(now)&&Hit(i,{t.x+t.width-36,t.y+8,28,32}))toast.clear();return a;
+ auto t=ToastCard(w,h);if(ToastVisible(now)&&Hit(i,{t.x+t.width-36,t.y+8,28,32}))toast.clear();return a;
 }
 void WorkspaceUi::Draw(Font f,int w,int h,DimensionMode mode,double now) const{
  auto r=Toolbar(w);Card(r);Button({r.x+4,r.y+4,65,32},"Fit all",f);std::string dim=std::string("Dimensions: ")+DimensionModeName(mode);Button({r.x+73,r.y+4,175,32},dim.c_str(),f);Button({r.x+252,r.y+4,32,32},"?",f);
@@ -263,7 +263,7 @@ void WorkspaceUi::Draw(Font f,int w,int h,DimensionMode mode,double now) const{
   auto e=ErrorCard(w,h);Card(e,{251,240,228,250});Label("Scene could not load",f,e.x+12,e.y+16,e.width-120,19,{123,65,34,255});Label("Export is disabled until the scene is corrected.",f,e.x+12,e.y+44,e.width-24,15,muted);
   Button({e.x+e.width-92,e.y+16,80,32},"Reload",f);Button({e.x+12,e.y+70,140,30},details?"Hide details":"Show details",f);
   if(details){Rectangle content{e.x+12,e.y+112,e.width-24,e.height-124};Clip(content);auto lines=DiagnosticLines(loadError,content.width);for(size_t n=0;n<lines.size();++n)DrawTextEx(f,lines[n].c_str(),{content.x,content.y+n*18-detailScroll},14,0,ink);EndScissorMode();if(lines.size()*18>content.height)Label("Scroll for more",f,e.x+e.width-120,e.y+76,108,13,muted);}
- }else if(ToastVisible(now)){auto t=ToastRect(w,h);Card(t,{213,233,211,245});Label(toast,f,t.x+14,t.y+15,t.width-54,16);Cross({t.x+t.width-36,t.y+8,28,32});}
+ }else if(ToastVisible(now)){auto t=ToastCard(w,h);Card(t,{213,233,211,245});Label(toast,f,t.x+14,t.y+15,t.width-54,16);Cross({t.x+t.width-36,t.y+8,28,32});}
  std::string tip;if(Over({r.x+4,r.y+4,65,32}))tip="Fit all visible parts (Space)";if(Over({r.x+73,r.y+4,175,32}))tip="Cycle dimensions (M)";if(Over({r.x+252,r.y+4,32,32}))tip="Keyboard and mouse shortcuts";Tooltip(tip,f,w,h);
 }
 }

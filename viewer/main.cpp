@@ -48,6 +48,7 @@ extern "C" {
 #include "geometry_picker.h"
 #include "selection_reference.h"
 #include "selection_ui.h"
+#include "guided_pick_ui.h"
 #include "display_scale.h"
 
 namespace {
@@ -1023,6 +1024,43 @@ int main(int argc, char *argv[]) {
   dingcad::selection::GeometryPicker picker;
   picker.Reload(tree,displayedRevision);
   dingcad::SelectionUi selectionUi;
+  dingcad::GuidedPickUi guidedUi;
+  std::string guidedId;
+  dingcad::SelectionMode previousPickMode=selectionUi.mode;
+  nlohmann::json guidedRequest=nullptr,guidedCandidate=nullptr;
+  auto syncGuidedPick=[&](){
+    auto current=agent?agent->ActivePick():nlohmann::json(nullptr);
+    const auto id=current.is_null()?std::string{}:current.value("id","");
+    if(id!=guidedId){
+      if(!guidedId.empty())selectionUi.mode=previousPickMode;
+      guidedCandidate=nullptr;guidedUi.scroll=0;guidedUi.gesture=false;
+      if(!id.empty()){
+        previousPickMode=selectionUi.mode;
+        const auto kind=current.value("kind","");
+        selectionUi.mode=kind=="surface"?dingcad::SelectionMode::Surface:
+          kind=="edge"?dingcad::SelectionMode::Edge:kind=="vertex"?dingcad::SelectionMode::Vertex:dingcad::SelectionMode::Part;
+        guidedUi.question=current.value("question","");guidedUi.kind=kind;
+      }
+      guidedId=id;
+    }
+    guidedRequest=std::move(current);guidedUi.active=!guidedId.empty();
+  };
+  auto validGuidedCandidate=[&](){
+    if(guidedRequest.is_null()||guidedCandidate.is_null()||loadStatus!="ready"||
+       guidedRequest.value("revision","")!=displayedRevision)return false;
+    const auto kind=guidedCandidate.value("kind","");
+    if(guidedUi.kind=="surface"?(kind!="planar-face"&&kind!="curved-patch"):kind!=guidedUi.kind)return false;
+    if(!guidedCandidate.contains("reference")||!guidedCandidate["reference"].is_string())return false;
+    auto ref=dingcad::selection::DecodeReference(guidedCandidate["reference"].get<std::string>());
+    if(!ref||ref->revision!=displayedRevision)return false;
+    auto p=std::find_if(tree.parts.begin(),tree.parts.end(),[&](const auto& part){return part.id==ref->partId;});
+    if(p==tree.parts.end()||!tree.Visible(size_t(p-tree.parts.begin())))return false;
+    if(ref->geometry){
+      const auto* topology=picker.Get(size_t(p-tree.parts.begin()));
+      return topology&&dingcad::selection::ResolveReference(*ref,*topology).has_value();
+    }
+    return true;
+  };
   dingcad::PickGesture pickGesture;
   std::optional<dingcad::selection::Hit> geometryHit;
   nlohmann::json selectionGeometry=nullptr;
@@ -1254,7 +1292,7 @@ int main(int argc, char *argv[]) {
         tree.state=sessions.count(key)?sessions.at(key):dingcad::TreeSession{};
         scene = load.manifold;
         tree.Reload(SceneParts(scene,load.appearance));
-        clearGeometry();picker.Reload(tree,displayedRevision);
+        clearGeometry();guidedCandidate=nullptr;picker.Reload(tree,displayedRevision);
         partModels.Reload(tree);updateBounds();liveSceneKey=key;
         exportValid=true;exportDialog.overwrite=false;workspace.Loaded();
         dimensions = std::move(load.dimensions);
@@ -1289,6 +1327,11 @@ int main(int argc, char *argv[]) {
       const auto guard=request.value("expectRevision","");
       if(!guard.empty()&&(guard!=displayedRevision||loadStatus!="ready"||!synthcad::MatchesDisk(displayedFiles))){fail("stale_revision","Displayed revision is no longer current");continue;}
       try{
+        if(command=="pick"){
+          auto result=agent->BeginPick(args,displayedRevision);
+          action->result.set_value(synthcad::Success(command,result,agentSession,result.at("request").value("revision","")));
+          continue;
+        }
         if(command=="view"){
           if(!project){fail("not_found","This scene has no named project views");continue;}
           const auto name=args.at("name").get<std::string>();
@@ -1340,29 +1383,40 @@ int main(int argc, char *argv[]) {
         }
         publishAgent();
         action->result.set_value(synthcad::Success(command,{{"highlights",agentHighlights}},agentSession,displayedRevision));
-      }catch(const std::exception& error){fail("not_found",error.what());}
+      }catch(const synthcad::GuidedPickError& error){fail(error.code,error.what());}
+      catch(const std::exception& error){fail("not_found",error.what());}
     }
 
+    syncGuidedPick();
+    guidedUi.canConfirm=validGuidedCandidate();
     const bool modalWasOpen=exportDialog.open;
     const bool keyboardWasCaptured=modalWasOpen||panel.searchFocus;
     dingcad::PanelActions actions;
     dingcad::PanelActions workspaceActions;
     dingcad::SelectionActions selectionActions;
-    const auto showSelectionUi=[&](){return workspace.loadError.empty()&&!workspace.help;};
+    dingcad::GuidedPickActions guidedActions;
+    const bool guidedUiActive=guidedUi.active&&workspace.loadError.empty()&&!workspace.help;
+    workspace.toastBottom=guidedUiActive?guidedUi.Bounds(uiWidth,uiHeight).height+24:128;
+    const auto guidedCaptures=[&](){return guidedUiActive&&guidedUi.CapturesMouse(input,uiWidth,uiHeight);};
+    const auto showSelectionUi=[&](){return !guidedUi.active&&workspace.loadError.empty()&&!workspace.help;};
     const bool selectionUiActive=showSelectionUi();
     if(!selectionUiActive)selectionUi.gesture=false;
     const auto selectionCaptures=[&](){return selectionUiActive&&selectionUi.CapturesMouse(input,uiWidth,uiHeight);};
     if(!modalWasOpen){
+      if(guidedUiActive){auto guidedInput=input;
+        if(keyboardWasCaptured)guidedInput.escape=guidedInput.enter=false;
+        guidedActions=guidedUi.Update(guidedInput,uiWidth,uiHeight,[&](const std::string& text){return MeasureTextEx(brandingFont,text.c_str(),16,0).x;});
+      }
       if(selectionUiActive)selectionActions=selectionUi.Update(input,uiWidth,uiHeight);
-      if(!selectionCaptures())workspaceActions=workspace.Update(input,uiWidth,uiHeight,GetTime());
-      if((!workspace.CapturesMouse(input,uiWidth,uiHeight,GetTime())&&!selectionCaptures())||input.find)
+      if(!selectionCaptures()&&!guidedCaptures())workspaceActions=workspace.Update(input,uiWidth,uiHeight,GetTime());
+      if((!workspace.CapturesMouse(input,uiWidth,uiHeight,GetTime())&&!selectionCaptures()&&!guidedCaptures())||input.find)
         actions=panel.Update(tree,input,uiWidth,uiHeight);
     }
     if(actions.selectionChanged)clearGeometry();
     viewport=panel.Viewport(GetScreenWidth(),GetScreenHeight());
     const bool captureKeyboard=keyboardWasCaptured||panel.searchFocus||exportDialog.open||
-      (panel.CapturesMouse(tree,input,uiWidth,uiHeight)||workspace.CapturesMouse(input,uiWidth,uiHeight,GetTime())||selectionCaptures());
-    const bool captureMouse=modalWasOpen||exportDialog.open||(panel.CapturesMouse(tree,input,uiWidth,uiHeight)||workspace.CapturesMouse(input,uiWidth,uiHeight,GetTime())||selectionCaptures());
+      (panel.CapturesMouse(tree,input,uiWidth,uiHeight)||workspace.CapturesMouse(input,uiWidth,uiHeight,GetTime())||selectionCaptures()||guidedCaptures());
+    const bool captureMouse=modalWasOpen||exportDialog.open||(panel.CapturesMouse(tree,input,uiWidth,uiHeight)||workspace.CapturesMouse(input,uiWidth,uiHeight,GetTime())||selectionCaptures()||guidedCaptures());
     if(workspaceActions.reload||(!captureKeyboard&&IsKeyPressed(KEY_R)))reloadRequested=true;
     if(reloadRequested&&!scriptPath.empty())reloadScene();
     if(actions.openExport||(!captureKeyboard&&IsKeyPressed(KEY_P)))exportDialog.Open(defaultExportPath);
@@ -1386,7 +1440,7 @@ int main(int argc, char *argv[]) {
       dimensionControls.mode=dingcad::NextDimensionMode(dimensionControls.mode);
     if(workspaceActions.fitAll)frameParts(false);
     if(actions.frame)frameParts(true);
-    if(!captureKeyboard&&IsKeyPressed(KEY_ESCAPE))agentHighlights.clear();
+    if(!guidedUi.active&&!captureKeyboard&&IsKeyPressed(KEY_ESCAPE))agentHighlights.clear();
     updateBounds();
 
     const auto click=pickGesture.Update(input.mouse,input.pressed,input.leftDown,IsMouseButtonReleased(MOUSE_BUTTON_LEFT),
@@ -1397,6 +1451,16 @@ int main(int argc, char *argv[]) {
     nlohmann::json copyGeometry=selectionGeometry;
     if(copyGeometry.is_null())if(auto n=tree.Selection())if(!tree.nodes[*n].group&&!displayedRevision.empty())
       copyGeometry=dingcad::selection::PartGeometryJson(tree.parts[tree.nodes[*n].parts[0]].id,displayedRevision,tree);
+    if(guidedUi.active&&(click||actions.selectionChanged))guidedCandidate=copyGeometry;
+    guidedUi.canConfirm=validGuidedCandidate();
+    if(agent&&guidedUi.active){
+      if(guidedActions.cancel)agent->Handle({{"command","pick-cancel"},{"arguments",{{"id",guidedId}}}});
+      else if(guidedActions.confirm&&guidedUi.canConfirm){
+        if(!synthcad::MatchesDisk(displayedFiles))agent->InvalidatePick("source_changed");
+        else agent->ConfirmPick(guidedId,guidedCandidate,displayedRevision);
+      }
+      syncGuidedPick();
+    }
     selectionUi.hasSelection=!copyGeometry.is_null();
     selectionUi.copyAvailable=selectionUi.hasSelection&&copyGeometry["reference"].is_string();
     selectionUi.summary="Click a part to select";selectionUi.detail="Click selects; drag orbits";
@@ -1559,8 +1623,9 @@ int main(int argc, char *argv[]) {
     panel.Draw(tree,brandingFont,uiWidth,uiHeight);
     workspace.Draw(brandingFont,uiWidth,uiHeight,dimensionControls.mode,GetTime());
     if(selectionUiActive&&showSelectionUi())selectionUi.Draw(brandingFont,uiWidth,uiHeight);
+    if(guidedUi.active&&workspace.loadError.empty()&&!workspace.help)guidedUi.Draw(brandingFont,uiWidth,uiHeight,uiScale);
     exportDialog.Draw(brandingFont,uiWidth,uiHeight,tree.ExportIndices(exportDialog.visibleOnly).size(),exportValid);
-    if(!agentHighlights.empty())DrawTextEx(brandingFont,"Agent highlight - Esc to clear",{380.f,62.f},16,0,{48,106,142,255});
+    if(!agentHighlights.empty())DrawTextEx(brandingFont,guidedUi.active?"Agent highlight":"Agent highlight - Esc to clear",{380.f,62.f},16,0,{48,106,142,255});
     rlPopMatrix();
     for(auto& action:pendingScreenshots){
       const auto args=action->request.at("arguments");const auto path=args.at("path").get<std::string>();

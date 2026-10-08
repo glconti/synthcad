@@ -1,5 +1,6 @@
 #include "agent_transport.h"
 #include "agent_cli.h"
+#include "agent_bridge.h"
 
 #include <atomic>
 #include <chrono>
@@ -107,6 +108,28 @@ void CheckTransport(const fs::path& root) {
   Require(!stat(root.c_str(), &info) && (info.st_mode & 0777) == 0700, "session directory must be private");
 #endif
 }
+void CheckClosingEventDelivery(const fs::path& root) {
+  synthcad::AgentBridge bridge("closing-events", "transport-close");
+  bridge.Publish({{"status","ready"},{"displayedRevision","r1"}}, {});
+  const auto receipt=bridge.BeginPick({{"id","closing"},{"kind","part"},{"question","Choose a part"}},"r1");
+  std::promise<void> entered;
+  auto enteredFuture=entered.get_future();
+  synthcad::SessionServer server;
+  std::string error;
+  Require(server.Start("closing-events",(root/"closing.js").u8string(),[&](const json& request){
+    entered.set_value();return bridge.Handle(request);
+  },error),"close-delivery server failed to start");
+  auto waiter=std::async(std::launch::async,[&]{
+    return synthcad::Request("closing-events",{{"command","events"},{"timeoutMs",2000},
+      {"arguments",{{"after",receipt.at("eventCursor")},{"waitMs",1500}}}},2500);
+  });
+  Require(enteredFuture.wait_for(std::chrono::seconds(1))==std::future_status::ready,"event waiter did not reach bridge");
+  bridge.Close();server.Stop();
+  const auto response=waiter.get();
+  Require(!response.at("ok").get<bool>()&&response.at("error").at("code")=="cancelled","shutdown lost final event response");
+  const auto events=response.at("error").at("details").at("events");
+  Require(events.size()==2&&events[0].at("type")=="pick-cancelled"&&events[1].at("type")=="viewer-closed", "shutdown lost final event payload");
+}
 void CheckLaunch(const fs::path& root, const std::string& executable) {
   fs::path project = root / fs::u8path(u8"Project \u00e8.js");
   std::ofstream(project) << "// test project";
@@ -158,6 +181,7 @@ int Run(int argc, char** argv) {
     fs::path root = base / ("sc-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     SetRoot(root);
     CheckTransport(root);
+    CheckClosingEventDelivery(root);
     CheckLaunch(root, fs::absolute(fs::u8path(argv[0])).u8string());
     fs::remove_all(root);
     std::cout << "Agent transport tests passed\n";

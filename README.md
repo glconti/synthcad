@@ -139,6 +139,7 @@ automated CI and distribution validation remain part of the v1 backlog.
   revision-local: editing source or changing layouts invalidates old tokens.
   Unsupported topology remains selectable in Part mode with diagnostics in
   `snapshot`. Model files and export flags are unaffected by picking.
+- An agent can ask a question with `synthcad pick --id mount-1 --kind surface --question "Which surface should receive the mount?"`. Choose fresh geometry, then **Confirm**, or **Cancel**/**Escape**. Starting a question preserves your existing selection; it never submits it automatically. Agents read outcomes with `pick-status` or `events`.
 - **Space** frames all currently visible parts from the front; **R** reloads the scene manually.
 - **M** or the **Dimensions** button cycles Hover, All, and Off. In Hover mode,
   hover the small blue feature markers to see measurements in millimetres.
@@ -213,6 +214,8 @@ including Windows/Linux transport checks. Its CLI and project contracts are
 documented separately from the geometry API.
 Geometric selection and native scaling have
 [focused and native-window acceptance coverage](docs/batch-4-validation.md).
+Guided questions and bounded event readback have
+[Windows/Linux acceptance coverage](docs/batch-5-validation.md).
 
 Build `dingcad_appearance_tests`, `dingcad_parts_tests`, `dingcad_camera_tests`
 and `dingcad_dimension_tests` with CMake, then run the executables in the viewer
