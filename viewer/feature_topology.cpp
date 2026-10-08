@@ -156,6 +156,11 @@ Topology Topology::Build(const manifold::MeshGL& mesh,std::string partId,
 bool Topology::Contains(const Reference& r)const{
   return r.partId==partId_&&r.revision==revision_&&r.topologyKey==key_&&r.id<features_.size()&&features_[r.id].kind==r.kind;
 }
+std::optional<Pick> Topology::FeaturePick(uint32_t id,Vec3 position,double distance)const{
+  if(id>=features_.size()||!Finite(position)||!std::isfinite(distance)||distance<0)return {};
+  const auto& f=features_[id];
+  return Pick{{partId_,revision_,key_,f.kind,id},position,{},false,f.bounds,distance};
+}
 std::optional<Pick> Topology::RayPick(Vec3 origin,Vec3 direction,PickMode mode,double radius)const{
   if(!Finite(origin)||!Finite(direction)||Length(direction)==0||!std::isfinite(radius)||radius<0)return {};
   direction=Unit(direction);double distance=std::numeric_limits<double>::infinity();uint32_t triangle=0;

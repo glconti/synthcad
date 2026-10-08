@@ -83,7 +83,7 @@ SynthCAD account or cloud service for its own workflow.
 This inventory reflects the initial PRD draft, before the delivery batches.
 For implemented capabilities and platform evidence, see
 [Batch 1](../batch-1-validation.md), [Batch 2](../batch-2-validation.md) and
-[Batch 3](../batch-3-validation.md).
+[Batch 3](../batch-3-validation.md) and [Batch 4](../batch-4-validation.md).
 It is not a current platform or physical test report.
 
 | Capability | Current state and implication |

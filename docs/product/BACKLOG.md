@@ -392,8 +392,10 @@ feasibility work (SC06–SC07) are documented in
 view layouts (SC12) are implemented and verified on Windows and Linux in
 [Batch 3](../batch-3-validation.md). Live acceptance status remains in GitHub.
 
-Wire geometric references into **SC08–SC09** using the shared source/instance
-contract, so selection and future plates use consistent ownership. Start Linux CI and licensing
+Geometric picking and revision-bound references (SC08) are implemented; see
+[Batch 4](../batch-4-validation.md). Its Windows desktop clipboard verification
+remains outstanding, so the issue stays open. Build **SC09** guided picks and
+event readback on this selection contract. Start Linux CI and licensing
 resolution in parallel when resources are available; do not leave either until
 packaging. The Bambu-format spike should precede promises about exact export
 settings.

@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iomanip>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -44,6 +45,10 @@ extern "C" {
 #include "agent_bridge.h"
 #include "agent_scene.h"
 #include "design_graph.h"
+#include "geometry_picker.h"
+#include "selection_reference.h"
+#include "selection_ui.h"
+#include "display_scale.h"
 
 namespace {
 const Color kBaseColor = {210, 210, 220, 255};
@@ -875,7 +880,7 @@ int main(int argc, char *argv[]) {
   auto hasPreview=[&](const char *m){return previewMode.find(m)!=std::string::npos;};
   const float forcedScale=hasPreview("scale200")?2.f:hasPreview("scale150")?1.5f:0.f;
   const int previewFrameLimit=hasPreview("watch")?120:3;
-  float uiScale=forcedScale?forcedScale:std::max(1.f,GetWindowScaleDPI().x);
+  float uiScale=forcedScale?forcedScale:dingcad::NativeUiScale();
   if(uiPreview)SetWindowSize(int((hasPreview("small")?720:1280)*uiScale),int((hasPreview("small")?480:720)*uiScale));
   SetWindowMinSize(int(640*uiScale),int(400*uiScale));
   if(!uiPreview)SetWindowSize(int(1280*uiScale),int(720*uiScale));
@@ -1014,6 +1019,23 @@ int main(int argc, char *argv[]) {
   tree.Reload(SceneParts(scene,appearance));
   appearance.parts.clear();
   PartModels partModels;partModels.Reload(tree);
+  if(displayedRevision.empty()&&!defaultScript)displayedRevision="builtin-v1";
+  dingcad::selection::GeometryPicker picker;
+  picker.Reload(tree,displayedRevision);
+  dingcad::SelectionUi selectionUi;
+  dingcad::PickGesture pickGesture;
+  std::optional<dingcad::selection::Hit> geometryHit;
+  nlohmann::json selectionGeometry=nullptr;
+  auto clearGeometry=[&](){geometryHit.reset();selectionGeometry=nullptr;};
+  auto selectHit=[&](const std::optional<dingcad::selection::Hit>& hit){
+    clearGeometry();tree.state.selected.clear();
+    if(!hit)return;
+    const auto& part=tree.parts.at(hit->partIndex);
+    tree.state.selected="p:"+part.id;
+    geometryHit=hit;
+    selectionGeometry=hit->feature?dingcad::selection::GeometryJson(*hit->feature,tree):
+      dingcad::selection::PartGeometryJson(part.id,displayedRevision,tree);
+  };
   dingcad::PartsPanel panel;
   dingcad::ExportDialog exportDialog;
   panel.scenePath=scriptPath.u8string();
@@ -1038,6 +1060,13 @@ int main(int argc, char *argv[]) {
   updateBounds();frameParts(false);
   auto publishAgent=[&](){if(!agent)return;
     auto snapshot=synthcad::ReviewSnapshot(tree,dimensions,camera,agentHighlights);
+    if(!snapshot["selection"].is_null()){
+      if(!selectionGeometry.is_null())snapshot["selection"]["geometry"]=selectionGeometry;
+      else if(!snapshot["selection"]["group"].get<bool>()&&!displayedRevision.empty())
+        snapshot["selection"]["geometry"]=dingcad::selection::PartGeometryJson(
+          snapshot["selection"]["partIds"][0].get<std::string>(),displayedRevision,tree);
+    }
+    snapshot["selectionDiagnostics"]=picker.Diagnostics();
     snapshot["status"]=loadStatus;snapshot["attemptedRevision"]=attemptedRevision;
     snapshot["displayedRevision"]=displayedRevision;snapshot["exportValid"]=exportValid;
     snapshot["sourceRevision"]=displayedSourceRevision;snapshot["displayedView"]=displayedView;
@@ -1202,7 +1231,7 @@ int main(int argc, char *argv[]) {
     };
     const Vector2 mouseDelta = GetMouseDelta();
     bool reloadRequested = false;
-    const float currentScale=forcedScale?forcedScale:std::max(1.f,GetWindowScaleDPI().x);
+    const float currentScale=forcedScale?forcedScale:dingcad::NativeUiScale();
     if(currentScale!=uiScale){uiScale=currentScale;loadUiFont();SetWindowMinSize(int(640*uiScale),int(400*uiScale));}
     const int uiWidth=int(GetScreenWidth()/uiScale),uiHeight=int(GetScreenHeight()/uiScale);
     dingcad::SetUiDrawScale(uiScale);
@@ -1225,6 +1254,7 @@ int main(int argc, char *argv[]) {
         tree.state=sessions.count(key)?sessions.at(key):dingcad::TreeSession{};
         scene = load.manifold;
         tree.Reload(SceneParts(scene,load.appearance));
+        clearGeometry();picker.Reload(tree,displayedRevision);
         partModels.Reload(tree);updateBounds();liveSceneKey=key;
         exportValid=true;exportDialog.overwrite=false;workspace.Loaded();
         dimensions = std::move(load.dimensions);
@@ -1273,6 +1303,23 @@ int main(int argc, char *argv[]) {
           if(std::filesystem::exists(path)&&!args.value("replace",false)){fail("io_error","Destination exists; use --replace to overwrite");continue;}
           pendingScreenshots.push_back(action);continue;
         }
+        if(command=="reference"){
+          const auto ref=dingcad::selection::DecodeReference(args.at("reference").get<std::string>());
+          if(!ref){fail("invalid_argument","Malformed selection reference");continue;}
+          if(ref->revision!=displayedRevision||loadStatus!="ready"||!synthcad::MatchesDisk(displayedFiles)){
+            fail("stale_revision","Selection reference is not from the current valid displayed revision");continue;
+          }
+          auto it=std::find_if(tree.parts.begin(),tree.parts.end(),[&](const auto& p){return p.id==ref->partId;});
+          if(it==tree.parts.end()){fail("not_found","Reference owner is not in this view");continue;}
+          nlohmann::json context;
+          if(ref->geometry){
+            const auto* topology=picker.Get(size_t(it-tree.parts.begin()));
+            const auto resolved=topology?dingcad::selection::ResolveReference(*ref,*topology):std::nullopt;
+            if(!resolved){fail("stale_revision","Geometric reference no longer matches the displayed topology");continue;}
+            context=dingcad::selection::GeometryJson(*resolved,tree,true);
+          }else context=dingcad::selection::PartGeometryJson(ref->partId,displayedRevision,tree);
+          action->result.set_value(synthcad::Success(command,{{"geometry",context}},agentSession,displayedRevision));continue;
+        }
         if(command!="highlight"&&command!="frame"){fail("invalid_argument","Unknown review command");continue;}
         const auto ids=args.value("partIds",std::vector<std::string>{});
         const bool clear=args.value("clear",false);
@@ -1300,15 +1347,22 @@ int main(int argc, char *argv[]) {
     const bool keyboardWasCaptured=modalWasOpen||panel.searchFocus;
     dingcad::PanelActions actions;
     dingcad::PanelActions workspaceActions;
+    dingcad::SelectionActions selectionActions;
+    const auto showSelectionUi=[&](){return workspace.loadError.empty()&&!workspace.help;};
+    const bool selectionUiActive=showSelectionUi();
+    if(!selectionUiActive)selectionUi.gesture=false;
+    const auto selectionCaptures=[&](){return selectionUiActive&&selectionUi.CapturesMouse(input,uiWidth,uiHeight);};
     if(!modalWasOpen){
-      workspaceActions=workspace.Update(input,uiWidth,uiHeight,GetTime());
-      if(!workspace.CapturesMouse(input,uiWidth,uiHeight,GetTime())||input.find)
+      if(selectionUiActive)selectionActions=selectionUi.Update(input,uiWidth,uiHeight);
+      if(!selectionCaptures())workspaceActions=workspace.Update(input,uiWidth,uiHeight,GetTime());
+      if((!workspace.CapturesMouse(input,uiWidth,uiHeight,GetTime())&&!selectionCaptures())||input.find)
         actions=panel.Update(tree,input,uiWidth,uiHeight);
     }
+    if(actions.selectionChanged)clearGeometry();
     viewport=panel.Viewport(GetScreenWidth(),GetScreenHeight());
     const bool captureKeyboard=keyboardWasCaptured||panel.searchFocus||exportDialog.open||
-      (panel.CapturesMouse(tree,input,uiWidth,uiHeight)||workspace.CapturesMouse(input,uiWidth,uiHeight,GetTime()));
-    const bool captureMouse=modalWasOpen||exportDialog.open||(panel.CapturesMouse(tree,input,uiWidth,uiHeight)||workspace.CapturesMouse(input,uiWidth,uiHeight,GetTime()));
+      (panel.CapturesMouse(tree,input,uiWidth,uiHeight)||workspace.CapturesMouse(input,uiWidth,uiHeight,GetTime())||selectionCaptures());
+    const bool captureMouse=modalWasOpen||exportDialog.open||(panel.CapturesMouse(tree,input,uiWidth,uiHeight)||workspace.CapturesMouse(input,uiWidth,uiHeight,GetTime())||selectionCaptures());
     if(workspaceActions.reload||(!captureKeyboard&&IsKeyPressed(KEY_R)))reloadRequested=true;
     if(reloadRequested&&!scriptPath.empty())reloadScene();
     if(actions.openExport||(!captureKeyboard&&IsKeyPressed(KEY_P)))exportDialog.Open(defaultExportPath);
@@ -1335,9 +1389,41 @@ int main(int argc, char *argv[]) {
     if(!captureKeyboard&&IsKeyPressed(KEY_ESCAPE))agentHighlights.clear();
     updateBounds();
 
-    if (!captureMouse && !captureKeyboard && IsMouseButtonDown(MOUSE_BUTTON_LEFT) && !dimensionControls.buttonGesture) {
-      orbitYaw -= mouseDelta.x * 0.01f;
-      orbitPitch += mouseDelta.y * 0.01f;
+    const auto click=pickGesture.Update(input.mouse,input.pressed,input.leftDown,IsMouseButtonReleased(MOUSE_BUTTON_LEFT),
+      captureMouse||captureKeyboard||input.rightDown||dimensionControls.buttonGesture);
+    if(click)selectHit(picker.PickAt(tree,camera,*click,uiWidth,uiHeight,
+      static_cast<dingcad::selection::ReviewMode>(selectionUi.mode)));
+    if(selectionActions.clear){clearGeometry();tree.state.selected.clear();}
+    nlohmann::json copyGeometry=selectionGeometry;
+    if(copyGeometry.is_null())if(auto n=tree.Selection())if(!tree.nodes[*n].group&&!displayedRevision.empty())
+      copyGeometry=dingcad::selection::PartGeometryJson(tree.parts[tree.nodes[*n].parts[0]].id,displayedRevision,tree);
+    selectionUi.hasSelection=!copyGeometry.is_null();
+    selectionUi.copyAvailable=selectionUi.hasSelection&&copyGeometry["reference"].is_string();
+    selectionUi.summary="Click a part to select";selectionUi.detail="Click selects; drag orbits";
+    if(selectionUi.hasSelection){
+      const auto kind=copyGeometry.value("kind","");
+      const std::string label=kind=="planar-face"?"Planar face":kind=="curved-patch"?"Curved patch":kind=="edge"?"Edge":kind=="vertex"?"Vertex":"Part";
+      const auto id=copyGeometry.value("partId","");
+      const auto p=std::find_if(tree.parts.begin(),tree.parts.end(),[&](const auto& part){return part.id==id;});
+      selectionUi.summary=label+" · "+(p!=tree.parts.end()?p->name:id);
+      selectionUi.detail="Reference belongs to this revision";
+      if(copyGeometry["position"].is_array()){
+        const auto p=copyGeometry["position"].get<std::array<double,3>>();std::ostringstream detail;
+        detail<<std::fixed<<std::setprecision(2)<<(kind=="part"?"Center ":"XYZ ")<<p[0]<<", "<<p[1]<<", "<<p[2]<<" mm";
+        selectionUi.detail=detail.str();
+      }
+      if(copyGeometry.contains("referenceError"))selectionUi.detail=copyGeometry["referenceError"].get<std::string>();
+    }else if(tree.Selection())selectionUi.summary="Group selected in parts tree";
+    else if(!picker.Diagnostics().empty())selectionUi.detail="Some features unavailable; use Part mode";
+    if((selectionActions.copy||(!captureKeyboard&&IsKeyDown(KEY_LEFT_CONTROL)&&IsKeyPressed(KEY_C)))&&selectionUi.hasSelection&&selectionUi.copyAvailable){
+      const auto reference=copyGeometry.at("reference").get<std::string>();SetClipboardText(reference.c_str());
+      const auto* copied=GetClipboardText();
+      workspace.toast=copied&&reference==copied?"Selection reference copied":"Clipboard unavailable; use synthcad selection";
+      workspace.toastUntil=GetTime()+4;
+    }
+    if (!captureMouse && !captureKeyboard && pickGesture.Dragging() && !dimensionControls.buttonGesture) {
+      orbitYaw -= mouseDelta.x / uiScale * 0.01f;
+      orbitPitch += mouseDelta.y / uiScale * 0.01f;
       const float limit = DEG2RAD * 89.0f;
       orbitPitch = Clamp(orbitPitch, -limit, limit);
     }
@@ -1431,6 +1517,26 @@ int main(int argc, char *argv[]) {
     for(size_t i=0;i<tree.parts.size();++i)if(tree.Visible(i)&&
       std::find(agentHighlights.begin(),agentHighlights.end(),tree.parts[i].id)!=agentHighlights.end())
       DrawBoundingBox(partModels.bounds[i],{48,136,192,255});
+    if(geometryHit&&geometryHit->feature&&tree.Visible(geometryHit->partIndex)){
+      const auto* topology=picker.Get(geometryHit->partIndex);
+      if(topology&&topology->Contains(geometryHit->feature->reference)){
+        const auto& feature=topology->Features()[geometryHit->feature->reference.id];
+        auto world=[&](uint32_t id){const auto& p=topology->Points()[id];return dingcad::CadToWorld({float(p.x),float(p.y),float(p.z)});};
+        const Color ink={226,151,33,255};
+        if(feature.kind==dingcad::selection::Kind::Edge){
+          for(size_t n=1;n<feature.members.size();++n)DrawLine3D(world(feature.members[n-1]),world(feature.members[n]),ink);
+        }else if(feature.kind==dingcad::selection::Kind::Vertex){
+          DrawSphere(world(feature.members[0]),std::max(.003f,orbitDistance*.003f),ink);
+        }else{
+          rlDisableBackfaceCulling();
+          for(auto t:feature.members){const auto& tri=topology->Triangles()[t];
+            auto a=world(tri[0]),b=world(tri[1]),c=world(tri[2]);
+            const auto offset=Vector3Scale(Vector3Normalize(Vector3CrossProduct(Vector3Subtract(b,a),Vector3Subtract(c,a))),std::max(.0001f,orbitDistance*.00002f));
+            DrawTriangle3D(Vector3Add(a,offset),Vector3Add(b,offset),Vector3Add(c,offset),Fade(ink,.45f));
+          }rlEnableBackfaceCulling();
+        }
+      }
+    }
     EndMode3D();EndTextureMode();
     if(kUsePostProcessing){
       BeginTextureMode(rtNormalDepth);ClearBackground({127,127,255,0});BeginMode3D(camera);
@@ -1452,6 +1558,7 @@ int main(int argc, char *argv[]) {
     }
     panel.Draw(tree,brandingFont,uiWidth,uiHeight);
     workspace.Draw(brandingFont,uiWidth,uiHeight,dimensionControls.mode,GetTime());
+    if(selectionUiActive&&showSelectionUi())selectionUi.Draw(brandingFont,uiWidth,uiHeight);
     exportDialog.Draw(brandingFont,uiWidth,uiHeight,tree.ExportIndices(exportDialog.visibleOnly).size(),exportValid);
     if(!agentHighlights.empty())DrawTextEx(brandingFont,"Agent highlight - Esc to clear",{380.f,62.f},16,0,{48,106,142,255});
     rlPopMatrix();

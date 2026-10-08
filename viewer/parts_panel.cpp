@@ -87,7 +87,7 @@ std::string IconHint(bool exp,CheckState s){
  return s==CheckState::All?"Visible - click to hide":s==CheckState::Mixed?"Mixed visibility - click to show all":"Hidden - click to show";
 }
 Rectangle HelpRect(int w){return {std::max(12.f,w-316.f),56,304,222};}
-Rectangle ToastRect(int w,int h){return {std::max(12.f,w-432.f),h-60.f,std::min(420.f,w-24.f),48};}
+Rectangle ToastRect(int w,int h){return {std::max(12.f,w-432.f),std::max(12.f,h-188.f),std::min(420.f,w-24.f),48};}
 std::vector<std::string> DiagnosticLines(const std::string &s,float width){
  std::vector<std::string> lines;std::string line;int n=0,limit=std::max(12,int(width/14));
  for(size_t p=0;p<s.size();){auto q=Next(s,p);if(s[p]=='\n'||n>=limit){lines.push_back(line);line.clear();n=0;}if(s[p]!='\n'){line+=s.substr(p,q-p);++n;}p=q;}
@@ -167,7 +167,7 @@ PanelActions PartsPanel::Update(PartTree &tree,const PanelInput &i,int w,int h){
    if(i.mouse.x>=l.exportX)tree.Toggle(r.node,true);
    else if(i.mouse.x>=l.visibilityX)tree.Toggle(r.node,false);
    else if(n.group&&i.mouse.x<margin+pad+18+Indent(r.depth)){if(!tree.state.collapsed.erase(n.key))tree.state.collapsed.insert(n.key);}
-   else tree.Select(r.node);
+   else {tree.Select(r.node);a.selectionChanged=true;}
   }
  }
  auto after=Layout(tree,w,h);scroll=Clamp(scroll,0,std::max(0.f,tree.Rows(search).size()*rowHeight-after.list.height));return a;
@@ -238,6 +238,7 @@ void WorkspaceUi::Loaded(){loadError.clear();details=false;detailScroll=0;}
 void WorkspaceUi::Failed(const std::string &s){if(loadError!=s){details=false;detailScroll=0;}loadError=s;}
 void WorkspaceUi::Saved(const std::string &s,double now){toast="Exported "+s;toastUntil=now+4;}
 bool WorkspaceUi::ToastVisible(double now) const{return !toast.empty()&&now<toastUntil;}
+Rectangle WorkspaceUi::ToastCard(int w,int h) const{return ToastRect(w,h);}
 Rectangle WorkspaceUi::Toolbar(int w) const{return {std::max(12.f,w-300.f),12,288,40};}
 Rectangle WorkspaceUi::ErrorCard(int w,int h) const{return {std::max(12.f,w-492.f),h-12-(details?std::min(310.f,h-84.f):112.f),std::min(480.f,w-24.f),details?std::min(310.f,h-84.f):112.f};}
 bool WorkspaceUi::CapturesMouse(const PanelInput &i,int w,int h,double now) const{

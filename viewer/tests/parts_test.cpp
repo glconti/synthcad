@@ -161,7 +161,8 @@ int main(){try{
   ui.Failed("Errore: parte più larga\nFull diagnostic");ui.Update(PanelInput{},1280,720,99);Require(!ui.loadError.empty(),"Errors persist beyond toast lifetime");
   auto errorCard=ui.ErrorCard(1280,720);Require(ui.Update(Click(errorCard.x+errorCard.width-50,errorCard.y+28),1280,720,99).reload,"Reload action");
   ui.Loaded();Require(ui.loadError.empty()&&!ui.details,"Valid reload clears error");
-  ui.gesture=false;ui.Update(Click(1242,686),1280,720,11);Require(!ui.ToastVisible(11),"Toast can be dismissed");
+    const auto toast=ui.ToastCard(1280,720);
+    ui.gesture=false;ui.Update(Click(toast.x+toast.width-22,toast.y+24),1280,720,11);Require(!ui.ToastVisible(11),"Toast can be dismissed");
   ui.Failed(std::string(3000,'W'));auto errorBounds=ui.ErrorCard(640,400);
   ui.Update(Click(errorBounds.x+30,errorBounds.y+85),640,400,20);Require(ui.details,"Diagnostics expand");
   PanelInput errorScroll;auto expandedError=ui.ErrorCard(640,400);errorScroll.mouse={expandedError.x+30,expandedError.y+130};errorScroll.wheel=-100;

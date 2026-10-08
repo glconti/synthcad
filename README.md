@@ -74,6 +74,9 @@ Avoid force-adding personal files; `.gitignore` is a safeguard, not access contr
 The viewer and CLI have been built and tested on Ubuntu 24.04 x64 with GCC 13.3,
 CMake 3.28, raylib 6.0, assimp 5.3, TBB and nlohmann_json. Install the development
 packages for these dependencies, an OpenGL/X11 environment and DejaVu Sans.
+The X11 development package enables native `Xft.dpi` detection; Windows uses
+the window's native DPI. The app scales physical rendering and mouse input
+itself, without raylib's separate `FLAG_WINDOW_HIGHDPI` transform.
 Configure with CMake and build the `dingcad_viewer` and `synthcad` targets.
 Set `CMAKE_PREFIX_PATH` when dependency packages are installed outside the system
 prefix. Automated CI and distribution packages remain work in progress.
@@ -125,6 +128,17 @@ automated CI and distribution validation remain part of the v1 backlog.
 ## Viewer controls
 
 - Left-drag to orbit, right-drag to pan (the model follows the mouse), and scroll to zoom.
+- Click to select geometry. The bottom-right card switches between Part,
+  Surface, Edge and Vertex modes. Surfaces distinguish planar faces from
+  tessellated curved patches; edges and corners use an 8-logical-pixel snap
+  radius and respect occlusion. Dragging more than 4 logical pixels orbits
+  without selecting. Hidden parts cannot be picked.
+- **Copy ref** (or **Ctrl+C** outside text entry) copies the selected part or
+  feature reference. An agent reads the same context with `synthcad selection`
+  or resolves a copied token with `synthcad reference TOKEN`. Geometric IDs are
+  revision-local: editing source or changing layouts invalidates old tokens.
+  Unsupported topology remains selectable in Part mode with diagnostics in
+  `snapshot`. Model files and export flags are unaffected by picking.
 - **Space** frames all currently visible parts from the front; **R** reloads the scene manually.
 - **M** or the **Dimensions** button cycles Hover, All, and Off. In Hover mode,
   hover the small blue feature markers to see measurements in millimetres.
@@ -197,6 +211,8 @@ For a window-free scene validation, run the built viewer with
 The agent review loop has [focused tests and a live acceptance script](docs/batch-1-validation.md),
 including Windows/Linux transport checks. Its CLI and project contracts are
 documented separately from the geometry API.
+Geometric selection and native scaling have
+[focused and native-window acceptance coverage](docs/batch-4-validation.md).
 
 Build `dingcad_appearance_tests`, `dingcad_parts_tests`, `dingcad_camera_tests`
 and `dingcad_dimension_tests` with CMake, then run the executables in the viewer

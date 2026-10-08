@@ -21,6 +21,11 @@ void CheckParsing() {
   auto frame = ParseCli({"frame", "--expect-revision", "abc", "base", "lid"});
   Require(bool(frame) && frame.options.arguments.at("partIds").size() == 2, "part IDs missing");
   Require(frame.options.expectRevision == "abc", "review revision guard missing");
+  auto reference = ParseCli({"reference", "scsel1.1234", "--expect-revision", "abc"});
+  Require(bool(reference) && reference.options.arguments.at("reference") == "scsel1.1234" &&
+          reference.options.expectRevision == "abc", "reference resolution arguments missing");
+  Require(!ParseCli({"reference"}) && !ParseCli({"reference", ""}) &&
+          !ParseCli({"reference", "a", "b"}), "invalid reference arguments accepted");
   auto literal = ParseCli({"open", "--", "--scene.js"});
   Require(bool(literal) && literal.options.arguments.at("path") == "--scene.js", "literal path missing");
   for (const auto& args : std::vector<std::vector<std::string>>{
@@ -69,6 +74,9 @@ void CheckResponses() {
   Require(synthcad::Help("screenshot").find("--replace") != std::string::npos, "command help missing options");
   Require(synthcad::Capabilities().at("geometryEditing") == false, "discovery must not promise geometry edits");
   Require(synthcad::Capabilities().at("export") == false, "discovery must not promise exports");
+  Require(synthcad::Capabilities().at("selectionReferences") == true &&
+          synthcad::Help("reference").find("reference TOKEN") != std::string::npos,
+          "reference discovery missing");
   Require(synthcad::Capabilities().at("bundledGuidance") == true, "guidance discovery missing");
   Require(synthcad::Help().find("Printing & assembly") != std::string::npos &&
           synthcad::Help("docs").find("bambu-handoff") != std::string::npos, "area help missing");

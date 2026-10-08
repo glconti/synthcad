@@ -20,7 +20,7 @@ struct TextEdit {
   void Update(std::string &text,const PanelInput &input);
   void Focus(const std::string &text,bool all=false);
 };
-struct PanelActions {bool frame=false,openExport=false,save=false,fitAll=false,dimensions=false,reload=false;};
+struct PanelActions {bool frame=false,openExport=false,save=false,fitAll=false,dimensions=false,reload=false,selectionChanged=false;};
 struct PartsLayout {
   Rectangle card,collapse,exportButton,file,search,clear,isolate,showAll,frame,list;
   float visibilityX=0,exportX=0;
@@ -52,6 +52,7 @@ struct WorkspaceUi {
   bool ToastVisible(double now) const;
   Rectangle Toolbar(int width) const;
   Rectangle ErrorCard(int width,int height) const;
+  Rectangle ToastCard(int width,int height) const;
   bool CapturesMouse(const PanelInput &input,int width,int height,double now) const;
   PanelActions Update(const PanelInput &input,int width,int height,double now);
   void Draw(Font font,int width,int height,DimensionMode mode,double now) const;

@@ -60,6 +60,11 @@ endif()
 
 add_executable(dingcad_viewer
   main.cpp
+  geometry_picker.cpp
+  feature_topology.cpp
+  selection_reference.cpp
+  selection_ui.cpp
+  display_scale.cpp
   js_bindings.cpp
   dimensions.cpp
   appearance.cpp
@@ -121,6 +126,37 @@ if(MSVC)
   target_compile_options(synthcad_agent_scene_tests PRIVATE /utf-8 /UNDEBUG)
 else()
   target_compile_options(synthcad_agent_scene_tests PRIVATE -UNDEBUG)
+endif()
+
+foreach(test geometry_picker selection_reference)
+  add_executable(synthcad_${test}_tests EXCLUDE_FROM_ALL tests/${test}_test.cpp ${test}.cpp feature_topology.cpp part_tree.cpp)
+  target_link_libraries(synthcad_${test}_tests PRIVATE manifold raylib dingcad_quickjs synthcad_agent)
+  if(MSVC)
+    target_compile_options(synthcad_${test}_tests PRIVATE /utf-8 /UNDEBUG)
+  else()
+    target_compile_options(synthcad_${test}_tests PRIVATE -UNDEBUG)
+  endif()
+endforeach()
+add_executable(synthcad_selection_ui_tests EXCLUDE_FROM_ALL tests/selection_ui_test.cpp selection_ui.cpp parts_panel.cpp part_tree.cpp dimensions.cpp brand.cpp)
+target_include_directories(synthcad_selection_ui_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(synthcad_selection_ui_tests PRIVATE manifold raylib dingcad_quickjs)
+if(MSVC)
+  target_compile_options(synthcad_selection_ui_tests PRIVATE /utf-8 /UNDEBUG)
+else()
+  target_compile_options(synthcad_selection_ui_tests PRIVATE -UNDEBUG)
+endif()
+
+add_executable(synthcad_display_scale_tests EXCLUDE_FROM_ALL tests/display_scale_test.cpp display_scale.cpp)
+target_include_directories(synthcad_display_scale_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(synthcad_display_scale_tests PRIVATE raylib)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  find_package(X11 QUIET)
+  if(X11_FOUND)
+    foreach(target dingcad_viewer synthcad_display_scale_tests)
+      target_compile_definitions(${target} PRIVATE SYNTHCAD_X11_DPI)
+      target_link_libraries(${target} PRIVATE X11::X11)
+    endforeach()
+  endif()
 endif()
 
 # Run directly; the optional --render argument saves overlay QA images.

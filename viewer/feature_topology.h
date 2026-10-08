@@ -55,6 +55,8 @@ class Topology {
   const std::vector<Vec3>& Points() const { return points_; }
   const std::vector<std::array<uint32_t,3>>& Triangles() const { return triangles_; }
   double Tolerance() const { return tolerance_; }
+  // Construct a semantic feature pick without exposing revision identity fields.
+  std::optional<Pick> FeaturePick(uint32_t id, Vec3 position, double rayDistance) const;
   size_t TriangleCount() const { return triangles_.size(); }
  private:
   std::string partId_, revision_;

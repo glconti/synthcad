@@ -14,6 +14,7 @@ const std::map<std::string, std::string> kUsage = {
     {"open", "open PATH [--session NAME] [--hidden]"},
     {"sessions", "sessions"}, {"snapshot", "snapshot"},
     {"selection", "selection"}, {"state", "state"},
+    {"reference", "reference TOKEN"},
     {"revision", "revision"},
     {"wait", "wait --revision TOKEN [--timeout MS]"},
     {"highlight", "highlight [PART_IDS...] [--clear] [--frame]"},
@@ -27,6 +28,7 @@ const std::map<std::string, std::string> kDescriptions = {
     {"sessions", "List live local sessions."},
     {"snapshot", "Read semantic scene state, without meshes."},
     {"selection", "Read the user's current selection."},
+    {"reference", "Resolve a copied selection reference against the displayed geometry."},
     {"state", "Read load state and attempted/displayed revisions."},
     {"revision", "Compute the desired revision from current files on disk."},
     {"wait", "Wait for the requested revision; default timeout is 10000 ms."},
@@ -37,7 +39,7 @@ const std::map<std::string, std::string> kDescriptions = {
     {"capabilities", "List supported commands and protocol capabilities."},
     {"version", "Print the application and protocol versions."}};
 const std::set<std::string> kReview = {
-    "snapshot", "selection", "state", "highlight", "frame", "view", "screenshot"};
+    "snapshot", "selection", "reference", "state", "highlight", "frame", "view", "screenshot"};
 json Envelope(const std::string& command, const std::string& session,
               const std::string& revision, bool ok) {
   json result = {{"protocolVersion", 1}, {"ok", ok}, {"command", command}};
@@ -128,10 +130,10 @@ CliParseResult ParseCli(const std::vector<std::string>& arguments) {
   if (!options.expectRevision.empty() && !kReview.count(options.command))
     return fail("--expect-revision is only valid for review commands");
   if (options.help) return result;
-  if (options.command == "open" || options.command == "view" || options.command == "screenshot") {
+  if (options.command == "open" || options.command == "view" || options.command == "screenshot" || options.command == "reference") {
     if (positional.size() != 1 || positional.front().empty())
       return fail("Usage: synthcad " + kUsage.at(options.command));
-    options.arguments[options.command == "view" ? "name" : "path"] = positional.front();
+    options.arguments[options.command == "view" ? "name" : options.command == "reference" ? "reference" : "path"] = positional.front();
   } else if (options.command == "docs") {
     if (positional.size() > 1 || (!positional.empty() && positional.front().empty()))
       return fail("Usage: synthcad docs [AREA]");
@@ -177,7 +179,7 @@ std::string Help(const std::string& command) {
         {"Discovery", {"docs", "capabilities", "version"}},
         {"Projects & sessions", {"open", "sessions", "view"}},
         {"Reload & revision checks", {"state", "revision", "wait"}},
-        {"Shared review", {"snapshot", "selection", "highlight", "frame", "screenshot"}}}) {
+        {"Shared review", {"snapshot", "selection", "reference", "highlight", "frame", "screenshot"}}}) {
       out << "\n" << area.first << ":\n";
       for (const auto& name : area.second) out << "  " << kUsage.at(name) << "\n";
     }
@@ -209,7 +211,7 @@ json Capabilities() {
   return {{"protocolVersion", 1}, {"commands", commands},
           {"persistentSessions", true}, {"semanticSnapshots", true},
           {"revisionWait", true}, {"agentHighlights", true},
-          {"screenshots", true}, {"bundledGuidance", true}, {"geometryEditing", false}, {"export", false}};
+          {"screenshots", true}, {"bundledGuidance", true}, {"selectionReferences", true}, {"geometryEditing", false}, {"export", false}};
 }
 
 json Success(const std::string& command, const json& data,
