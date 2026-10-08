@@ -42,6 +42,7 @@ synthcad docs print-design    # Printing constraints and orientation decisions
 synthcad docs profiles        # Printer, bed exclusions, nozzle and material setup
 synthcad docs fit-and-assembly
 synthcad docs build-plates
+synthcad docs checks          # Geometry/plate checks, evidence and limitations
 synthcad docs bambu-handoff
 synthcad docs cli             # This command reference
 synthcad docs projects        # Project files and revision semantics
@@ -54,7 +55,7 @@ status prefix. `docs AREA --json` returns the same text in `data.content` with
 `bundleVersion`. `docs --json` lists topic metadata. Content hashes identify
 the instructions shipped with this build; runtime never looks for guide files
 on the user's disk. Unknown areas return `not_found` and suggest discovery.
-The guides distinguish current functionality from future printer, plate and
+The guides distinguish current functionality from future automatic packing and
 3MF features. Reading a guide does not enable a feature absent from capabilities.
 
 ## Open, edit, wait and review
@@ -155,11 +156,21 @@ Run `synthcad docs profiles` for setup questions and the manifest contract, or
 before dimensions, nozzle, and material are known. Template output requires no
 viewer or session and cannot be combined with `--expect-revision`.
 
+`checks` reads cached manufacturing results for the displayed geometry and
+profile. The viewer computes these once per successful load, including named
+plate layouts; reading them does not run another model or slicer. Each result
+includes scope, method, evidence, affected instance IDs, next actions and a
+source/model/profile revision basis. Use the response's displayed `revision`
+with `highlight ... --expect-revision` to discuss affected geometry safely.
+After source edits or load failure, unguarded reads retain prior evidence with
+`current: false`; guarded reads reject the stale revision. See `docs checks`.
+
 | Command | Behavior |
 | --- | --- |
 | `docs [AREA]` | List guidance areas, or print complete bundled instructions to stdout without a viewer or filesystem setup. |
 | `overview` | Read project overview and profile context stored for the displayed revision; supports `--expect-revision`. |
 | `profile` | Read the displayed overview's project-local printer/material context; supports `--expect-revision`. |
+| `checks` | Read cached manufacturing/plate evidence, currentness and affected instance IDs; supports `--expect-revision`. |
 | `profile --template` | Print an incomplete manifest fragment without a session. Default stdout is standalone JSON; `--json` wraps it in the protocol envelope. |
 | `open PATH [--hidden]` | Start or reuse a project session. `--hidden` requests an automation window; a graphics context is still required. |
 | `sessions` | List reachable CLI-managed sessions, including session name, project path, process ID and local endpoint. |

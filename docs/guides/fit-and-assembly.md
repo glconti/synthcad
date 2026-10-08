@@ -12,8 +12,37 @@ For an uncertain interface, a small fit coupon or first article can resolve the 
 
 ## Explain design tradeoffs
 
-Separate reversible choices, such as a provisional clearance parameter, from changes that affect the requested result. Before changing the intended appearance, number of parts or function to improve assembly, explain the consequence and get the user's choice. Do not imply that pins, clips, adhesives, fasteners or printed joints have verified strength without evidence for that design and process.
+Proceed with routine reversible choices, such as an editable provisional
+clearance parameter, within the user's requested design. Explain changes to
+the intended appearance, physical part count or function and use the user's
+stated preferences. Do not imply that pins, clips, adhesives, fasteners or
+printed joints have verified strength without evidence for that design and
+process.
+
+Choose the joint around its job. Locating pins establish repeatable alignment;
+adhesive faces need accessible contact and a way to hold the parts while the
+joint forms. Fasteners need tool access and a feasible tightening sequence.
+A clip needs an insertion path and a way to flex and release without blocking
+nearby features. Check that later parts do not trap an earlier fastener or
+make required support material impossible to remove. Keep alignment and
+load-carrying functions explicit instead of assuming a small pin performs both.
+For snap joints, compare the intended motion and material with the process
+limitations in the manufacturer's [snap-fit design guidance](https://formlabs.com/blog/designing-3d-printed-snap-fit-enclosures/).
+Its machine/material-specific examples do not establish a universal clearance
+or guarantee this project's joint strength.
 
 ## Report what was checked
 
-The current viewer can display authored parts, dimensions and bounds. It does not automatically calculate a fit, collision, insertion path, retention force or load capacity. Distinguish a geometry review from a slicer preview and from a measured physical assembly. If any of those remain untested, say so and identify the specific uncertainty.
+The viewer displays authored dimensions and computes manufacturing review
+against placed solids and supplied profile metadata. `synthcad checks --json`
+can identify overlap, bounds and layout concerns; each result states its
+method, evidence and scope. These checks do not establish a workable insertion
+path, printed fit, retention force or load capacity. A geometric overlap may
+be intentional contact in an assembly and a placement fault on a print plate.
+Interpret it in the selected view's role.
+
+Distinguish deterministic geometry checks, conservative heuristics, an actual
+slicer preview and a measured physical assembly. Numeric bed-contact tolerance
+is unrelated to the clearance needed by a mechanical joint. When a question
+remains untested, name it and suggest the specific measurement, assembly
+sequence review or optional coupon that would resolve it.

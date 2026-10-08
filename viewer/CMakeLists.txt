@@ -67,6 +67,8 @@ add_executable(dingcad_viewer
   display_scale.cpp
   guided_pick_ui.cpp
   project_overview_ui.cpp
+  plate_review_ui.cpp
+  manufacturing_checks.cpp
   js_bindings.cpp
   dimensions.cpp
   appearance.cpp
@@ -149,6 +151,19 @@ else()
 endif()
 
 add_executable(synthcad_guided_pick_ui_tests EXCLUDE_FROM_ALL tests/guided_pick_ui_test.cpp guided_pick_ui.cpp parts_panel.cpp part_tree.cpp dimensions.cpp brand.cpp)
+add_executable(synthcad_manufacturing_checks_tests EXCLUDE_FROM_ALL tests/manufacturing_checks_test.cpp manufacturing_checks.cpp)
+target_include_directories(synthcad_manufacturing_checks_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(synthcad_manufacturing_checks_tests PRIVATE manifold raylib dingcad_quickjs synthcad_agent)
+add_executable(synthcad_plate_review_ui_tests EXCLUDE_FROM_ALL tests/plate_review_ui_test.cpp plate_review_ui.cpp guided_pick_ui.cpp parts_panel.cpp part_tree.cpp dimensions.cpp brand.cpp)
+target_include_directories(synthcad_plate_review_ui_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(synthcad_plate_review_ui_tests PRIVATE manifold raylib dingcad_quickjs nlohmann_json::nlohmann_json)
+foreach(target synthcad_manufacturing_checks_tests synthcad_plate_review_ui_tests)
+  if(MSVC)
+    target_compile_options(${target} PRIVATE /utf-8 /UNDEBUG)
+  else()
+    target_compile_options(${target} PRIVATE -UNDEBUG)
+  endif()
+endforeach()
 add_executable(synthcad_project_overview_ui_tests EXCLUDE_FROM_ALL tests/project_overview_ui_test.cpp project_overview_ui.cpp guided_pick_ui.cpp parts_panel.cpp part_tree.cpp dimensions.cpp brand.cpp)
 target_include_directories(synthcad_project_overview_ui_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(synthcad_project_overview_ui_tests PRIVATE manifold raylib dingcad_quickjs nlohmann_json::nlohmann_json)

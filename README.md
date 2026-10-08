@@ -136,6 +136,14 @@ files or inheriting another project's settings. Missing setup permits review.
 Read [the overview contract](docs/project-overview.md) for record formats and
 revision freshness. Authored check results remain distinct from engine checks.
 
+Use **Checks** to review generated geometry and manufacturing evidence. Named
+`plate` views render the configured bed and exclusions while reusing the same
+source parts as the assembly. `synthcad checks --json` reports transformed bounds,
+bed contact, actual solid overlaps, conservative clearance allowances and planned
+quantities with revision-bound affected IDs. `synthcad docs checks` explains each
+method and its limits. Automatic packing, slicing and verified load capacity are
+not implied by a passing geometric check.
+
 - Left-drag to orbit, right-drag to pan (the model follows the mouse), and scroll to zoom.
 - Click to select geometry. The bottom-right card switches between Part,
   Surface, Edge and Vertex modes. Surfaces distinguish planar faces from

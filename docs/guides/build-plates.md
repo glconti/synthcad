@@ -1,6 +1,9 @@
 # Build-plate layouts
 
-Run `synthcad docs build-plates` to print this guide. The current workflow uses manually authored scene views; it does not provide automatic packing or a printer-profile contract.
+Run `synthcad docs build-plates` to print this guide. Plate layouts are authored
+views of a shared design graph. The project profile supplies explicit machine
+metadata; `synthcad checks --json` reports the current manufacturing review.
+Layouts remain deliberate source edits; automatic packing is not provided.
 
 ## Author a separate print view
 
@@ -16,13 +19,27 @@ For new multi-view projects, export a shared `design` graph: define source parts
 once, give each physical copy a distinct instance ID, and reference those IDs
 from groups and view members. A plate's `placements` override assembly poses
 without changing the source or other views. Run `synthcad docs design` for the
-schema. The instance registry and intended quantities are available; automatic
-plate completeness and printer-dependent validation remain future work.
+schema. Manufacturing quantity review compares physical instances and declared
+source quantities across plate views. Group aliases remain a single copy;
+assigning one instance to multiple plates is a review concern.
 
 Use the user's known usable build area and bed exclusions. If these are unknown, leave plate fit provisional and proceed with model review; do not infer a printer from another project. Place parts with room for the slicer choices that are actually known, and state when support or brim allowances have not been included.
 
 ## Review placement limits
 
-Inspect each transformed part and the combined layout in the viewer. The current review CLI can report scene and part information, bounds, diagnostics and a screenshot. It does not automatically pack parts or verify bed contact, overlap, clearances, support access, brim room or printer compatibility. Check those conditions explicitly against the chosen machine and slicer before describing a layout as ready to print.
+Inspect each transformed part and the combined layout in the viewer. Run
+`synthcad checks --session NAME --json` for bounds, bed contact, overlap,
+allowance and quantity review against the current placed solids and supplied
+profile. Read each check's method, scope and evidence: deterministic geometry
+calculations and conservative warnings support different conclusions. Unknown
+or provisional inputs leave dependent results unresolved.
+
+Set per-view `plateSettings` for known `partGap`, `brim` and `support`
+allowances; omitted values remain unknown. Explicit zero is an authored choice,
+not a default prediction about slicing. `contactTolerance` is a numerical
+comparison tolerance, not a fit allowance. Run `synthcad docs profiles` for
+project metadata and see [manufacturing checks](../manufacturing-checks.md)
+for the report contract. Verify actual support/brim geometry and accessibility
+in the target slicer before describing a layout as ready to print.
 
 The GUI's Export STL preserves the selected model solids' current coordinates. Exporting an assembly view therefore preserves assembly placement; exporting a manually authored plate view preserves its plate placement. A plate scene is the authored geometry itself, not proof that parts fit or slice correctly. Run `synthcad docs bambu-handoff` for the available export path.

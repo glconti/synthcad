@@ -49,7 +49,9 @@ void CheckParsing() {
   Require(bool(ParseCli({"frame"})), "whole-scene framing must parse");
   Require(bool(ParseCli({"docs"})), "guidance discovery must parse");
   Require(bool(ParseCli({"overview", "--expect-revision", "rev"})) &&
-          bool(ParseCli({"profile", "--expect-revision", "rev"})), "context reads support revision guards");
+          bool(ParseCli({"profile", "--expect-revision", "rev"})) &&
+          bool(ParseCli({"checks", "--expect-revision", "rev"})), "context reads support revision guards");
+  Require(!ParseCli({"checks", "extra"}) && !ParseCli({"checks", "--template"}), "checks are read-only context");
   auto profileTemplate = ParseCli({"profile", "--template", "--json"});
   Require(bool(profileTemplate) && profileTemplate.options.arguments.at("template") == true,
           "profile template must parse without a session");

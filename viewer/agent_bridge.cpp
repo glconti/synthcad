@@ -112,12 +112,31 @@ json AgentBridge::Handle(const json& request){
   const auto guard=request.value("expectRevision","");
   if(!guard.empty()&&(snapshot_.value("status","")!="ready"||guard!=snapshot_.value("displayedRevision","")||!MatchesDisk(files_)))
     return failure("stale_revision","The requested displayed revision is no longer current");
+  if(command=="checks"){
+    auto report=snapshot_.value("manufacturing",json{{"current",false},{"checks",json::array()}});
+    if(!report.is_object())report={{"current",false},{"checks",json::array()}};
+    if(snapshot_.value("status","")!="ready"||!MatchesDisk(files_)){
+      report["current"]=false;report["diagnostic"]="Source changed or loading failed; retained checks are not current.";
+    }
+    return Success(command,report,session_,snapshot_.value("displayedRevision",""));
+  }
   if(command=="overview"||command=="profile"){
-    const auto overview=snapshot_.value("overview",json(nullptr));
+    auto overview=snapshot_.value("overview",json(nullptr));
+    if(command=="overview"&&overview.is_object()&&overview.contains("generatedChecksCurrent")&&
+       (snapshot_.value("status","")!="ready"||!MatchesDisk(files_)))overview["generatedChecksCurrent"]=false;
     return Success(command,command=="profile"&&overview.is_object()?overview.value("profile",json(nullptr)):overview,session_,snapshot_.value("displayedRevision",""));
   }
   if(command=="state"||command=="snapshot"||command=="selection"){
-    return Success(command,command=="selection"?json{{"selection",snapshot_.value("selection",json(nullptr))}}:snapshot_,session_,snapshot_.value("displayedRevision",""));
+    auto exposed=command=="selection"?json{{"selection",snapshot_.value("selection",json(nullptr))}}:snapshot_;
+    if(command!="selection"&&(snapshot_.value("status","")!="ready"||!MatchesDisk(files_))){
+      if(exposed.contains("manufacturing")&&exposed["manufacturing"].is_object()){
+        exposed["manufacturing"]["current"]=false;
+        exposed["manufacturing"]["diagnostic"]="Source changed or loading failed; retained checks are not current.";
+      }
+      if(exposed.contains("overview")&&exposed["overview"].is_object()&&exposed["overview"].contains("generatedChecksCurrent"))
+        exposed["overview"]["generatedChecksCurrent"]=false;
+    }
+    return Success(command,exposed,session_,snapshot_.value("displayedRevision",""));
   }
   if(command=="revision"){
     std::vector<std::filesystem::path> paths;

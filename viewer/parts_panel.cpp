@@ -134,7 +134,7 @@ PartsLayout PartsPanel::Layout(const PartTree &tree,int w,int h) const{
  if(!open){l.card={margin,margin,144,44};l.collapse=l.card;return l;}
  float x=margin+pad,right=margin+width-pad;
  l.collapse={right-24,24,24,control};l.exportButton={right-138,24,106,control};
- l.file={x,65,width-104,24};l.overview={right-76,61,76,32};l.search={x,96,width-24,control};l.clear={right-30,96,30,control};
+ l.file={x,65,width-184,24};l.checks={right-156,61,76,32};l.overview={right-76,61,76,32};l.search={x,96,width-24,control};l.clear={right-30,96,30,control};
  float available=width-32;float first=available*0.33f,second=available*0.25f;
  l.isolate={x,138,first,control};l.showAll={x+first+4,138,second,control};l.frame={x+first+second+8,138,available-first-second,control};
  l.list={margin+6,200,width-12,std::max(0.f,l.card.height-196)};
@@ -155,6 +155,7 @@ PanelActions PartsPanel::Update(PartTree &tree,const PanelInput &i,int w,int h){
  if(searchFocus){auto before=search;editor.Update(search,i);if(before!=search)scroll=0;if(i.escape||i.enter)searchFocus=false;}
  if(Hit(i,l.exportButton))a.openExport=true;
  if(Hit(i,l.overview)){a.openOverview=true;searchFocus=false;}
+ if(Hit(i,l.checks)){a.openChecks=true;searchFocus=false;}
  if(Hit(i,l.isolate)&&(tree.Selection()||tree.state.isolated))tree.Isolate();
  if(Hit(i,l.showAll))tree.ShowAll();
  if(Hit(i,l.frame))a.frame=true;
@@ -180,6 +181,7 @@ void PartsPanel::Draw(const PartTree &tree,Font f,int w,int h) const{
  Button(l.exportButton,"Export STL",f,true,true);if(Over(l.collapse))Card(l.collapse,{223,232,216,255});Chevron(l.collapse.x+12,40,false);
  Label(sceneName,f,l.file.x,l.file.y+3,l.file.width,15,muted);
  Button(l.overview,"Project",f);
+ Button(l.checks,"Checks",f);
  Field(l.search,search,"Search parts...",editor,searchFocus,f,24);if(!search.empty())Cross(l.clear);
  Button(l.isolate,tree.state.isolated?"Exit isolation":"Isolate",f,tree.Selection().has_value()||tree.state.isolated);
  Button(l.showAll,"Show all",f);bool canFrame=false;if(auto n=tree.Selection())for(auto p:tree.nodes[*n].parts)canFrame|=tree.Visible(p);

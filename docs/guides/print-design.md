@@ -8,7 +8,13 @@ Use the intended function, appearance, available printer, usable bed area, nozzl
 
 ## Compare orientations by consequence
 
-For each candidate orientation, consider which faces touch the bed, how layer direction relates to expected loads, where supports would be needed and removed, which surfaces must look clean, and whether the part can be handled and assembled afterward. Explain tradeoffs in concrete terms. If changing orientation or splitting a part would alter the requested appearance, part count or function, get the user's choice first.
+For each candidate orientation, consider which faces touch the bed, how layer
+direction relates to expected loads, where supports would be needed and
+removed, which surfaces must look clean, and whether the part can be handled
+and assembled afterward. Explain tradeoffs in concrete terms. Proceed with
+routine reversible orientation and layout edits within the user's request.
+If an alternative changes the intended appearance, physical part count or
+function, explain its consequence and use the user's stated preferences.
 
 Treat print-process settings as profile-specific. Do not present guessed layer heights, clearances, temperatures, wall counts or strength limits as validated settings. You can choose provisional, editable dimensions to move a design forward; label their basis and uncertainty. A recommendation should identify its assumptions and what the user must check in the target slicer.
 
@@ -21,9 +27,27 @@ process rather than assuming every modeled feature will survive slicing.
 Consider the load path across layer boundaries when orienting hooks, clips or
 long arms. Splitting a part can reduce supports but introduces alignment,
 assembly and joint-strength requirements; compare the complete assembled design.
+These review choices are consistent with Prusa's guidance on
+[model orientation, minimum features and splitting parts](https://help.prusa3d.com/article/modeling-with-3d-printing-in-mind_164135)
+and [support access/removal](https://help.prusa3d.com/article/support-material_1698).
+Use that guidance for its stated process; it does not validate this project's
+machine, material or chosen dimensions.
 
 ## State the evidence honestly
 
-SynthCAD can display the authored model and its bounds. An authored check can report a geometric calculation, but the viewer does not automatically calculate wall thickness, support demand, bed compatibility, toolpaths, print time or material use. A successful model reload is not a successful slice.
+`synthcad checks --json` reports engine calculations for placed-part bounds,
+bed contact, overlap, specified allowances and plate quantities. Read the
+method and scope: a deterministic bounds calculation is different from a
+conservative heuristic warning. Authored overview records remain authored
+claims. Neither a passing model check nor a successful reload establishes a
+successful slice.
+
+The viewer does not derive actual support demand, toolpaths, print time,
+material use, mechanical strength or process-specific minimum feature survival.
+For a thin wall, hole or pin, inspect whether the target slicer retains a
+continuous feature and whether its orientation supports the intended load and
+assembly. Keep a support-removal path open; splitting a cavity can improve
+access but introduces an alignment and joint design decision. Check those
+consequences on the complete assembly.
 
 Use the slicer's preview to inspect the actual orientation, supports and toolpaths for the chosen printer and profile. Physical fit, load and durability claims require measurements or tests on printed parts. Such samples are optional to ordinary modeling and export; when evidence is absent, name the open question instead of describing the part as verified.

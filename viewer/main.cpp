@@ -52,6 +52,8 @@ extern "C" {
 #include "printer_profile.h"
 #include "project_overview.h"
 #include "project_overview_ui.h"
+#include "manufacturing_checks.h"
+#include "plate_review_ui.h"
 #include "display_scale.h"
 
 namespace {
@@ -955,6 +957,8 @@ int main(int argc, char *argv[]) {
   nlohmann::json projectOverview;
   bool overviewDirty=true;
   dingcad::ProjectOverviewUi overviewUi;
+  dingcad::PlateReviewUi plateUi;
+  nlohmann::json manufacturing={{"current",false},{"checks",nlohmann::json::array()}};
   auto refreshOverview=[&](){
     if(!overviewDirty)return;
     auto metadata=project?project->metadata:nlohmann::json::object();
@@ -1023,15 +1027,40 @@ int main(int argc, char *argv[]) {
       for(const auto& f:attemptedFiles)watchedFiles[f.first]=f.second;
     }
     if(load.success){
-      displayedFiles=attemptedFiles;displayedSourceRevision=attemptedRevision;
-      displayedView=activeView;displayedDesign=load.design;
       // Same source bytes can describe several layouts. Guards identify what
       // was displayed, including the active view and resolved graph placement.
       const auto identity=load.design.is_object()?load.design.value("identity",""):"";
-      displayedRevision=synthcad::Sha256("synthcad-display-v1:"+
+      const auto nextDisplayedRevision=synthcad::Sha256("synthcad-display-v1:"+
           std::to_string(activeView.size())+":"+activeView+attemptedRevision+identity);
-      observedViews[activeView]={modelFiles,synthcad::CanonicalPath(scriptPath),synthcad::ModelRevision(modelFiles,activeView,identity)};
+      const auto modelRevision=synthcad::ModelRevision(modelFiles,activeView,identity);
+      const auto metadata=project?project->metadata:nlohmann::json::object();
+      const auto profile=synthcad::PrinterProfileContext(metadata);
+      const auto basis=nlohmann::json{{"view",activeView},{"modelRevision",modelRevision},
+        {"sourceRevision",attemptedRevision},{"profileRevision",profile.value("profileRevision",nlohmann::json(nullptr))}};
+      nlohmann::json nextManufacturing;
+      try {
+        nextManufacturing=dingcad::ManufacturingChecks(SceneParts(load.manifold,load.appearance),load.design,profile,metadata,basis);
+      }catch(const std::exception& error){
+        nextManufacturing={{"view",activeView},{"basis",basis},{"checks",nlohmann::json::array({
+          {{"id","engine-unavailable"},{"name","Manufacturing checks"},{"result","not-checked"},{"scope","geometry"},
+           {"partIds",nlohmann::json::array()},{"basis",basis},{"method","engine failure"},{"evidence",{{"diagnostic",error.what()}}},
+           {"nextActions",{"Correct the diagnostic and reload before relying on these checks."}}}})}};
+      }
+      // Intersection checks can take time. Never acknowledge bytes replaced
+      // while checks were running as the currently displayed revision.
+      if(!synthcad::MatchesDisk(attemptedFiles)){
+        load.success=false;loadStatus="loading";
+        load.message=loadDiagnostic="Source changed during checks; waiting for a stable revision.";
+        overviewDirty=true;return;
+      }
+      displayedFiles=attemptedFiles;displayedSourceRevision=attemptedRevision;
+      displayedView=activeView;displayedDesign=load.design;displayedRevision=nextDisplayedRevision;
+      observedViews[activeView]={modelFiles,synthcad::CanonicalPath(scriptPath),modelRevision};
       viewDescriptions[synthcad::CanonicalPath(scriptPath)]=load.design.is_object()?load.design.value("views",nlohmann::json::array()):nlohmann::json::array();
+      manufacturing=std::move(nextManufacturing);
+      manufacturing["displayedRevision"]=displayedRevision;
+      manufacturing["profile"]=profile;
+      manufacturing["current"]=true;
     }
     overviewDirty=true;
   };
@@ -1135,12 +1164,30 @@ int main(int argc, char *argv[]) {
   std::string liveSceneKey=scriptPath.u8string()+"\nview:"+activeView;
   auto viewport=panel.Viewport(GetScreenWidth(),GetScreenHeight());
   BoundingBox renderBounds{{-20,-0.1f,-20},{20,2,20}};
+  auto plateBounds=[&]()->std::optional<BoundingBox>{
+    if(!dingcad::CanDrawPlateBed(manufacturing))return std::nullopt;
+    const auto& bed=manufacturing["bed"];
+    if(!bed.contains("size")||!bed["size"].is_array()||bed["size"].size()!=3)return std::nullopt;
+    for(const auto& value:bed["size"])if(!value.is_number()||!std::isfinite(value.get<double>())||value.get<double>()<=0)return std::nullopt;
+    const auto far=dingcad::CadToWorld({bed["size"][0].get<float>(),bed["size"][1].get<float>(),bed["size"][2].get<float>()});
+    return BoundingBox{Vector3Min(Vector3{},far),Vector3Max(Vector3{},far)};
+  };
   auto updateBounds=[&](){
     renderBounds={{-20,-0.1f,-20},{20,2,20}};
     if(auto b=partModels.Bounds(tree)){renderBounds.min=Vector3Min(renderBounds.min,b->min);renderBounds.max=Vector3Max(renderBounds.max,b->max);}
+    if(auto b=plateBounds()){renderBounds.min=Vector3Min(renderBounds.min,b->min);renderBounds.max=Vector3Max(renderBounds.max,b->max);}
   };
-  auto frameParts=[&](bool selected){
-    if(auto b=partModels.Bounds(tree,selected)){
+  auto frameParts=[&](bool selected,const std::vector<std::string>& ids=std::vector<std::string>{}){
+    auto b=ids.empty()?partModels.Bounds(tree,selected):std::optional<BoundingBox>{};
+    if(!selected&&ids.empty())if(auto bed=plateBounds()){
+      if(b){b->min=Vector3Min(b->min,bed->min);b->max=Vector3Max(b->max,bed->max);}else b=bed;
+    }
+    if(!ids.empty())for(size_t i=0;i<tree.parts.size();++i)if(tree.Visible(i)&&partModels.models[i].meshCount&&
+      std::find(ids.begin(),ids.end(),tree.parts[i].id)!=ids.end()){
+      const auto& bounds=partModels.bounds[i];
+      if(b){b->min=Vector3Min(b->min,bounds.min);b->max=Vector3Max(b->max,bounds.max);}else b=bounds;
+    }
+    if(b){
       camera=FrameScene(*b,static_cast<int>(viewport.width),static_cast<int>(viewport.height));
       orbitDistance=Vector3Distance(camera.position,camera.target);
       orbitYaw=atan2f(camera.position.x-camera.target.x,camera.position.z-camera.target.z);
@@ -1152,6 +1199,10 @@ int main(int argc, char *argv[]) {
     refreshOverview();
     projectOverview["activeView"]=activeView;projectOverview["displayedView"]=displayedView;
     projectOverview["geometryStatus"]=loadStatus;projectOverview["geometryDiagnostic"]=loadDiagnostic;
+    manufacturing["current"]=loadStatus=="ready"&&projectOverview.value("metadataCurrent",true)&&activeView==displayedView;
+    manufacturing["diagnostic"]=manufacturing.value("current",false)?"":"Retained checks are not current; correct the source and reload.";
+    projectOverview["generatedChecks"]=manufacturing.value("checks",nlohmann::json::array());
+    projectOverview["generatedChecksCurrent"]=manufacturing.value("current",false);
     if(!agent)return;
     auto snapshot=synthcad::ReviewSnapshot(tree,dimensions,camera,agentHighlights);
     if(!snapshot["selection"].is_null()){
@@ -1166,6 +1217,7 @@ int main(int argc, char *argv[]) {
     snapshot["sourceRevision"]=displayedSourceRevision;snapshot["displayedView"]=displayedView;
     snapshot["design"]=displayedDesign;
     snapshot["overview"]=projectOverview;
+    snapshot["manufacturing"]=manufacturing;
     snapshot["diagnostic"]=loadDiagnostic;snapshot["view"]=activeView;
     snapshot["projectPath"]=project?project->path.u8string():scriptPath.u8string();
     snapshot["views"]=nlohmann::json::object();
@@ -1439,6 +1491,7 @@ int main(int argc, char *argv[]) {
             orbitDistance=Vector3Distance(camera.position,camera.target);
             orbitYaw=atan2f(camera.position.x-camera.target.x,camera.position.z-camera.target.z);
             orbitPitch=asinf((camera.position.y-camera.target.y)/orbitDistance);}
+          if(command=="frame"&&ids.empty()&&!args.value("selection",false))frameParts(false);
         }
         publishAgent();
         action->result.set_value(synthcad::Success(command,{{"highlights",agentHighlights}},agentSession,displayedRevision));
@@ -1456,9 +1509,12 @@ int main(int argc, char *argv[]) {
     dingcad::SelectionActions selectionActions;
     dingcad::GuidedPickActions guidedActions;
     dingcad::ProjectOverviewActions overviewActions;
+    dingcad::PlateReviewActions plateActions;
+    const bool plateWasOpen=plateUi.open;
     const bool overviewWasOpen=overviewUi.open;
-    const auto overviewCaptures=[&](){return overviewUi.open&&overviewUi.CapturesMouse(input,uiWidth,uiHeight);};
-    const auto partsCaptures=[&](){return !overviewUi.open&&panel.CapturesMouse(tree,input,uiWidth,uiHeight);};
+    const auto plateCaptures=[&](){return plateUi.open&&plateUi.CapturesMouse(input,uiWidth,uiHeight);};
+    const auto overviewCaptures=[&](){return (overviewUi.open&&overviewUi.CapturesMouse(input,uiWidth,uiHeight))||plateCaptures();};
+    const auto partsCaptures=[&](){return !overviewUi.open&&!plateUi.open&&panel.CapturesMouse(tree,input,uiWidth,uiHeight);};
     const bool guidedUiActive=guidedUi.active&&workspace.loadError.empty()&&!workspace.help;
     workspace.toastBottom=guidedUiActive?guidedUi.Bounds(uiWidth,uiHeight).height+24:128;
     const auto guidedCaptures=[&](){return guidedUiActive&&guidedUi.CapturesMouse(input,uiWidth,uiHeight);};
@@ -1467,26 +1523,35 @@ int main(int argc, char *argv[]) {
     if(!selectionUiActive)selectionUi.gesture=false;
     const auto selectionCaptures=[&](){return selectionUiActive&&selectionUi.CapturesMouse(input,uiWidth,uiHeight);};
     if(!modalWasOpen){
+      if(plateWasOpen)plateActions=plateUi.Update(manufacturing,input,brandingFont,uiWidth,uiHeight);
       if(overviewWasOpen)overviewActions=overviewUi.Update(projectOverview,input,brandingFont,uiWidth,uiHeight);
       if(guidedUiActive){auto guidedInput=input;
-        if(keyboardWasCaptured||overviewWasOpen)guidedInput.escape=guidedInput.enter=false;
+        if(keyboardWasCaptured||overviewWasOpen||plateWasOpen)guidedInput.escape=guidedInput.enter=false;
         if(overviewCaptures()){guidedInput.pressed=false;guidedInput.rightPressed=false;guidedInput.wheel=0;}
         guidedActions=guidedUi.Update(guidedInput,uiWidth,uiHeight,[&](const std::string& text){return MeasureTextEx(brandingFont,text.c_str(),16,0).x;});
       }
       if(selectionUiActive&&!overviewCaptures())selectionActions=selectionUi.Update(input,uiWidth,uiHeight);
       if(!selectionCaptures()&&!guidedCaptures()&&!overviewCaptures())workspaceActions=workspace.Update(input,uiWidth,uiHeight,GetTime());
-      if(!overviewWasOpen&&((!workspace.CapturesMouse(input,uiWidth,uiHeight,GetTime())&&!selectionCaptures()&&!guidedCaptures())||input.find))
+      if(!overviewWasOpen&&!plateWasOpen&&((!workspace.CapturesMouse(input,uiWidth,uiHeight,GetTime())&&!selectionCaptures()&&!guidedCaptures())||input.find))
         actions=panel.Update(tree,input,uiWidth,uiHeight);
     }
-    if(actions.openOverview){overviewUi.open=true;panel.searchFocus=false;}
+    if(actions.openOverview){overviewUi.open=true;plateUi.open=false;panel.searchFocus=false;}
+    if(actions.openChecks){plateUi.open=true;overviewUi.open=false;panel.searchFocus=false;}
+    if(plateActions.close||(!modalWasOpen&&input.find))plateUi.open=false;
     if(overviewActions.close||(!modalWasOpen&&input.find)){overviewUi.open=false;
-      if(input.find&&overviewWasOpen)actions=panel.Update(tree,input,uiWidth,uiHeight);}
+      if(input.find&&(overviewWasOpen||plateWasOpen))actions=panel.Update(tree,input,uiWidth,uiHeight);}
     if(actions.selectionChanged)clearGeometry();
     viewport=panel.Viewport(GetScreenWidth(),GetScreenHeight());
-    const bool captureKeyboard=keyboardWasCaptured||panel.searchFocus||exportDialog.open||(overviewWasOpen&&(overviewActions.close||input.find))||
+    const bool captureKeyboard=keyboardWasCaptured||panel.searchFocus||exportDialog.open||((overviewWasOpen||plateWasOpen)&&(overviewActions.close||plateActions.close||input.find))||
       (partsCaptures()||workspace.CapturesMouse(input,uiWidth,uiHeight,GetTime())||selectionCaptures()||guidedCaptures()||overviewCaptures());
-    const bool captureMouse=modalWasOpen||exportDialog.open||overviewWasOpen&&(overviewActions.close||!overviewActions.view.empty())||
+    const bool captureMouse=modalWasOpen||exportDialog.open||(overviewWasOpen&&(overviewActions.close||!overviewActions.view.empty()))||(plateWasOpen&&(plateActions.close||!plateActions.highlight.empty()))||
       (partsCaptures()||workspace.CapturesMouse(input,uiWidth,uiHeight,GetTime())||selectionCaptures()||guidedCaptures()||overviewCaptures());
+    if(!plateActions.highlight.empty()&&manufacturing.value("current",false)&&synthcad::MatchesDisk(displayedFiles)){
+      agentHighlights.clear();
+      for(const auto& id:plateActions.highlight)
+        if(std::any_of(tree.parts.begin(),tree.parts.end(),[&](const auto& part){return part.id==id;}))agentHighlights.push_back(id);
+      if(plateActions.frame&&!agentHighlights.empty())frameParts(false,agentHighlights);
+    }
     if(!overviewActions.view.empty()&&project&&project->views.count(overviewActions.view)){
       activeView=overviewActions.view;agentHighlights.clear();reloadRequested=true;
     }
@@ -1646,6 +1711,7 @@ int main(int argc, char *argv[]) {
     BeginTextureMode(rtColor);
     ClearBackground({242,242,236,255});BeginMode3D(camera);
     DrawXZGrid(kGridHalfLines,kGridSpacing,Fade(LIGHTGRAY,0.18f));DrawAxes(kAxesLength);
+    dingcad::DrawPlateBed(manufacturing);
     if(kUsePostProcessing){
       rlDisableBackfaceCulling();partModels.Draw(tree,&outlineMat);rlEnableBackfaceCulling();
       partModels.Draw(tree,&toonMat);
@@ -1693,13 +1759,14 @@ int main(int argc, char *argv[]) {
       const float textWidth=MeasureTextEx(brandingFont,empty,18,0).x;
       DrawTextEx(brandingFont,empty,{std::max(12.f,(uiWidth-textWidth)/2),uiHeight-80.f},18,0,DARKGRAY);
     }
-    if(!overviewUi.open)panel.Draw(tree,brandingFont,uiWidth,uiHeight);
+    if(!overviewUi.open&&!plateUi.open)panel.Draw(tree,brandingFont,uiWidth,uiHeight);
     workspace.Draw(brandingFont,uiWidth,uiHeight,dimensionControls.mode,GetTime());
     if(selectionUiActive&&showSelectionUi())selectionUi.Draw(brandingFont,uiWidth,uiHeight);
     if(guidedUi.active&&workspace.loadError.empty()&&!workspace.help)guidedUi.Draw(brandingFont,uiWidth,uiHeight,uiScale);
     if(overviewUi.open)overviewUi.Draw(projectOverview,brandingFont,uiWidth,uiHeight,uiScale);
+    if(plateUi.open)plateUi.Draw(manufacturing,brandingFont,uiWidth,uiHeight,uiScale);
     exportDialog.Draw(brandingFont,uiWidth,uiHeight,tree.ExportIndices(exportDialog.visibleOnly).size(),exportValid);
-    if(!agentHighlights.empty()&&!overviewUi.open)DrawTextEx(brandingFont,guidedUi.active?"Agent highlight":"Agent highlight - Esc to clear",{380.f,62.f},16,0,{48,106,142,255});
+    if(!agentHighlights.empty()&&!overviewUi.open&&!plateUi.open)DrawTextEx(brandingFont,guidedUi.active?"Agent highlight":"Agent highlight - Esc to clear",{380.f,62.f},16,0,{48,106,142,255});
     rlPopMatrix();
     for(auto& action:pendingScreenshots){
       const auto args=action->request.at("arguments");const auto path=args.at("path").get<std::string>();

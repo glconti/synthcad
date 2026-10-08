@@ -84,7 +84,8 @@ This inventory reflects the initial PRD draft, before the delivery batches.
 For implemented capabilities and platform evidence, see
 [Batch 1](../batch-1-validation.md), [Batch 2](../batch-2-validation.md) and
 [Batch 3](../batch-3-validation.md), [Batch 4](../batch-4-validation.md),
-[Batch 5](../batch-5-validation.md) and [Batch 6](../batch-6-validation.md).
+[Batch 5](../batch-5-validation.md), [Batch 6](../batch-6-validation.md) and
+[Batch 7](../batch-7-validation.md).
 It is not a current platform or physical test report.
 
 | Capability | Current state and implication |

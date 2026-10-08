@@ -44,7 +44,7 @@ def main():
         index = json.loads(call('docs', '--json'))
         assert index['ok'] and index['command'] == 'docs'
         topics = index['data']['topics']
-        assert len(topics) == 13
+        assert len(topics) == 14
         assert 'bundleVersion' in index['data']
         for entry in topics:
             topic = entry['topic']
@@ -61,7 +61,7 @@ def main():
         assert 'synthcad docs' in error['error']['message']
         call('docs', 'start', 'extra', exit_code=2)
         assert sorted(path.name for path in root.iterdir()) == [executable.name], 'Discovery wrote files'
-    print('PASS stdout-only guides: standalone CLI, grouped help, 13 complete topics, UTF-8, hashes, errors, no writes')
+    print('PASS stdout-only guides: standalone CLI, grouped help, 14 complete topics, UTF-8, hashes, errors, no writes')
 
 
 if __name__ == '__main__':

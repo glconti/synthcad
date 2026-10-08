@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "name": "Public plate review fixture",
+  "defaultView": "assembly",
+  "views": {
+    "assembly": "design.js",
+    "inspection": "design.js",
+    "plate-a": "design.js",
+    "plate-b": "design.js"
+  },
+  "activeProfile": "fixture-machine",
+  "profiles": {
+    "fixture-machine": {
+      "name": "Explicit acceptance test metadata",
+      "printer": {"id": "fixture-machine", "name": "Test machine"},
+      "buildVolume": [100, 100, 80],
+      "exclusions": [{"name": "Test exclusion", "min": [0, 0], "max": [10, 10]}],
+      "nozzleDiameter": 0.4,
+      "material": {"id": "fixture-material", "name": "Test material"},
+      "provenance": {"type": "user", "description": "Public test data; no printer validation"}
+    }
+  },
+  "plateSettings": {
+    "plate-a": {"partGap": 2, "brim": 0, "support": 0, "contactTolerance": 0.0001},
+    "plate-b": {"partGap": 2, "brim": 0, "support": 0, "contactTolerance": 0.0001}
+  }
+}

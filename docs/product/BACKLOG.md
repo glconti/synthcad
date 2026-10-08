@@ -397,9 +397,11 @@ Geometric picking and revision-bound references (SC08) are implemented; see
 remains outstanding, so the issue stays open. **SC09** guided picks and
 event readback build on this selection contract; see [Batch 5](../batch-5-validation.md).
 **SC10–SC11** project overview and printer profiles are integrated in
-[Batch 6](../batch-6-validation.md). Next, use those profiles and the existing
-shared-instance contract for **SC13–SC14** plate checks and scoped manufacturing
-results. Start Linux CI and licensing
+[Batch 6](../batch-6-validation.md). **SC13–SC14** build-plate review and scoped
+manufacturing results build on those profiles and shared instances; see
+[Batch 7](../batch-7-validation.md). Next, prove the Bambu Studio format/profile
+matrix in **SC15** before implementing **SC16–SC17** prepared export and provenance.
+Start Linux CI and licensing
 resolution in parallel when resources are available; do not leave either until
 packaging. The Bambu-format spike should precede promises about exact export
 settings.

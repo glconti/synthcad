@@ -65,6 +65,8 @@ int main() {
         Check(bridge.Handle(Request("selection"))["data"]["selection"].is_null(), "selection null passes through");
         auto contextSnapshot = Snapshot("ready", first, firstRevision);
         contextSnapshot["overview"] = {{"projectName", "Custom"}, {"profile", {{"status", "incomplete"}, {"activeProfile", "custom"}}}};
+        contextSnapshot["manufacturing"] = {{"current",true},{"checks",json::array({{{"id","bed"},{"result","passed"}}})}};
+        contextSnapshot["overview"]["generatedChecksCurrent"]=true;
         bridge.Publish(contextSnapshot, first);
         const auto overview = bridge.Handle(Request("overview"));
         Check(overview["data"] == contextSnapshot["overview"] && overview["revision"] == firstRevision,
@@ -75,6 +77,9 @@ int main() {
         auto staleContext = Request("profile"); staleContext["expectRevision"] = "old";
         ErrorCode(bridge.Handle(staleContext), "stale_revision");
         Check(bridge.Drain().empty(), "context reads never queue an action");
+        Check(bridge.Handle(Request("checks"))["data"]==contextSnapshot["manufacturing"],"checks read the current viewer report");
+        auto staleChecks=Request("checks");staleChecks["expectRevision"]="old";
+        ErrorCode(bridge.Handle(staleChecks),"stale_revision");
         auto token = bridge.Handle(Request("revision"))["data"]["revision"].get<std::string>();
         auto ready = bridge.Handle(Request("wait", {{"revision", token}}));
         Check(ready["ok"] == true && ready["data"]["requestedRevision"] == token
@@ -90,6 +95,15 @@ int main() {
 
         Write(entry, "import './new.js'");
         Write(imported, "new dependency");
+        const auto retainedChecks=bridge.Handle(Request("checks"));
+        Check(retainedChecks["data"]["current"]==false&&retainedChecks["data"]["checks"]==contextSnapshot["manufacturing"]["checks"],"source edits invalidate but preserve check evidence");
+        for(const auto* command:{"state","snapshot"}){
+          const auto exposed=bridge.Handle(Request(command))["data"];
+          Check(exposed["manufacturing"]["current"]==false&&exposed["overview"]["generatedChecksCurrent"]==false,
+                "all snapshot projections invalidate check currentness before watcher reload");
+          Check(exposed["manufacturing"]["checks"]==contextSnapshot["manufacturing"]["checks"],"stale snapshot preserves evidence");
+        }
+        Check(bridge.Handle(Request("overview"))["data"]["generatedChecksCurrent"]==false,"overview checks invalidate at read time");
         auto guarded = Request("frame");
         guarded["expectRevision"] = firstRevision;
         ErrorCode(bridge.Handle(guarded), "stale_revision");

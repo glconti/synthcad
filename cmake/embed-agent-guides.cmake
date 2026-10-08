@@ -3,7 +3,7 @@
 function(synthcad_embed_agent_guides output)
   set(sources "${PROJECT_SOURCE_DIR}/API.md" "${PROJECT_SOURCE_DIR}/docs/agent-cli.md"
       "${PROJECT_SOURCE_DIR}/docs/agent-contract.md" "${PROJECT_SOURCE_DIR}/docs/design-graph.md" "${PROJECT_SOURCE_DIR}/docs/project-overview.md"
-      "${PROJECT_SOURCE_DIR}/skills/synthcad-design/SKILL.md")
+      "${PROJECT_SOURCE_DIR}/docs/manufacturing-checks.md" "${PROJECT_SOURCE_DIR}/skills/synthcad-design/SKILL.md")
   file(GLOB guides CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/docs/guides/*.md")
   list(SORT guides)
   list(APPEND sources ${guides})
@@ -23,6 +23,8 @@ function(synthcad_embed_agent_guides output)
       set(topic "design")
     elseif(relative STREQUAL "docs/project-overview.md")
       set(topic "overview")
+    elseif(relative STREQUAL "docs/manufacturing-checks.md")
+      set(topic "checks")
     elseif(relative STREQUAL "skills/synthcad-design/SKILL.md")
       set(topic "skill")
     endif()

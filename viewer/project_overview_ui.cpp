@@ -451,6 +451,13 @@ struct DocumentBuilder {
       Add("Diagnostic: " + StringField(overview, "geometryDiagnostic", ""));
 
     AddProfile(overview);
+    if(const auto* checks=Field(overview,"generatedChecks");checks&&checks->is_array()){
+      Section("Generated checks");
+      Add(StringField(overview,"generatedChecksCurrent", "false")=="true"?"Current displayed revision":"Not current; reload required");
+      for(const auto& check:*checks)
+        Add(StringField(check,"name")+": "+StringField(check,"result")+" ("+StringField(check,"scope")+")");
+      Add("Close this card and choose Checks for evidence and affected parts.");
+    }
     Section("Authored records");
     Add("Origin: authored");
     AddMeasurements(Field(overview, "measurements"));

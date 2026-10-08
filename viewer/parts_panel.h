@@ -20,9 +20,9 @@ struct TextEdit {
   void Update(std::string &text,const PanelInput &input);
   void Focus(const std::string &text,bool all=false);
 };
-struct PanelActions {bool frame=false,openExport=false,save=false,fitAll=false,dimensions=false,reload=false,selectionChanged=false,openOverview=false;};
+struct PanelActions {bool frame=false,openExport=false,save=false,fitAll=false,dimensions=false,reload=false,selectionChanged=false,openOverview=false,openChecks=false;};
 struct PartsLayout {
-  Rectangle card,collapse,exportButton,file,overview,search,clear,isolate,showAll,frame,list;
+  Rectangle card,collapse,exportButton,file,overview,checks,search,clear,isolate,showAll,frame,list;
   float visibilityX=0,exportX=0;
 };
 struct PartsPanel {

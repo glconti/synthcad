@@ -205,7 +205,7 @@ json PrinterProfileContext(const json& project) {
             for (const auto& marked : result["provisional"])
                 if (marked == field || (field == "buildVolume" && marked == "exclusions")) provisional = true;
             status = !ready ? "missing" : provisional ? "provisional" : "ready";
-            reason = !ready ? "Required metadata is incomplete" : provisional ? "Authored metadata is provisional" : "Metadata available; geometry has not been checked";
+            reason = !ready ? "Required metadata is incomplete" : provisional ? "Authored metadata is provisional" : "Metadata available for this check";
         }
         result["checkReadiness"][check] = {{"status", status}, {"reason", reason}};
     }

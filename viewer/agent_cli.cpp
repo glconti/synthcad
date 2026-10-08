@@ -13,7 +13,7 @@ const std::map<std::string, std::string> kUsage = {
     {"docs", "docs [AREA]"},
     {"open", "open PATH [--session NAME] [--hidden]"},
     {"sessions", "sessions"}, {"snapshot", "snapshot"},
-    {"overview", "overview"}, {"profile", "profile [--template]"},
+    {"overview", "overview"}, {"profile", "profile [--template]"}, {"checks", "checks"},
     {"selection", "selection"}, {"state", "state"},
     {"reference", "reference TOKEN"},
     {"pick", "pick --id ID --kind part|surface|edge|vertex --question TEXT"},
@@ -32,6 +32,7 @@ const std::map<std::string, std::string> kDescriptions = {
     {"sessions", "List live local sessions."},
     {"snapshot", "Read semantic scene state, without meshes."},
     {"overview", "Read the displayed revision's project overview and profile context."},
+    {"checks", "Read revision-bound geometry and plate checks from the viewer. Uncomputed, heuristic, sliced and physical evidence are distinguished; this does not run a slicer."},
     {"profile", "Read displayed project-local printer/material context. --template prints an incomplete manifest fragment without a session; preset IDs are never verified."},
     {"selection", "Read the user's current selection."},
     {"reference", "Resolve a copied selection reference against the displayed geometry."},
@@ -49,7 +50,7 @@ const std::map<std::string, std::string> kDescriptions = {
     {"capabilities", "List supported commands and protocol capabilities."},
     {"version", "Print the application and protocol versions."}};
 const std::set<std::string> kReview = {
-    "snapshot", "overview", "profile", "selection", "reference", "state", "highlight", "frame", "view", "screenshot", "pick"};
+    "snapshot", "overview", "profile", "checks", "selection", "reference", "state", "highlight", "frame", "view", "screenshot", "pick"};
 json Envelope(const std::string& command, const std::string& session,
               const std::string& revision, bool ok) {
   json result = {{"protocolVersion", 1}, {"ok", ok}, {"command", command}};
@@ -209,7 +210,7 @@ std::string Help(const std::string& command) {
     out << "Guidance on demand: synthcad docs AREA\n"
         << "  Getting started     start, skill\n"
         << "  Modeling            modeling, api, design\n"
-        << "  Printing & assembly profiles, print-design, fit-and-assembly\n"
+        << "  Printing & assembly profiles, checks, print-design, fit-and-assembly\n"
         << "  Plates & handoff     build-plates, bambu-handoff\n"
         << "  Agent review        cli, projects, overview\n"
         << "Prints complete instructions to stdout; no skill files to install.\n"
@@ -233,7 +234,7 @@ std::string Help(const std::string& command) {
         {"Discovery", {"docs", "capabilities", "version"}},
         {"Projects & sessions", {"open", "sessions", "view"}},
         {"Reload & revision checks", {"state", "revision", "wait"}},
-        {"Project context", {"overview", "profile"}},
+        {"Project context", {"overview", "profile", "checks"}},
         {"Shared review", {"snapshot", "selection", "reference", "highlight", "frame", "screenshot"}},
         {"Guided selection", {"pick", "pick-status", "pick-cancel", "events"}}}) {
       out << "\n" << area.first << ":\n";
@@ -272,7 +273,7 @@ json Capabilities() {
           {"persistentSessions", true}, {"semanticSnapshots", true},
           {"revisionWait", true}, {"agentHighlights", true},
           {"screenshots", true}, {"bundledGuidance", true}, {"selectionReferences", true},
-          {"projectOverview", true}, {"printerProfiles", true}, {"slicerPresetVerification", false},
+          {"projectOverview", true}, {"printerProfiles", true}, {"manufacturingChecks", true}, {"automaticPacking", false}, {"slicerPresetVerification", false},
           {"guidedPicking", true}, {"sessionEvents", true}, {"geometryEditing", false}, {"export", false}};
 }
 
