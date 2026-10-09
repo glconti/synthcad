@@ -122,7 +122,7 @@ void CheckLayoutAndEmptyProfile() {
     Require(hasDocumentText(heading), "Every overview section is labeled");
   Require(std::count(layout.document.begin(), layout.document.end(), "None recorded.") >= 6,
           "Empty view and metadata sections say that nothing was recorded");
-  Require(hasDocumentText("Profile setup is incomplete. Ask your agent to run synthcad docs profiles."),
+  Require(hasDocumentText("Profile setup is incomplete. Ask your agent to run synthcad print profile --help."),
           "An absent profile shows the requested setup guidance");
   Require(hasDocumentText(
               "Diagnostic: Required manifest field profiles.custom.buildVolume is missing."),

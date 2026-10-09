@@ -1,0 +1,1310 @@
+{
+  "options": {
+    "--project": {
+      "key": "project",
+      "type": "string",
+      "description": "Target an open project handle. Required when several projects are open.",
+      "scope": "global",
+      "valueName": "NAME"
+    },
+    "--json": {
+      "key": "json",
+      "type": "boolean",
+      "description": "Emit one JSON response; diagnostics go to stderr.",
+      "scope": "global"
+    },
+    "--help": {
+      "key": "help",
+      "type": "boolean",
+      "description": "Read instructions without opening or contacting a viewer.",
+      "scope": "global",
+      "aliases": [
+        "-h"
+      ]
+    },
+    "--timeout": {
+      "key": "timeout",
+      "type": "integer",
+      "description": "Request timeout in milliseconds; does not cancel model evaluation.",
+      "minimum": 0,
+      "maximum": 300000,
+      "default": 10000,
+      "scope": "global",
+      "valueName": "MS"
+    },
+    "--name": {
+      "key": "name",
+      "type": "string",
+      "description": "Name the project handle when opening it.",
+      "valueName": "NAME"
+    },
+    "--hidden": {
+      "key": "hidden",
+      "type": "boolean",
+      "description": "Open an automation window; a graphics context is still required."
+    },
+    "--evaluation-timeout": {
+      "key": "evaluationTimeoutMs",
+      "type": "integer",
+      "description": "Model evaluation limit in milliseconds.",
+      "minimum": 1,
+      "maximum": 3600000,
+      "default": 120000,
+      "valueName": "MS"
+    },
+    "--expect-revision": {
+      "key": "expectRevision",
+      "type": "string",
+      "description": "Reject stale displayed geometry before reading or acting.",
+      "valueName": "TOKEN"
+    },
+    "--revision": {
+      "key": "revision",
+      "type": "string",
+      "description": "Requested revision returned by project revision.",
+      "valueName": "TOKEN"
+    },
+    "--after": {
+      "key": "after",
+      "type": "string",
+      "description": "Opaque event cursor; 0 reads retained history.",
+      "valueName": "CURSOR"
+    },
+    "--wait": {
+      "key": "waitMs",
+      "type": "integer",
+      "description": "Wait for events in milliseconds.",
+      "minimum": 0,
+      "maximum": 300000,
+      "default": 0,
+      "valueName": "MS"
+    },
+    "--clear": {
+      "key": "clear",
+      "type": "boolean",
+      "description": "Clear agent highlights."
+    },
+    "--frame": {
+      "key": "frame",
+      "type": "boolean",
+      "description": "Frame the highlighted geometry."
+    },
+    "--selection": {
+      "key": "selection",
+      "type": "boolean",
+      "description": "Frame the current human selection."
+    },
+    "--replace": {
+      "key": "replace",
+      "type": "boolean",
+      "description": "Permit replacing an existing destination."
+    },
+    "--template": {
+      "key": "template",
+      "type": "boolean",
+      "description": "Print an incomplete profile JSON fragment without a running project."
+    },
+    "--visible-only": {
+      "key": "visibleOnly",
+      "type": "boolean",
+      "description": "Export only visible exportable parts."
+    },
+    "--allow-warnings": {
+      "key": "allowWarnings",
+      "type": "boolean",
+      "description": "Acknowledge reviewed manufacturing warnings."
+    },
+    "--dry-run": {
+      "key": "dryRun",
+      "type": "boolean",
+      "description": "Validate export without writing a file."
+    },
+    "--format": {
+      "key": "format",
+      "type": "string",
+      "description": "Export format; must match the destination extension.",
+      "choices": [
+        "3mf",
+        "stl"
+      ],
+      "valueName": "FORMAT"
+    },
+    "--id": {
+      "key": "id",
+      "type": "string",
+      "description": "Caller-generated request ID, 1..128 UTF-8 bytes without NUL.",
+      "valueName": "ID"
+    },
+    "--kind": {
+      "key": "kind",
+      "type": "string",
+      "description": "Geometry kind the human should select.",
+      "choices": [
+        "part",
+        "surface",
+        "edge",
+        "vertex"
+      ],
+      "valueName": "KIND"
+    },
+    "--question": {
+      "key": "question",
+      "type": "string",
+      "description": "Question shown to the human, 1..4096 UTF-8 bytes without NUL.",
+      "valueName": "TEXT"
+    }
+  },
+  "nodes": [
+    {
+      "path": "",
+      "kind": "group",
+      "summary": "Author parametric CAD with a human, review it together, and export geometry.",
+      "operation": "",
+      "arguments": [],
+      "options": [],
+      "requiredOptions": [],
+      "guides": [
+        "kickstart"
+      ],
+      "guidance": "",
+      "examples": [],
+      "nextSteps": [
+        "project",
+        "model",
+        "review",
+        "print"
+      ],
+      "requirements": []
+    },
+    {
+      "path": "project",
+      "kind": "group",
+      "summary": "Establish, open, inspect, and reload the current design.",
+      "operation": "",
+      "arguments": [],
+      "options": [],
+      "requiredOptions": [],
+      "guides": [
+        "start"
+      ],
+      "guidance": "",
+      "examples": [],
+      "nextSteps": [
+        "project files",
+        "project open",
+        "project inspect",
+        "model"
+      ],
+      "requirements": []
+    },
+    {
+      "path": "project files",
+      "kind": "topic",
+      "summary": "Author project manifests, named views, and revision-bound context.",
+      "operation": "",
+      "arguments": [],
+      "options": [],
+      "requiredOptions": [],
+      "guides": [
+        "projects"
+      ],
+      "guidance": "",
+      "examples": [],
+      "nextSteps": [
+        "project open",
+        "model assembly"
+      ],
+      "requirements": []
+    },
+    {
+      "path": "project open",
+      "kind": "action",
+      "summary": "Open or reuse a persistent viewer for a project or standalone scene.",
+      "operation": "open",
+      "arguments": [
+        {
+          "name": "PATH",
+          "key": "path",
+          "required": true,
+          "multiple": false
+        }
+      ],
+      "options": [
+        "--name",
+        "--hidden",
+        "--evaluation-timeout"
+      ],
+      "requiredOptions": [],
+      "guides": [],
+      "guidance": "Use the project directory, synthcad.json, or a standalone .js entry. Reopening the same canonical project reuses its viewer. --name assigns a handle; a different name for an already open project is rejected. Read the returned project handle and reused flag, then inspect load state: a successful open does not mean evaluation has finished. If opening times out or access fails, use project list and retry the same project with the required execution permissions. Keep the existing SYNTHCAD_SESSION_DIR registry; do not create a project-local .sessions/ workaround. --project targets later actions; use --name here.",
+      "examples": [
+        {
+          "command": "synthcad-cli project open ./my-design --name bracket --json",
+          "argv": [
+            "project",
+            "open",
+            "./my-design",
+            "--name",
+            "bracket",
+            "--json"
+          ]
+        }
+      ],
+      "nextSteps": [
+        "project inspect",
+        "project revision",
+        "project list"
+      ],
+      "requirements": []
+    },
+    {
+      "path": "project list",
+      "kind": "action",
+      "summary": "List currently open projects and their reachability.",
+      "operation": "sessions",
+      "arguments": [],
+      "options": [],
+      "requiredOptions": [],
+      "guides": [],
+      "guidance": "Use this to recover a project handle or resolve ambiguous_project. This lists running viewers, not saved projects on disk. Inspect projectPath, process ID and reachability before retrying an open; an unreachable record is not permission to start a duplicate viewer.",
+      "examples": [
+        {
+          "command": "synthcad-cli project list --json",
+          "argv": [
+            "project",
+            "list",
+            "--json"
+          ]
+        }
+      ],
+      "nextSteps": [
+        "project open",
+        "project inspect"
+      ],
+      "requirements": []
+    },
+    {
+      "path": "project inspect",
+      "kind": "action",
+      "summary": "Inspect load state, semantic geometry, and project context together.",
+      "operation": "snapshot",
+      "arguments": [],
+      "options": [
+        "--expect-revision"
+      ],
+      "requiredOptions": [],
+      "guides": [
+        "overview"
+      ],
+      "guidance": "Read status, loadFailure, attemptedRevision, displayedRevision, exportValid, parts, groups, selection and overview. Failed reloads retain the previous valid geometry; do not mistake it for the edited result. After edits, capture and wait for a revision. Use the displayed revision as --expect-revision for subsequent actions. The snapshot includes authored annotations and cached evidence, not mesh bytes; annotations are not measured or certified dimensions.",
+      "examples": [
+        {
+          "command": "synthcad-cli project inspect --project bracket --json",
+          "argv": [
+            "project",
+            "inspect",
+            "--project",
+            "bracket",
+            "--json"
+          ]
+        }
+      ],
+      "nextSteps": [
+        "project revision",
+        "project wait",
+        "review",
+        "print checks"
+      ],
+      "requirements": [
+        "Open a project with project open PATH; target it with --project NAME when several are open."
+      ]
+    },
+    {
+      "path": "project reload",
+      "kind": "action",
+      "summary": "Retry evaluation of the current project.",
+      "operation": "reload",
+      "arguments": [],
+      "options": [
+        "--evaluation-timeout"
+      ],
+      "requiredOptions": [],
+      "guides": [],
+      "guidance": "Use after fixing a load failure or to retry evaluation with a different limit. Source edits normally hot-reload. The default model evaluation limit is 120000 ms; --evaluation-timeout changes the limit for this open project. A CLI --timeout or wait timeout does not cancel evaluation. Inspect the load diagnostic and capture/wait for the desired revision before continuing.",
+      "examples": [
+        {
+          "command": "synthcad-cli project reload --evaluation-timeout 240000 --project bracket --json",
+          "argv": [
+            "project",
+            "reload",
+            "--evaluation-timeout",
+            "240000",
+            "--project",
+            "bracket",
+            "--json"
+          ]
+        }
+      ],
+      "nextSteps": [
+        "project inspect",
+        "project revision",
+        "project cancel-load"
+      ],
+      "requirements": [
+        "Open a project with project open PATH; target it with --project NAME when several are open."
+      ]
+    },
+    {
+      "path": "project cancel-load",
+      "kind": "action",
+      "summary": "Cancel current model evaluation and retain the last valid model.",
+      "operation": "cancel-load",
+      "arguments": [],
+      "options": [],
+      "requiredOptions": [],
+      "guides": [],
+      "guidance": "Use for stuck evaluation. Cancellation preserves the last successful geometry, not evidence that the current source works. Inspect load state, fix or simplify the source, then retry evaluation and verify its revision.",
+      "examples": [
+        {
+          "command": "synthcad-cli project cancel-load --project bracket --json",
+          "argv": [
+            "project",
+            "cancel-load",
+            "--project",
+            "bracket",
+            "--json"
+          ]
+        }
+      ],
+      "nextSteps": [
+        "project inspect",
+        "project reload"
+      ],
+      "requirements": [
+        "Open a project with project open PATH; target it with --project NAME when several are open."
+      ]
+    },
+    {
+      "path": "project revision",
+      "kind": "action",
+      "summary": "Capture the desired revision from current source bytes.",
+      "operation": "revision",
+      "arguments": [],
+      "options": [],
+      "requiredOptions": [],
+      "guides": [],
+      "guidance": "Run after source edits. This captures the active view and its known dependency bytes and returns data.revision. During initial loading it can return busy until dependencies are known; inspect and retry. Pass this requested token to project wait. It is not the displayed revision used to guard review actions; newly discovered imports can make those identifiers differ.",
+      "examples": [
+        {
+          "command": "synthcad-cli project revision --project bracket --json",
+          "argv": [
+            "project",
+            "revision",
+            "--project",
+            "bracket",
+            "--json"
+          ]
+        }
+      ],
+      "nextSteps": [
+        "project wait",
+        "project inspect"
+      ],
+      "requirements": [
+        "Open a project with project open PATH; target it with --project NAME when several are open."
+      ]
+    },
+    {
+      "path": "project wait",
+      "kind": "action",
+      "summary": "Wait for a captured source revision to load successfully.",
+      "operation": "wait",
+      "arguments": [],
+      "options": [
+        "--revision"
+      ],
+      "requiredOptions": [
+        "--revision"
+      ],
+      "guides": [],
+      "guidance": "Pass data.revision from project revision as --revision. Proceed only on success; use response revision / data.displayedRevision for later --expect-revision guards. load_failed means inspect and fix the source; superseded means files or the view changed and a fresh capture is needed; stale_revision means the token is unknown. A timeout does not cancel evaluation or prove failure: inspect the project and retry as appropriate.",
+      "examples": [
+        {
+          "command": "synthcad-cli project wait --revision REQUESTED_TOKEN --project bracket --timeout 10000 --json",
+          "argv": [
+            "project",
+            "wait",
+            "--revision",
+            "REQUESTED_TOKEN",
+            "--project",
+            "bracket",
+            "--timeout",
+            "10000",
+            "--json"
+          ]
+        }
+      ],
+      "nextSteps": [
+        "project inspect",
+        "review",
+        "project revision"
+      ],
+      "requirements": [
+        "Open a project with project open PATH; target it with --project NAME when several are open."
+      ]
+    },
+    {
+      "path": "project events",
+      "kind": "action",
+      "summary": "Read retained project events after an opaque cursor.",
+      "operation": "events",
+      "arguments": [],
+      "options": [
+        "--after",
+        "--wait"
+      ],
+      "requiredOptions": [
+        "--after"
+      ],
+      "guides": [],
+      "guidance": "Use to observe reloads and guided selections. Begin with --after 0, then retain the returned cursor. Only 256 events are retained; stale_cursor means resynchronize current project/pick state and restart from 0. Cursors reset when the viewer restarts. --wait optionally long-polls; timeout preserves the cursor and does not cancel a pending pick. The request deadline is max(--timeout, --wait + 1000) ms plus transport delivery grace.",
+      "examples": [
+        {
+          "command": "synthcad-cli project events --after 0 --wait 30000 --project bracket --json",
+          "argv": [
+            "project",
+            "events",
+            "--after",
+            "0",
+            "--wait",
+            "30000",
+            "--project",
+            "bracket",
+            "--json"
+          ]
+        }
+      ],
+      "nextSteps": [
+        "review pick status",
+        "project inspect"
+      ],
+      "requirements": [
+        "Open a project with project open PATH; target it with --project NAME when several are open."
+      ]
+    },
+    {
+      "path": "model",
+      "kind": "group",
+      "summary": "Author parametric geometry through source-file edits.",
+      "operation": "",
+      "arguments": [],
+      "options": [],
+      "requiredOptions": [],
+      "guides": [
+        "modeling"
+      ],
+      "guidance": "",
+      "examples": [],
+      "nextSteps": [
+        "model api",
+        "model assembly",
+        "project files",
+        "review"
+      ],
+      "requirements": []
+    },
+    {
+      "path": "model assembly",
+      "kind": "topic",
+      "summary": "Define shared source parts, physical instances, groups, and views.",
+      "operation": "",
+      "arguments": [],
+      "options": [],
+      "requiredOptions": [],
+      "guides": [
+        "design"
+      ],
+      "guidance": "",
+      "examples": [],
+      "nextSteps": [
+        "model api",
+        "print fit",
+        "print plates"
+      ],
+      "requirements": []
+    },
+    {
+      "path": "model api",
+      "kind": "topic",
+      "summary": "Read the implemented JavaScript geometry contract before authoring.",
+      "operation": "",
+      "arguments": [],
+      "options": [],
+      "requiredOptions": [],
+      "guides": [
+        "api"
+      ],
+      "guidance": "",
+      "examples": [],
+      "nextSteps": [
+        "model",
+        "model assembly",
+        "project revision"
+      ],
+      "requirements": []
+    },
+    {
+      "path": "review",
+      "kind": "group",
+      "summary": "Inspect the displayed design and collaborate with the human.",
+      "operation": "",
+      "arguments": [],
+      "options": [],
+      "requiredOptions": [],
+      "guides": [
+        "review"
+      ],
+      "guidance": "",
+      "examples": [],
+      "nextSteps": [
+        "project inspect",
+        "review selection",
+        "review pick",
+        "review highlight",
+        "review screenshot"
+      ],
+      "requirements": []
+    },
+    {
+      "path": "review view",
+      "kind": "action",
+      "summary": "Switch to an authored named view and evaluate it.",
+      "operation": "view",
+      "arguments": [
+        {
+          "name": "NAME",
+          "key": "name",
+          "required": true,
+          "multiple": false
+        }
+      ],
+      "options": [
+        "--expect-revision"
+      ],
+      "requiredOptions": [],
+      "guides": [],
+      "guidance": "Choose a named view from the project context; standalone scenes expose scene. This changes displayed placement and can invalidate geometry references. After switching, capture and wait for the new view revision before checks, selection-dependent actions, or export. A --expect-revision guard applies to the currently displayed view before switching.",
+      "examples": [
+        {
+          "command": "synthcad-cli review view plate-1 --project bracket --json",
+          "argv": [
+            "review",
+            "view",
+            "plate-1",
+            "--project",
+            "bracket",
+            "--json"
+          ]
+        }
+      ],
+      "nextSteps": [
+        "project revision",
+        "project wait",
+        "print checks"
+      ],
+      "requirements": [
+        "Open a project with project open PATH; target it with --project NAME when several are open."
+      ]
+    },
+    {
+      "path": "review selection",
+      "kind": "action",
+      "summary": "Read current human selection or resolve a copied reference.",
+      "operation": "selection",
+      "arguments": [
+        {
+          "name": "REFERENCE",
+          "key": "reference",
+          "required": false,
+          "multiple": false
+        }
+      ],
+      "options": [
+        "--expect-revision"
+      ],
+      "requiredOptions": [],
+      "guides": [
+        "selection"
+      ],
+      "guidance": "Omit REFERENCE to read the current selection (possibly null); supply a copied scsel1. reference to resolve it against displayed geometry. Neither form changes human selection. A stale reference requires a fresh selection after geometry/view changes.",
+      "examples": [
+        {
+          "command": "synthcad-cli review selection --project bracket --json",
+          "argv": [
+            "review",
+            "selection",
+            "--project",
+            "bracket",
+            "--json"
+          ]
+        },
+        {
+          "command": "synthcad-cli review selection scsel1.HEX_PAYLOAD --project bracket --json",
+          "argv": [
+            "review",
+            "selection",
+            "scsel1.HEX_PAYLOAD",
+            "--project",
+            "bracket",
+            "--json"
+          ]
+        }
+      ],
+      "nextSteps": [
+        "review pick",
+        "review frame"
+      ],
+      "requirements": [
+        "Open a project with project open PATH; target it with --project NAME when several are open."
+      ]
+    },
+    {
+      "path": "review highlight",
+      "kind": "action",
+      "summary": "Replace or clear agent highlights without changing human selection.",
+      "operation": "highlight",
+      "arguments": [
+        {
+          "name": "PART_IDS",
+          "key": "partIds",
+          "required": false,
+          "multiple": true
+        }
+      ],
+      "options": [
+        "--clear",
+        "--frame",
+        "--expect-revision"
+      ],
+      "requiredOptions": [],
+      "guides": [],
+      "guidance": "Take stable part or group IDs from project inspect. Supply IDs to replace highlights; --frame also frames them. Use --clear with no IDs to clear. Highlighting does not change visibility, exportability, or human selection. Guard decisions with the displayed revision; if stale, inspect again before choosing IDs.",
+      "examples": [
+        {
+          "command": "synthcad-cli review highlight base lid --frame --project bracket --expect-revision DISPLAYED_TOKEN --json",
+          "argv": [
+            "review",
+            "highlight",
+            "base",
+            "lid",
+            "--frame",
+            "--project",
+            "bracket",
+            "--expect-revision",
+            "DISPLAYED_TOKEN",
+            "--json"
+          ]
+        },
+        {
+          "command": "synthcad-cli review highlight --clear --project bracket --json",
+          "argv": [
+            "review",
+            "highlight",
+            "--clear",
+            "--project",
+            "bracket",
+            "--json"
+          ]
+        }
+      ],
+      "nextSteps": [
+        "project inspect",
+        "review screenshot"
+      ],
+      "requirements": [
+        "Open a project with project open PATH; target it with --project NAME when several are open."
+      ]
+    },
+    {
+      "path": "review frame",
+      "kind": "action",
+      "summary": "Frame all visible geometry, named parts, or the human selection.",
+      "operation": "frame",
+      "arguments": [
+        {
+          "name": "PART_IDS",
+          "key": "partIds",
+          "required": false,
+          "multiple": true
+        }
+      ],
+      "options": [
+        "--selection",
+        "--expect-revision"
+      ],
+      "requiredOptions": [],
+      "guides": [],
+      "guidance": "Omit IDs to frame visible geometry; supply part/group IDs for a focused view; use --selection instead of IDs to frame visible descendants of the current human selection. This changes the camera only. Use stable IDs and a displayed revision guard when framing supports a specific review.",
+      "examples": [
+        {
+          "command": "synthcad-cli review frame --selection --project bracket --json",
+          "argv": [
+            "review",
+            "frame",
+            "--selection",
+            "--project",
+            "bracket",
+            "--json"
+          ]
+        }
+      ],
+      "nextSteps": [
+        "review screenshot",
+        "review selection"
+      ],
+      "requirements": [
+        "Open a project with project open PATH; target it with --project NAME when several are open."
+      ]
+    },
+    {
+      "path": "review screenshot",
+      "kind": "action",
+      "summary": "Save a PNG of the current shared view.",
+      "operation": "screenshot",
+      "arguments": [
+        {
+          "name": "PATH",
+          "key": "path",
+          "required": true,
+          "multiple": false
+        }
+      ],
+      "options": [
+        "--replace",
+        "--expect-revision"
+      ],
+      "requiredOptions": [],
+      "guides": [],
+      "guidance": "Choose a temporary .png path for routine visual review; retain deliverable previews only when requested. Existing files require --replace. Verify the returned path and inspect the image. Screenshots show shape and placement but cannot establish thickness, fit, toolpaths, or strength. Use --expect-revision when the image must represent a particular evaluated revision.",
+      "examples": [
+        {
+          "command": "synthcad-cli review screenshot ./review.png --project bracket --expect-revision DISPLAYED_TOKEN --json",
+          "argv": [
+            "review",
+            "screenshot",
+            "./review.png",
+            "--project",
+            "bracket",
+            "--expect-revision",
+            "DISPLAYED_TOKEN",
+            "--json"
+          ]
+        }
+      ],
+      "nextSteps": [
+        "project inspect",
+        "print checks"
+      ],
+      "requirements": [
+        "Open a project with project open PATH; target it with --project NAME when several are open."
+      ]
+    },
+    {
+      "path": "review pick",
+      "kind": "group",
+      "summary": "Ask the human to select and explicitly confirm geometry.",
+      "operation": "",
+      "arguments": [],
+      "options": [],
+      "requiredOptions": [],
+      "guides": [
+        "picking"
+      ],
+      "guidance": "",
+      "examples": [],
+      "nextSteps": [
+        "review pick request",
+        "review pick status",
+        "review pick cancel",
+        "project events"
+      ],
+      "requirements": []
+    },
+    {
+      "path": "review pick request",
+      "kind": "action",
+      "summary": "Ask a focused geometry question and return a request receipt.",
+      "operation": "pick",
+      "arguments": [],
+      "options": [
+        "--id",
+        "--kind",
+        "--question",
+        "--expect-revision"
+      ],
+      "requiredOptions": [
+        "--id",
+        "--kind",
+        "--question"
+      ],
+      "guides": [],
+      "guidance": "Choose a caller-generated ID, an allowed geometry kind, and a question in the human’s language. The viewer requires a fresh matching selection and explicit confirmation; ordinary selection does not submit an answer. Repeating the same ID and payload replays the receipt safely. Read status or events for the answer; a receipt is not a completed selection. Only one request can be active. A stale revision requires reviewing fresh geometry before retrying.",
+      "examples": [
+        {
+          "command": "synthcad-cli review pick request --id mount-1 --kind surface --question \"Which surface should receive the mount?\" --project bracket --json",
+          "argv": [
+            "review",
+            "pick",
+            "request",
+            "--id",
+            "mount-1",
+            "--kind",
+            "surface",
+            "--question",
+            "Which surface should receive the mount?",
+            "--project",
+            "bracket",
+            "--json"
+          ]
+        }
+      ],
+      "nextSteps": [
+        "review pick status",
+        "project events",
+        "review pick cancel"
+      ],
+      "requirements": [
+        "Open a project with project open PATH; target it with --project NAME when several are open."
+      ]
+    },
+    {
+      "path": "review pick status",
+      "kind": "action",
+      "summary": "Read a pending or retained terminal selection request.",
+      "operation": "pick-status",
+      "arguments": [
+        {
+          "name": "ID",
+          "key": "id",
+          "required": true,
+          "multiple": false
+        }
+      ],
+      "options": [],
+      "requiredOptions": [],
+      "guides": [],
+      "guidance": "Use the caller ID from pick request. Inspect the request status and geometry only after explicit human confirmation. A cancelled, invalidated, or expired request does not supply an answer. This reads retained request state; --expect-revision is intentionally unsupported because the request records its own revision.",
+      "examples": [
+        {
+          "command": "synthcad-cli review pick status mount-1 --project bracket --json",
+          "argv": [
+            "review",
+            "pick",
+            "status",
+            "mount-1",
+            "--project",
+            "bracket",
+            "--json"
+          ]
+        }
+      ],
+      "nextSteps": [
+        "review selection",
+        "review pick request"
+      ],
+      "requirements": [
+        "Open a project with project open PATH; target it with --project NAME when several are open."
+      ]
+    },
+    {
+      "path": "review pick cancel",
+      "kind": "action",
+      "summary": "Cancel a guided selection request by caller ID.",
+      "operation": "pick-cancel",
+      "arguments": [
+        {
+          "name": "ID",
+          "key": "id",
+          "required": true,
+          "multiple": false
+        }
+      ],
+      "options": [],
+      "requiredOptions": [],
+      "guides": [],
+      "guidance": "Use when the question is no longer needed. Repeated cancellation is idempotent. Inspect the returned terminal request status; cancellation cannot manufacture a human answer and does not change model geometry. Request outcomes carry their own revision, so --expect-revision is unsupported.",
+      "examples": [
+        {
+          "command": "synthcad-cli review pick cancel mount-1 --project bracket --json",
+          "argv": [
+            "review",
+            "pick",
+            "cancel",
+            "mount-1",
+            "--project",
+            "bracket",
+            "--json"
+          ]
+        }
+      ],
+      "nextSteps": [
+        "review pick status"
+      ],
+      "requirements": [
+        "Open a project with project open PATH; target it with --project NAME when several are open."
+      ]
+    },
+    {
+      "path": "print",
+      "kind": "group",
+      "summary": "Prepare authored placements, review evidence, and export geometry.",
+      "operation": "",
+      "arguments": [],
+      "options": [],
+      "requiredOptions": [],
+      "guides": [
+        "printing"
+      ],
+      "guidance": "",
+      "examples": [],
+      "nextSteps": [
+        "print design",
+        "print profile",
+        "print fit",
+        "print plates",
+        "print checks",
+        "print export",
+        "print feedback"
+      ],
+      "requirements": []
+    },
+    {
+      "path": "print design",
+      "kind": "topic",
+      "summary": "Choose orientation and process-aware model details.",
+      "operation": "",
+      "arguments": [],
+      "options": [],
+      "requiredOptions": [],
+      "guides": [
+        "print-design"
+      ],
+      "guidance": "",
+      "examples": [],
+      "nextSteps": [
+        "print fit",
+        "print plates"
+      ],
+      "requirements": []
+    },
+    {
+      "path": "print fit",
+      "kind": "topic",
+      "summary": "Design mating interfaces and assembly sequences.",
+      "operation": "",
+      "arguments": [],
+      "options": [],
+      "requiredOptions": [],
+      "guides": [
+        "fit-and-assembly"
+      ],
+      "guidance": "",
+      "examples": [],
+      "nextSteps": [
+        "model assembly",
+        "print feedback"
+      ],
+      "requirements": []
+    },
+    {
+      "path": "print plates",
+      "kind": "topic",
+      "summary": "Author separate print placements using shared geometry.",
+      "operation": "",
+      "arguments": [],
+      "options": [],
+      "requiredOptions": [],
+      "guides": [
+        "build-plates"
+      ],
+      "guidance": "",
+      "examples": [],
+      "nextSteps": [
+        "review view",
+        "print checks",
+        "print export"
+      ],
+      "requirements": []
+    },
+    {
+      "path": "print handoff",
+      "kind": "topic",
+      "summary": "Review exported geometry in the target slicer.",
+      "operation": "",
+      "arguments": [],
+      "options": [],
+      "requiredOptions": [],
+      "guides": [
+        "bambu-handoff"
+      ],
+      "guidance": "",
+      "examples": [],
+      "nextSteps": [
+        "print export",
+        "print history",
+        "print feedback"
+      ],
+      "requirements": []
+    },
+    {
+      "path": "print feedback",
+      "kind": "topic",
+      "summary": "Use optional samples and physical reports to guide revisions.",
+      "operation": "",
+      "arguments": [],
+      "options": [],
+      "requiredOptions": [],
+      "guides": [
+        "physical-feedback"
+      ],
+      "guidance": "",
+      "examples": [],
+      "nextSteps": [
+        "project inspect",
+        "print checks",
+        "print history"
+      ],
+      "requirements": []
+    },
+    {
+      "path": "print profile",
+      "kind": "action",
+      "summary": "Read project-local printer context or print a setup fragment.",
+      "operation": "profile",
+      "arguments": [],
+      "options": [
+        "--template",
+        "--expect-revision"
+      ],
+      "requiredOptions": [],
+      "guides": [
+        "profiles"
+      ],
+      "guidance": "Without --template, read context stored with the displayed revision. --template prints an incomplete JSON fragment locally, without a viewer; merge reviewed values into the manifest using file edits. Do not combine --template with --expect-revision. Unknown dimensions and exclusions stay unknown; slicer IDs are metadata, not verified presets.",
+      "examples": [
+        {
+          "command": "synthcad-cli print profile --project bracket --json",
+          "argv": [
+            "print",
+            "profile",
+            "--project",
+            "bracket",
+            "--json"
+          ]
+        },
+        {
+          "command": "synthcad-cli print profile --template",
+          "argv": [
+            "print",
+            "profile",
+            "--template"
+          ]
+        }
+      ],
+      "nextSteps": [
+        "project files",
+        "print plates",
+        "print checks"
+      ],
+      "requirements": [
+        "Open a project with project open PATH; target it with --project NAME when several are open.",
+        "--template is local and needs no open project."
+      ]
+    },
+    {
+      "path": "print checks",
+      "kind": "action",
+      "summary": "Read cached manufacturing and plate evidence for displayed geometry.",
+      "operation": "checks",
+      "arguments": [],
+      "options": [
+        "--expect-revision"
+      ],
+      "requiredOptions": [],
+      "guides": [
+        "checks"
+      ],
+      "guidance": "Read currentness, scope, method, evidence, affected IDs, and the source/model/profile basis before drawing conclusions. These are cached results, not a fresh model evaluation or a slicer run. After edits, capture and wait for a new revision first. Unguarded stale reads retain evidence with current:false; guarded reads reject stale geometry.",
+      "examples": [
+        {
+          "command": "synthcad-cli print checks --project bracket --expect-revision DISPLAYED_TOKEN --json",
+          "argv": [
+            "print",
+            "checks",
+            "--project",
+            "bracket",
+            "--expect-revision",
+            "DISPLAYED_TOKEN",
+            "--json"
+          ]
+        }
+      ],
+      "nextSteps": [
+        "review highlight",
+        "print plates",
+        "print export"
+      ],
+      "requirements": [
+        "Open a project with project open PATH; target it with --project NAME when several are open."
+      ]
+    },
+    {
+      "path": "print export",
+      "kind": "action",
+      "summary": "Validate or export the currently placed geometry as 3MF or STL.",
+      "operation": "export",
+      "arguments": [
+        {
+          "name": "PATH",
+          "key": "path",
+          "required": true,
+          "multiple": false
+        }
+      ],
+      "options": [
+        "--format",
+        "--visible-only",
+        "--replace",
+        "--allow-warnings",
+        "--dry-run",
+        "--expect-revision"
+      ],
+      "requiredOptions": [],
+      "guides": [],
+      "guidance": "Select and verify the intended view first: export preserves its current placements. Infer format from .3mf/.stl or give a matching --format. Start with --dry-run, review warnings, then export using its displayed revision with --expect-revision. --allow-warnings acknowledges reviewed warnings; --replace permits overwriting. Export defaults to all exportable parts; --visible-only restricts that set. Unknown printer metadata does not block ordinary geometry export. Export does not change view or selection. A timeout near file publication is not proof nothing was saved: inspect the destination and print history before retrying. Verify the result in the slicer before claiming print readiness.",
+      "examples": [
+        {
+          "command": "synthcad-cli print export ./exports/plate.3mf --dry-run --project bracket --json",
+          "argv": [
+            "print",
+            "export",
+            "./exports/plate.3mf",
+            "--dry-run",
+            "--project",
+            "bracket",
+            "--json"
+          ]
+        },
+        {
+          "command": "synthcad-cli print export ./exports/plate.3mf --expect-revision DISPLAYED_TOKEN --project bracket --json",
+          "argv": [
+            "print",
+            "export",
+            "./exports/plate.3mf",
+            "--expect-revision",
+            "DISPLAYED_TOKEN",
+            "--project",
+            "bracket",
+            "--json"
+          ]
+        }
+      ],
+      "nextSteps": [
+        "print checks",
+        "print history",
+        "print handoff"
+      ],
+      "requirements": [
+        "Open a project with project open PATH; target it with --project NAME when several are open."
+      ]
+    },
+    {
+      "path": "print history",
+      "kind": "action",
+      "summary": "Read retained export receipts and diagnostics.",
+      "operation": "export-history",
+      "arguments": [],
+      "options": [
+        "--expect-revision"
+      ],
+      "requiredOptions": [],
+      "guides": [],
+      "guidance": "Read cached records with their geometry/profile revisions and destinations. This does not rescan files or prove a file still exists, was sliced, or was printed. Use after an uncertain export timeout before retrying publication. --expect-revision optionally guards the current displayed context, not the historical record revisions.",
+      "examples": [
+        {
+          "command": "synthcad-cli print history --project bracket --json",
+          "argv": [
+            "print",
+            "history",
+            "--project",
+            "bracket",
+            "--json"
+          ]
+        }
+      ],
+      "nextSteps": [
+        "print export",
+        "print feedback"
+      ],
+      "requirements": [
+        "Open a project with project open PATH; target it with --project NAME when several are open."
+      ]
+    }
+  ],
+  "removed": {
+    "state": "project inspect",
+    "snapshot": "project inspect",
+    "overview": "project inspect",
+    "reference": "review selection REFERENCE",
+    "capabilities": "--help --json",
+    "docs": "--help; then DOMAIN --help",
+    "skill": "--help",
+    "help": "PATH --help",
+    "version": "--version",
+    "open": "project open",
+    "sessions": "project list",
+    "reload": "project reload",
+    "cancel-load": "project cancel-load",
+    "revision": "project revision",
+    "wait": "project wait",
+    "events": "project events",
+    "view": "review view",
+    "selection": "review selection",
+    "highlight": "review highlight",
+    "frame": "review frame",
+    "screenshot": "review screenshot",
+    "pick": "review pick request",
+    "pick-status": "review pick status",
+    "pick-cancel": "review pick cancel",
+    "profile": "print profile",
+    "checks": "print checks",
+    "export": "print export",
+    "export-history": "print history"
+  },
+  "capabilities": {
+    "isolatedModelEvaluation": true,
+    "evaluationTimeoutDefaultMs": 120000,
+    "loadDiagnostics": true,
+    "persistentProjects": true,
+    "semanticSnapshots": true,
+    "revisionWait": true,
+    "agentHighlights": true,
+    "screenshots": true,
+    "bundledGuidance": true,
+    "selectionReferences": true,
+    "projectOverview": true,
+    "printerProfiles": true,
+    "manufacturingChecks": true,
+    "automaticPacking": false,
+    "slicerPresetVerification": false,
+    "guidedPicking": true,
+    "projectEvents": true,
+    "geometryEditing": false,
+    "export": true,
+    "exportFormats": [
+      "3mf",
+      "stl"
+    ],
+    "exportHistory": true
+  }
+}

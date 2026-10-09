@@ -79,8 +79,8 @@ project, add this manifest beside the shared `design.js` entry:
 }
 ```
 
-Run `synthcad-cli open . --session brackets`, then
-`synthcad-cli view plate --session brackets`. Manifest names select matching design
+Run `synthcad-cli project open . --name brackets`, then
+`synthcad-cli review view plate --project brackets`. Manifest names select matching design
 view IDs; a missing match fails. The source definition can live in an imported
 module, so all entries share the same geometry authoring. Each evaluation still
 rebuilds the selected scene; the contract does not promise a cross-view GPU cache.

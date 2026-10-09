@@ -194,7 +194,7 @@ class Client:
             ) from error
         if not isinstance(response, dict) or not isinstance(response.get("ok"), bool):
             raise AcceptanceFailure(f"Malformed CLI response: {response!r}")
-        if response.get("protocolVersion") != 1:
+        if response.get("protocolVersion") != 2:
             raise AcceptanceFailure(f"Unexpected protocol version: {response}")
         expected_codes = {expected_code} if isinstance(expected_code, int) else set(expected_code)
         if completed.returncode not in expected_codes:
@@ -276,7 +276,7 @@ class SharedDesignAcceptance:
             stream.write(text)
 
     def _open(self) -> dict[str, Any]:
-        response = self.client.call("open", str(self.project), "--session", self.session, "--hidden")
+        response = self.client.call('project', 'open', str(self.project), '--name', self.session, "--hidden")
         self.owned_pids.extend(_pid_records(response))
         return response
 
@@ -284,7 +284,7 @@ class SharedDesignAcceptance:
         deadline = time.monotonic() + self.timeout_ms / 1000
         while True:
             response = self.client.call(
-                "revision", "--session", self.session,
+                'project', 'revision', '--project', self.session,
                 expected_code=(0, EXIT_CODES["busy"]),
             )
             if not response["ok"]:
@@ -300,17 +300,17 @@ class SharedDesignAcceptance:
 
     def _ready(self) -> dict[str, Any]:
         token = self._revision()
-        return self.client.call("wait", "--session", self.session, "--revision", token,
+        return self.client.call('project', 'wait', '--project', self.session, "--revision", token,
                                 "--timeout", str(self.timeout_ms), timeout=self.timeout_ms / 1000 + 5)
 
     def _snapshot(self) -> dict[str, Any]:
-        return self.client.call("snapshot", "--session", self.session)
+        return self.client.call('project', 'inspect', '--project', self.session)
 
     def _state(self) -> dict[str, Any]:
-        return self.client.call("state", "--session", self.session)
+        return self.client.call('project', 'inspect', '--project', self.session)
 
     def _select_view(self, view: str) -> dict[str, Any]:
-        self.client.call("view", view, "--session", self.session)
+        self.client.call('review', 'view', view, '--project', self.session)
         ready = self._ready()
         snapshot = self._snapshot()
         self._check(_find(snapshot, "activeView") == view or _find(snapshot, "view") == view,
@@ -427,7 +427,7 @@ class SharedDesignAcceptance:
 
     def _expect_failed_revision(self, displayed_revision: str, width: float) -> None:
         token = self._revision()
-        failed = self.client.call("wait", "--session", self.session, "--revision", token,
+        failed = self.client.call('project', 'wait', '--project', self.session, "--revision", token,
                                   "--timeout", str(self.timeout_ms), expected_code=EXIT_CODES["load_failed"],
                                   timeout=self.timeout_ms / 1000 + 5)
         self._check(_find(failed, "code") == "load_failed",
@@ -453,7 +453,7 @@ class SharedDesignAcceptance:
 
         # Stale guards must reject work against an unrelated displayed revision.
         stale = "0" * 64 if assembly_displayed != "0" * 64 else "f" * 64
-        self.client.call("snapshot", "--session", self.session, "--expect-revision", stale,
+        self.client.call('project', 'inspect', '--project', self.session, "--expect-revision", stale,
                          expected_code=EXIT_CODES["stale_revision"])
 
         # Every manifest view uses design.js, but its resolved layout and
@@ -568,13 +568,13 @@ class SharedDesignAcceptance:
     def cleanup(self) -> list[str]:
         issues: list[str] = []
         try:
-            listed = self.client.call("sessions")
-            records = _find(listed, "sessions")
+            listed = self.client.call('project', 'list')
+            records = _find(listed, 'projects')
             if isinstance(records, list):
                 for record in records:
                     if not isinstance(record, dict):
                         continue
-                    session = _find(record, "session", "sessionId")
+                    session = _find(record, 'project', "sessionId")
                     path = _find(record, "projectPath")
                     if session == self.session and _same_path(path, self.manifest):
                         self.owned_pids.extend(_pid_records(record))

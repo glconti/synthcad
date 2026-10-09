@@ -170,11 +170,11 @@ def run(args):
     folder = Path(tempfile.mkdtemp(prefix="synthcad-guided-pick-"))
     print(f"Test evidence directory: {folder}", flush=True)
     client = session.Client(session.discover_executable(args.cli), Path(args.viewer).resolve() if args.viewer else None, 40)
-    client.session_dir, client.trace_path = folder / "sessions", folder / "cli-trace.jsonl"
+    client.session_dir, client.trace_path = folder / 'projects', folder / "cli-trace.jsonl"
     owned = None
     try:
         selection_tests.fixture(folder)
-        opened = client.call("open", str(folder), "--hidden", "--session", "guided-pick-test")
+        opened = client.call('project', 'open', str(folder), "--hidden", '--name', "guided-pick-test")
         records = session._pid_records(opened)
         require(records, "Open response lacks owned viewer PID")
         pid, record = records[0]
@@ -190,32 +190,32 @@ def run(args):
         owned = OwnedProcess(pid, identity)
 
         def call(*cmd, **kwargs):
-            return client.call(*cmd, "-s", "guided-pick-test", **kwargs)
+            return client.call(*cmd, '--project', "guided-pick-test", **kwargs)
 
         def settle(expected_code=0):
             deadline = time.monotonic() + 20
             while True:
-                revision = call("revision", expected_code=(0, 11))
+                revision = call('project', 'revision', expected_code=(0, 11))
                 if revision["ok"]:
-                    return call("wait", "--revision", session._revision(revision), expected_code=expected_code)
+                    return call('project', 'wait', "--revision", session._revision(revision), expected_code=expected_code)
                 require(time.monotonic() < deadline, "Initial dependencies did not become ready")
                 time.sleep(.1)
 
         def snapshot():
-            return call("snapshot")["data"]
+            return call('project', 'inspect')["data"]
 
         def human_selection():
-            return call("selection")["data"]["selection"]
+            return call('review', 'selection')["data"]["selection"]
 
         def start(identifier, question="Which surface should receive the mount?", **kwargs):
-            return call("pick", "--id", identifier, "--kind", "surface", "--question", question, **kwargs)
+            return call('review', 'pick', 'request', "--id", identifier, "--kind", "surface", "--question", question, **kwargs)
 
         def status(identifier):
-            return call("pick-status", identifier)["data"]["request"]
+            return call('review', 'pick', 'status', identifier)["data"]["request"]
 
         def events(cursor, wait=0, request_timeout=None, **kwargs):
             options = [] if request_timeout is None else ["--timeout", str(request_timeout)]
-            return call("events", "--after", cursor, "--wait", str(wait), *options, **kwargs)
+            return call('project', 'events', "--after", cursor, "--wait", str(wait), *options, **kwargs)
 
         def event_types(response):
             return [event["type"] for event in response["data"]["events"]]
@@ -227,8 +227,8 @@ def run(args):
         width, height = native.width / native.scale, native.height / native.scale
         layout = guided_layout(width, height)
         print(f"Owned PID {pid}: {native.width}x{native.height}, UI scale {native.scale}", flush=True)
-        call("frame", "cube")
-        call("highlight", "cylinder")
+        call('review', 'frame', "cube")
+        call('review', 'highlight', "cylinder")
         # Select a matching surface before the request, so disabled confirmation
         # proves a fresh human choice is required, even when the old kind matches.
         # Same SelectionUi::Layout mode center used by the geometric harness.
@@ -243,7 +243,7 @@ def run(args):
         started = start("confirm-1")["data"]
         require(started["created"] and started["request"]["status"] == "pending", "Start did not return pending receipt")
         require(human_selection() == previous, "Starting a request changed prior human selection")
-        call("screenshot", str(folder / "question-pending.png"))
+        call('review', 'screenshot', str(folder / "question-pending.png"))
         click(native, layout["confirm"])
         require(status("confirm-1")["status"] == "pending", "Confirm submitted a pre-request selection")
         replay = start("confirm-1")["data"]
@@ -266,7 +266,7 @@ def run(args):
         replay = start("confirm-1")["data"]
         require(not replay["created"] and replay["eventCursor"] == cursor and human_selection()["geometry"] == candidate,
                 "Duplicate start reset the native candidate or emitted an event")
-        call("screenshot", str(folder / "question-candidate.png"))
+        call('review', 'screenshot', str(folder / "question-candidate.png"))
         with ThreadPoolExecutor(max_workers=1) as executor:
             # Maximum event wait must be accepted even with a zero global
             # timeout; native confirmation wakes it without waiting five minutes.
@@ -281,14 +281,14 @@ def run(args):
         event = confirmed["data"]["events"][0]
         require(event["requestId"] == "confirm-1" and event["selection"] == candidate and event["revision"] == candidate["revision"],
                 "Confirmation event lacks bound geometry context")
-        resolved = call("reference", candidate["reference"])["data"]["geometry"]
+        resolved = call('review', 'selection', candidate["reference"])["data"]["geometry"]
         require(resolved["partId"] == "cube" and resolved["kind"] == "planar-face" and
                 resolved["sourcePartId"] == "box-source" and resolved["instanceId"] == "cube", "Confirmed reference did not resolve")
         require(human_selection()["geometry"] == candidate and snapshot()["highlights"] == ["cylinder"],
                 "Reading the result changed selection or agent highlights")
         require({part["id"]: (part["exportable"], part["visible"]) for part in snapshot()["parts"]} == flags,
                 "Guided selection changed exportability or visibility")
-        call("screenshot", str(folder / "confirmed-selection.png"))
+        call('review', 'screenshot', str(folder / "confirmed-selection.png"))
         cursor = confirmed["data"]["cursor"]
         require(not start("confirm-1")["data"]["created"], "Terminal duplicate created another request")
 
@@ -297,17 +297,17 @@ def run(args):
         require(status("ui-cancel")["status"] == "cancelled", "Native Cancel did not cancel request")
         require(event_types(events(started_ui_cancel["eventCursor"])) == ["pick-cancelled"], "Native Cancel event missing")
         cli_cancel = start("cli-cancel")["data"]
-        cancelled = call("pick-cancel", "cli-cancel")["data"]
+        cancelled = call('review', 'pick', 'cancel', "cli-cancel")["data"]
         require(cancelled["request"]["status"] == "cancelled", "CLI cancel failed")
-        require(call("pick-cancel", "cli-cancel")["data"] == cancelled, "CLI cancel is not idempotent")
+        require(call('review', 'pick', 'cancel', "cli-cancel")["data"] == cancelled, "CLI cancel is not idempotent")
         require(event_types(events(cli_cancel["eventCursor"])) == ["pick-cancelled"], "CLI cancel emitted wrong events")
 
         long_question = "SCROLL START — Choose a surface.\n" + "\n".join(f"Line {index:02}: Preserve the selected geometry and read this context." for index in range(35)) + "\nSCROLL END"
         start("long-question", long_question)
         camera = snapshot()["camera"]
-        call("screenshot", str(folder / "long-question-top.png"))
+        call('review', 'screenshot', str(folder / "long-question-top.png"))
         wheel(native, layout["question"], -45)
-        call("screenshot", str(folder / "long-question-bottom.png"))
+        call('review', 'screenshot', str(folder / "long-question-bottom.png"))
         require((folder / "long-question-top.png").read_bytes() != (folder / "long-question-bottom.png").read_bytes(),
                 "Question wheel scrolling produced no visual change")
         require(snapshot()["camera"] == camera and status("long-question")["status"] == "pending", "Question scrolling moved camera or submitted request")
@@ -318,7 +318,7 @@ def run(args):
         source.write_text(source.read_text(encoding="utf-8").replace("size=20", "size=22"), encoding="utf-8")
         settle()
         require(status("reload-invalidates")["status"] == "invalidated", "Source reload did not invalidate pending request")
-        call("pick", "--id", "confirm-1", "--kind", "surface", "--question", started["request"]["question"],
+        call('review', 'pick', 'request', "--id", "confirm-1", "--kind", "surface", "--question", started["request"]["question"],
              "--expect-revision", result["revision"], expected_code=7)
         replay = start("confirm-1")["data"]
         require(not replay["created"] and replay["request"] == result, "Unguarded terminal receipt changed after reload")
@@ -341,7 +341,7 @@ def run(args):
         for index in range(129):
             identifier = f"retention-{index}"
             start(identifier)
-            call("pick-cancel", identifier)
+            call('review', 'pick', 'cancel', identifier)
         response = events(current, expected_code=13)
         require(response["error"]["code"] == "stale_cursor", "Expired cursor did not fail explicitly")
         retained = events("0")["data"]

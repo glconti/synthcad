@@ -7,7 +7,9 @@
 namespace synthcad {
 
 struct CliOptions {
+  // Canonical public path; operation is the private protocol-v1 command.
   std::string command;
+  std::string operation;
   nlohmann::json arguments = nlohmann::json::object();
   std::string session;
   bool jsonOutput = false;
@@ -26,6 +28,11 @@ struct CliParseResult {
 // Arguments exclude the executable name. Parsing never starts a viewer.
 CliParseResult ParseCli(const std::vector<std::string>& arguments);
 std::string Help(const std::string& command = "");
+nlohmann::json HelpData(const std::string& command = "");
+bool IsCliRoot(const std::string& token);
+bool IsProjectPath(const std::string& token);
+// Translate only protocol-owned fields, never arbitrary authored data.
+nlohmann::json CliResponse(nlohmann::json response, const std::string& command);
 nlohmann::json Capabilities();
 nlohmann::json Success(const std::string& command,
     const nlohmann::json& data = nlohmann::json::object(),

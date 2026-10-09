@@ -56,15 +56,15 @@ def run(args):
     config = project / "synthcad.json"
     metadata = json.loads(config.read_text(encoding="utf-8"))
     client = session.Client(session.discover_executable(args.cli), Path(args.viewer).resolve() if args.viewer else None, 35)
-    client.session_dir, client.trace_path = folder / "sessions", folder / "cli-trace.jsonl"
+    client.session_dir, client.trace_path = folder / 'projects', folder / "cli-trace.jsonl"
     pids = []
     name = "overview-test"
     def call(*cmd, **kwargs):
-        return client.call(*cmd, "-s", name, **kwargs)
+        return client.call(*cmd, '--project', name, **kwargs)
     def revision():
         deadline = time.monotonic() + 25
         while time.monotonic() < deadline:
-            result = call("revision", expected_code=(0, 11))
+            result = call('project', 'revision', expected_code=(0, 11))
             if result["ok"]:
                 return session._revision(result)
             time.sleep(.1)
@@ -74,7 +74,7 @@ def run(args):
         while True:
             current = revision()
             if previous is None or current != previous:
-                return call("wait", "--revision", current, "--timeout", "25000", expected_code=error)
+                return call('project', 'wait', "--revision", current, "--timeout", "25000", expected_code=error)
             require(time.monotonic() < deadline, "Public-file edit did not change displayed revision")
             time.sleep(.1)
     def write_manifest():
@@ -82,15 +82,15 @@ def run(args):
         config.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
         settle(before)
     def overview():
-        return call("overview")["data"]
+        return call('project', 'inspect')["data"]["overview"]
     def snapshot():
-        return call("snapshot")["data"]
+        return call('project', 'inspect')["data"]
     def screenshot(label):
         destination = folder / (label + ".png")
-        call("screenshot", str(destination))
+        call('review', 'screenshot', str(destination))
         require(destination.read_bytes().startswith(b"\x89PNG"), "Screenshot missing")
     try:
-        opened = client.call("open", str(project), "--hidden", "--session", name)
+        opened = client.call('project', 'open', str(project), "--hidden", '--name', name)
         pids.extend(pid for pid, _ in session._pid_records(opened))
         require(pids, "Open did not return owned viewer PID")
         settle()
@@ -99,7 +99,7 @@ def run(args):
             require(abs(native.scale - args.expected_scale) < .02, "Requested DPI scale was not applied")
         print(f"Owned window PID {pids[0]}: {native.width}x{native.height}, UI scale {native.scale}", flush=True)
         initial = overview()
-        require(call("profile")["data"] == initial["profile"], "Profile CLI and overview context differ")
+        require(call('print', 'profile')["data"] == initial["profile"], "Profile CLI and overview context differ")
         require(initial["profile"]["status"] == "incomplete" and initial["profile"]["profileRevision"] is None,
                 "Omitted project profile should be explicit incomplete context")
         require({v["id"] for v in initial["views"]} == {"assembly", "inspection", "plate-1", "plate-2"}, "View registry incomplete")
@@ -127,7 +127,7 @@ def run(args):
             wheel(native, -3)
         require(switched, "Native overview named inspection view button did not switch views")
         screenshot("native-named-view")
-        call("view", "assembly")
+        call('review', 'view', "assembly")
         settle()
         wheel(native, 100)
         selection.click(native, [484, 40])
@@ -171,7 +171,7 @@ def run(args):
         write_manifest()
         partial = overview()
         require(partial["status"] == "partial" and len(partial["measurements"]) == 1 and partial["errors"], "Malformed metadata sibling discarded valid measurement")
-        require(snapshot()["parts"] and session._find(call("state"), "exportValid") is True, "Optional metadata error blocked geometry/export")
+        require(snapshot()["parts"] and session._find(call('project', 'inspect'), "exportValid") is True, "Optional metadata error blocked geometry/export")
         selection.click(native, [322, 77])
         wheel(native, -100)
         screenshot("metadata-errors")
@@ -194,24 +194,24 @@ def run(args):
 
         second = folder / "Second project"
         shutil.copytree(session.FIXTURES / "shared-design", second)
-        other = client.call("open", str(second), "--hidden", "--session", "overview-other")
+        other = client.call('project', 'open', str(second), "--hidden", '--name', "overview-other")
         pids.extend(pid for pid, _ in session._pid_records(other))
         deadline = time.monotonic() + 25
         while True:
-            other_rev = client.call("revision", "-s", "overview-other", expected_code=(0, 11))
+            other_rev = client.call('project', 'revision', '--project', "overview-other", expected_code=(0, 11))
             if other_rev["ok"]:
                 break
             require(time.monotonic() < deadline, "Second project revision stayed busy")
             time.sleep(.1)
-        client.call("wait", "--revision", session._revision(other_rev), "-s", "overview-other")
-        isolated = client.call("overview", "-s", "overview-other")["data"]
+        client.call('project', 'wait', "--revision", session._revision(other_rev), '--project', "overview-other")
+        isolated = client.call('project', 'inspect', '--project', "overview-other")["data"]["overview"]
         require(isolated["profile"]["activeProfile"] is None and isolated["profile"]["profileRevision"] is None,
                 "Profile leaked into second project")
 
         before = revision()
         config.write_text(json.dumps(dict(metadata, defaultView="missing")), encoding="utf-8")
         settle(before, error=5)
-        require(session._find(call("state"), "exportValid") is False, "Required manifest error left export valid")
+        require(session._find(call('project', 'inspect'), "exportValid") is False, "Required manifest error left export valid")
         retained = overview()
         require(retained["metadataCurrent"] is False and retained["profile"]["status"] == "invalid",
                 "Broken required manifest presented last-loaded metadata as current")
@@ -219,7 +219,7 @@ def run(args):
         before = revision()
         config.write_text(json.dumps(metadata, ensure_ascii=False), encoding="utf-8")
         settle(before)
-        require(snapshot()["parts"] and session._find(call("state"), "exportValid") is True, "Required manifest recovery failed")
+        require(snapshot()["parts"] and session._find(call('project', 'inspect'), "exportValid") is True, "Required manifest recovery failed")
         require(overview()["metadataCurrent"] is True, "Recovered metadata stayed marked unavailable")
         require({p["id"]: p["exportable"] for p in snapshot()["parts"]} ==
                 {p["id"]: p["exportable"] for p in baseline["parts"]}, "Overview operations changed export flags")

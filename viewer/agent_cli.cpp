@@ -1,4 +1,6 @@
 #include "agent_cli.h"
+#include "agent_knowledge.h"
+#include "project_contract.h"
 
 #include <algorithm>
 #include <charconv>
@@ -10,54 +12,56 @@
 namespace synthcad {
 namespace {
 using nlohmann::json;
-const std::map<std::string, std::string> kUsage = {
-    {"docs", "docs [AREA]"},
-    {"open", "open PATH [--session NAME] [--hidden] [--evaluation-timeout MS]"},
-    {"reload", "reload [--evaluation-timeout MS]"}, {"cancel-load", "cancel-load"}, {"sessions", "sessions"}, {"snapshot", "snapshot"},
-    {"overview", "overview"}, {"profile", "profile [--template]"}, {"checks", "checks"},
-    {"selection", "selection"}, {"state", "state"},
-    {"reference", "reference TOKEN"},
-    {"pick", "pick --id ID --kind part|surface|edge|vertex --question TEXT"},
-    {"pick-status", "pick-status ID"}, {"pick-cancel", "pick-cancel ID"},
-    {"events", "events --after CURSOR [--wait MS]"},
-    {"revision", "revision"},
-    {"wait", "wait --revision TOKEN [--timeout MS]"},
-    {"highlight", "highlight [PART_IDS...] [--clear] [--frame]"},
-    {"frame", "frame [PART_IDS... | --selection]"},
-    {"view", "view NAME"},
-    {"screenshot", "screenshot PATH [--replace]"},
-    {"export", "export PATH [--format 3mf|stl] [--visible-only] [--replace] [--allow-warnings] [--dry-run]"},
-    {"export-history", "export-history"},
-    {"capabilities", "capabilities"}, {"version", "version"}};
-const std::map<std::string, std::string> kDescriptions = {
-    {"docs", "List guidance areas, or print one complete guide to stdout. No viewer or skill installation required."},
-    {"open", "Open or reuse a persistent project session. --hidden is for automation."},
-    {"sessions", "List live local sessions."},
-    {"snapshot", "Read semantic scene state, without meshes."},
-    {"overview", "Read the displayed revision's project overview and profile context."},
-    {"checks", "Read revision-bound geometry and plate checks from the viewer. Uncomputed, heuristic, sliced and physical evidence are distinguished; this does not run a slicer."},
-    {"profile", "Read displayed project-local printer/material context. --template prints an incomplete manifest fragment without a session; preset IDs are never verified."},
-    {"selection", "Read the user's current selection."},
-    {"reference", "Resolve a copied selection reference against the displayed geometry."},
-    {"pick", "Ask the human to select geometry. Caller ID permits safe retries; this returns a receipt immediately."},
-    {"pick-status", "Read a guided selection request, including its retained terminal outcome."},
-    {"pick-cancel", "Cancel a guided selection request; cancelling again is idempotent."},
-    {"events", "Read session events after an opaque cursor; 0 starts retained history. --wait is 0..300000 ms (default 0)."},
-    {"state", "Read load state and attempted/displayed revisions."},
-    {"revision", "Compute the desired revision from current files on disk."},
-    {"reload", "Retry model evaluation. --evaluation-timeout MS sets the session limit (default 120000, maximum 3600000). Request --timeout does not cancel evaluation."},
-    {"cancel-load", "Cancel the current model worker and retain the last successful model."},
-    {"wait", "Wait for the requested revision; default timeout is 10000 ms."},
-    {"highlight", "Replace agent highlights, or clear them. --frame also frames the result."},
-    {"frame", "Frame the whole scene, given parts, or the current selection."},
-    {"view", "Switch to a named project view."},
-    {"screenshot", "Save a screenshot to PATH; --replace permits overwriting."},
-    {"export", "Export current placed geometry through the viewer. Infer format from .3mf/.stl, or select it explicitly. --dry-run validates without writing; --allow-warnings acknowledges check warnings. Build volume and printer metadata are optional; exact Bambu interoperability is not required."},
-    {"export-history", "Read the viewer's cached export records and diagnostics; this does not scan files."},
-    {"capabilities", "List supported commands and protocol capabilities."},
-    {"version", "Print the application and protocol versions."}};
-const std::set<std::string> kReview = {
-    "snapshot", "overview", "profile", "checks", "selection", "reference", "state", "highlight", "frame", "view", "screenshot", "pick", "export", "export-history"};
+const json& Registry() {
+  static const json registry = json::parse(ReadDoc("cli_commands").at("content").get<std::string>());
+  return registry;
+}
+const json* Node(const std::string& path) {
+  for (const auto& node : Registry().at("nodes"))
+    if (node.at("path") == path) return &node;
+  return nullptr;
+}
+std::string Parent(const std::string& path) {
+  const auto space = path.rfind(' ');
+  return space == std::string::npos ? "" : path.substr(0, space);
+}
+json Children(const std::string& path) {
+  json children = json::array();
+  for (const auto& node : Registry().at("nodes")) {
+    const auto child = node.at("path").get<std::string>();
+    if (!child.empty() && Parent(child) == path)
+      children.push_back({{"path", child}, {"kind", node.at("kind")}, {"summary", node.at("summary")}});
+  }
+  return children;
+}
+std::string Usage(const json& node) {
+  std::string usage = "synthcad-cli";
+  const auto path = node.at("path").get<std::string>();
+  if (!path.empty()) usage += " " + path;
+  for (const auto& arg : node.at("arguments")) {
+    std::string name = arg.at("name");
+    if (arg.at("multiple").get<bool>()) name += "...";
+    usage += " " + (arg.at("required").get<bool>() ? name : "[" + name + "]");
+  }
+  for (const auto& option : node.at("options")) {
+    const std::string name = option;
+    const auto& spec = Registry().at("options").at(name);
+    std::string item = name;
+    if (spec.contains("valueName")) item += " " + spec.at("valueName").get<std::string>();
+    const auto& required = node.at("requiredOptions");
+    const bool mandatory = std::find(required.begin(), required.end(), option) != required.end();
+    usage += " " + (mandatory ? item : "[" + item + "]");
+  }
+  if (node.at("kind") != "action") usage += " [--help]";
+  return usage;
+}
+std::string Unknown(const std::string& path, const std::string& token) {
+  if (path.empty() && Registry().at("removed").contains(token))
+    return "Removed command: " + token + ". Use synthcad-cli " + Registry().at("removed").at(token).get<std::string>() + ".";
+  std::string message = "Unknown command: " + (path.empty() ? "" : path + " ") + token + ". Choose:";
+  for (const auto& child : Children(path)) message += " " + child.at("path").get<std::string>() + ";";
+  return message + " read synthcad-cli" + (path.empty() ? "" : " " + path) + " --help.";
+}
 json Envelope(const std::string& command, const std::string& session,
               const std::string& revision, bool ok) {
   json result = {{"protocolVersion", 1}, {"ok", ok}, {"command", command}};
@@ -65,284 +69,277 @@ json Envelope(const std::string& command, const std::string& session,
   if (!revision.empty()) result["revision"] = revision;
   return result;
 }
+void Rename(json& object, const char* from, const char* to) {
+  if (object.is_object() && object.contains(from)) {
+    object[to] = object.at(from);
+    object.erase(from);
+  }
+}
 }  // namespace
+
+bool IsCliRoot(const std::string& token) {
+  return (!token.empty() && Node(token)) || Registry().at("removed").contains(token);
+}
+bool IsProjectPath(const std::string& token) {
+  if (token.empty() || token.front() == '-' || IsCliRoot(token)) return false;
+  const auto path = std::filesystem::u8path(token);
+  std::error_code error;
+  return std::filesystem::exists(path, error) || token.find('/') != std::string::npos ||
+      token.find('\\') != std::string::npos || path.extension() == ".js" || path.filename() == "synthcad.json";
+}
 
 CliParseResult ParseCli(const std::vector<std::string>& arguments) {
   CliParseResult result;
   auto& options = result.options;
-  std::vector<std::string> positional;
-  std::set<std::string> flags;
+  options.jsonOutput = std::find(arguments.begin(), arguments.end(), "--json") != arguments.end();
+  std::vector<std::string> words;
+  std::vector<bool> literals;
+  std::map<std::string, json> flags;
   bool literal = false;
-  auto fail = [&](const std::string& message) -> CliParseResult {
-    result.error = message;
-    return result;
-  };
+  auto fail = [&](const std::string& message) { result.error = message; return result; };
   for (size_t i = 0; i < arguments.size(); ++i) {
-    const std::string& token = arguments[i];
+    const auto& token = arguments[i];
     if (!literal && token == "--") { literal = true; continue; }
-    if (!literal && !token.empty() && token[0] == '-') {
+    if (!literal && !token.empty() && token.front() == '-') {
       const auto equal = token.find('=');
-      std::string flag = token.substr(0, equal);
-      if (flag == "-s") flag = "--session";
-      if (flag == "-h") flag = "--help";
-      if (!flags.insert(flag).second) return fail("Repeated option: " + flag);
-      const bool needsValue = flag == "--session" || flag == "--timeout" || flag == "--evaluation-timeout" ||
-          flag == "--revision" || flag == "--expect-revision" || flag == "--id" ||
-          flag == "--kind" || flag == "--question" || flag == "--after" || flag == "--wait" || flag == "--format";
-      std::string value;
-      if (needsValue) {
+      std::string name = token.substr(0, equal);
+      if (name == "-h") name = "--help";
+      if (name == "--session" || name == "-s") return fail("Removed option: " + name + ". Use --project NAME, or project open PATH --name NAME.");
+      if (flags.count(name)) return fail("Repeated option: " + name);
+      if (name == "--version") {
+        if (equal != std::string::npos) return fail("Option does not accept a value: " + name);
+        flags[name] = true; options.version = true; continue;
+      }
+      if (!Registry().at("options").contains(name)) return fail("Unknown option: " + name + ". Read synthcad-cli --help.");
+      const auto& spec = Registry().at("options").at(name);
+      if (spec.at("type") == "boolean") {
+        if (equal != std::string::npos) return fail("Option does not accept a value: " + name);
+        flags[name] = true;
+      } else {
+        std::string value;
         if (equal != std::string::npos) value = token.substr(equal + 1);
-        else if (i + 1 < arguments.size() && !arguments[i + 1].empty() &&
-                 arguments[i + 1][0] != '-') value = arguments[++i];
-        if (value.empty()) return fail("Missing value for " + flag);
-      } else if (equal != std::string::npos) {
-        return fail("Option does not accept a value: " + flag);
+        else if (i + 1 < arguments.size() && !arguments[i + 1].empty() && arguments[i + 1].front() != '-') value = arguments[++i];
+        if (value.empty()) return fail("Missing value for " + name);
+        if (spec.at("type") == "integer") {
+          int number = 0;
+          const auto parsed = std::from_chars(value.data(), value.data() + value.size(), number);
+          if (parsed.ec != std::errc() || parsed.ptr != value.data() + value.size() || number < spec.at("minimum").get<int>() || number > spec.at("maximum").get<int>())
+            return fail(name + " must be an integer from " + spec.at("minimum").dump() + " to " + spec.at("maximum").dump());
+          flags[name] = number;
+        } else {
+          if (spec.contains("choices") && std::find(spec.at("choices").begin(), spec.at("choices").end(), value) == spec.at("choices").end())
+            return fail("Invalid value for " + name + "; choose " + spec.at("choices").dump());
+          flags[name] = value;
+        }
       }
-      if (flag == "--session") options.session = value;
-      else if (flag == "--json") options.jsonOutput = true;
-      else if (flag == "--help") options.help = true;
-      else if (flag == "--version") options.version = true;
-      else if (flag == "--expect-revision") options.expectRevision = value;
-      else if (flag == "--timeout") {
-        int timeout = 0;
-        auto parsed = std::from_chars(value.data(), value.data() + value.size(), timeout);
-        if (parsed.ec != std::errc() || parsed.ptr != value.data() + value.size() || timeout < 0 || timeout > 300000)
-          return fail("--timeout must be an integer from 0 to 300000 milliseconds");
-        options.timeoutMs = timeout;
-      } else if (flag == "--evaluation-timeout") {
-        int ms=0;auto parsed=std::from_chars(value.data(),value.data()+value.size(),ms);
-        if(parsed.ec!=std::errc()||parsed.ptr!=value.data()+value.size()||ms<1||ms>3600000)return fail("--evaluation-timeout must be 1..3600000 milliseconds");
-        options.arguments["evaluationTimeoutMs"]=ms;
-      } else if (flag == "--revision") options.arguments["revision"] = value;
-      else if (flag == "--id") options.arguments["id"] = value;
-      else if (flag == "--kind") options.arguments["kind"] = value;
-      else if (flag == "--question") options.arguments["question"] = value;
-      else if (flag == "--after") options.arguments["after"] = value;
-      else if (flag == "--wait") {
-        int wait = 0;
-        auto parsed = std::from_chars(value.data(), value.data() + value.size(), wait);
-        if (parsed.ec != std::errc() || parsed.ptr != value.data() + value.size() || wait < 0 || wait > 300000)
-          return fail("--wait must be an integer from 0 to 300000 milliseconds");
-        options.arguments["waitMs"] = wait;
-      }
-      else if (flag == "--hidden") options.arguments["hidden"] = true;
-      else if (flag == "--clear") options.arguments["clear"] = true;
-      else if (flag == "--frame") options.arguments["frame"] = true;
-      else if (flag == "--selection") options.arguments["selection"] = true;
-      else if (flag == "--replace") options.arguments["replace"] = true;
-      else if (flag == "--format") options.arguments["format"] = value;
-      else if (flag == "--visible-only") options.arguments["visibleOnly"] = true;
-      else if (flag == "--allow-warnings") options.arguments["allowWarnings"] = true;
-      else if (flag == "--dry-run") options.arguments["dryRun"] = true;
-      else if (flag == "--template") options.arguments["template"] = true;
-      else return fail("Unknown option: " + flag);
-      continue;
-    }
-    if (options.command.empty()) options.command = token;
-    else positional.push_back(token);
+    } else { words.push_back(token); literals.push_back(literal); }
   }
-  if (options.command == "help") {
-    options.help = true;
-    if (positional.size() > 1) return fail("Usage: synthcad-cli help [COMMAND]");
-    options.command = positional.empty() ? "" : positional.front();
-    positional.clear();
-  }
+  options.jsonOutput = flags.count("--json") != 0;
+  options.help = flags.count("--help") != 0;
   if (options.version) {
-    if (!options.command.empty() && options.command != "version")
-      return fail("--version cannot be combined with a command");
-    options.command = "version";
-  }
-  if (options.command.empty()) {
-    if (!options.arguments.empty() || !options.expectRevision.empty() || !options.session.empty() ||
-        flags.count("--timeout")) return fail("A command is required");
-    options.help = true;
+    options.command = "--version";
+    if (!words.empty() || flags.size() > (flags.count("--json") ? 2u : 1u)) return fail("--version only accepts --json.");
     return result;
   }
-  if (!kUsage.count(options.command)) return fail("Unknown command: " + options.command);
-  const std::map<std::string, std::string> owners = {
-      {"--hidden", "open"}, {"--revision", "wait"}, {"--clear", "highlight"},
-      {"--frame", "highlight"}, {"--selection", "frame"},
-      {"--format", "export"}, {"--visible-only", "export"}, {"--allow-warnings", "export"}, {"--dry-run", "export"},
-      {"--id", "pick"}, {"--kind", "pick"}, {"--question", "pick"},
-      {"--after", "events"}, {"--wait", "events"}, {"--template", "profile"}};
-  for (const auto& entry : owners) {
-    if (flags.count(entry.first) && options.command != entry.second)
-      return fail(entry.first + " is only valid for " + entry.second);
+  const json* node = Node("");
+  size_t position = 0;
+  while (position < words.size() && node->at("kind") != "action") {
+    const auto candidate = options.command.empty() ? words[position] : options.command + " " + words[position];
+    const auto* child = literals[position] ? nullptr : Node(candidate);
+    if (!child) return fail(Unknown(options.command, words[position]));
+    node = child; options.command = candidate; ++position;
   }
-  if(flags.count("--replace") && options.command!="screenshot" && options.command!="export")
-    return fail("--replace is only valid for screenshot or export");
-  if (!options.expectRevision.empty() && !kReview.count(options.command))
-    return fail("--expect-revision is only valid for review commands");
-  if (options.arguments.value("template", false) && !options.expectRevision.empty())
-    return fail("--template does not read a displayed revision; omit --expect-revision");
-  if(flags.count("--evaluation-timeout")&&options.command!="open"&&options.command!="reload")return fail("--evaluation-timeout is only valid for open or reload");
-  if (options.help) return result;
-  if (options.command == "open" || options.command == "view" || options.command == "screenshot" || options.command == "reference" || options.command == "export") {
-    if (positional.size() != 1 || positional.front().empty())
-      return fail("Usage: synthcad-cli " + kUsage.at(options.command));
-    options.arguments[options.command == "view" ? "name" : options.command == "reference" ? "reference" : "path"] = positional.front();
-  } else if (options.command == "pick-status" || options.command == "pick-cancel") {
-    if (positional.size() != 1) return fail("Usage: synthcad-cli " + kUsage.at(options.command));
-    options.arguments["id"] = positional.front();
-  } else if (options.command == "docs") {
-    if (positional.size() > 1 || (!positional.empty() && positional.front().empty()))
-      return fail("Usage: synthcad-cli docs [AREA]");
-    if (!positional.empty()) options.arguments["topic"] = positional.front();
-  } else if (options.command == "highlight" || options.command == "frame") {
-    if (options.command == "highlight" && options.arguments.value("clear", false) && !positional.empty())
-      return fail("--clear cannot be combined with part IDs");
-    if (options.command == "highlight" && positional.empty() && !options.arguments.value("clear", false))
-      return fail("highlight requires part IDs or --clear");
-    if (options.command == "frame" && options.arguments.value("selection", false) && !positional.empty())
-      return fail("--selection cannot be combined with part IDs");
-    if (std::any_of(positional.begin(), positional.end(), [](const std::string& id) { return id.empty(); }))
-      return fail("Part IDs must not be empty");
-    options.arguments["partIds"] = positional;
-  } else if (!positional.empty()) return fail("Unexpected argument: " + positional.front());
-  if (options.command == "wait" && !options.arguments.contains("revision"))
-    return fail("wait requires --revision TOKEN");
-  if (options.command == "export") {
-    const auto path=options.arguments.at("path").get<std::string>();
-    if(path.size()>4096 || path.find('\0')!=std::string::npos) return fail("Export path must contain 1 to 4096 bytes without NUL");
-    if(!options.arguments.contains("format")) {
-      auto extension=std::filesystem::u8path(path).extension().u8string();
-      for(auto& c:extension)if(c>='A'&&c<='Z')c=char(c-'A'+'a');
-      if(extension!=".3mf" && extension!=".stl") return fail("Infer export format from a .3mf or .stl extension, or specify --format");
-      options.arguments["format"]=extension.substr(1);
+  options.operation = node->at("operation");
+  for (const auto& entry : flags) {
+    const auto& name = entry.first;
+    const auto& spec = Registry().at("options").at(name);
+    const auto& allowed = node->at("options");
+    if (spec.value("scope", "") != "global" && std::find(allowed.begin(), allowed.end(), name) == allowed.end())
+      return fail(name + " is not valid for " + (options.command.empty() ? "root help" : options.command) + ". Read its --help.");
+    if (name == "--project") options.session = entry.second.get<std::string>();
+    else if (name == "--name") options.session = entry.second.get<std::string>();
+    else if (name == "--expect-revision") options.expectRevision = entry.second.get<std::string>();
+    else if (name == "--timeout") options.timeoutMs = entry.second.get<int>();
+    else if (name != "--json" && name != "--help") options.arguments[spec.at("key").get<std::string>()] = entry.second;
+  }
+  if (options.operation == "open" && flags.count("--project")) return fail("project open takes --name NAME; use --project NAME for subsequent actions.");
+  if (options.arguments.value("template", false) && !options.expectRevision.empty()) return fail("--template does not read a displayed revision; omit --expect-revision.");
+  if (node->at("kind") != "action" || options.help) { options.help = true; return result; }
+  for (const auto& required : node->at("requiredOptions"))
+    if (!flags.count(required.get<std::string>())) return fail(options.command + " requires " + required.get<std::string>() + ". Usage: " + Usage(*node));
+  for (const auto& arg : node->at("arguments")) {
+    const auto key = arg.at("key").get<std::string>();
+    if (arg.at("multiple").get<bool>()) {
+      options.arguments[key] = json::array();
+      while (position < words.size()) {
+        if (words[position].empty()) return fail("Arguments must not be empty. Usage: " + Usage(*node));
+        options.arguments[key].push_back(words[position++]);
+      }
+    } else if (position < words.size()) {
+      if (words[position].empty()) return fail("Arguments must not be empty. Usage: " + Usage(*node));
+      options.arguments[key] = words[position++];
+    } else if (arg.at("required").get<bool>()) return fail("Missing " + arg.at("name").get<std::string>() + ". Usage: " + Usage(*node));
+  }
+  if (position < words.size()) return fail("Unexpected argument: " + words[position] + ". Usage: " + Usage(*node));
+  const auto& op = options.operation;
+  if (op == "selection" && options.arguments.contains("reference")) options.operation = "reference";
+  if (op == "highlight" || op == "frame") {
+    const bool hasIds = !options.arguments.at("partIds").empty();
+    if (op == "highlight" && options.arguments.value("clear", false) == hasIds) return fail("review highlight requires either part IDs or --clear.");
+    if (op == "frame" && options.arguments.value("selection", false) && hasIds) return fail("--selection cannot be combined with part IDs.");
+  }
+  if (op == "export") {
+    const auto path = options.arguments.at("path").get<std::string>();
+    if (path.size() > 4096 || path.find('\0') != std::string::npos) return fail("Export path must contain 1..4096 bytes without NUL.");
+    if (!options.arguments.contains("format")) {
+      auto extension = std::filesystem::u8path(path).extension().u8string();
+      for (auto& c : extension) if (c >= 'A' && c <= 'Z') c = char(c - 'A' + 'a');
+      if (extension != ".3mf" && extension != ".stl") return fail("Use a .3mf or .stl destination, or specify --format.");
+      options.arguments["format"] = extension.substr(1);
     }
-    const auto format=options.arguments.at("format").get<std::string>();
-    if(format!="3mf" && format!="stl") return fail("--format must be 3mf or stl");
-    for(const auto* flag:{"visibleOnly","replace","allowWarnings","dryRun"})
-      if(!options.arguments.contains(flag))options.arguments[flag]=false;
+    for (const auto* key : {"visibleOnly", "replace", "allowWarnings", "dryRun"})
+      if (!options.arguments.contains(key)) options.arguments[key] = false;
   }
-  if (options.command == "pick") {
-    for (const auto* required : {"id", "kind", "question"})
-      if (!options.arguments.contains(required)) return fail(std::string("pick requires --") + required);
-    const auto kind = options.arguments.at("kind").get<std::string>();
-    if (kind != "part" && kind != "surface" && kind != "edge" && kind != "vertex")
-      return fail("--kind must be part, surface, edge or vertex");
-    const auto question = options.arguments.at("question").get<std::string>();
-    if (question.empty() || question.size() > 4096 || question.find('\0') != std::string::npos)
-      return fail("--question must contain 1 to 4096 bytes without NUL");
-  }
-  if (options.command == "pick" || options.command == "pick-status" || options.command == "pick-cancel") {
+  if (op == "pick" || op == "pick-status" || op == "pick-cancel") {
     const auto id = options.arguments.at("id").get<std::string>();
-    if (id.empty() || id.size() > 128 || id.find('\0') != std::string::npos)
-      return fail("Request ID must contain 1 to 128 bytes without NUL");
+    if (id.empty() || id.size() > 128 || id.find('\0') != std::string::npos) return fail("Request ID must contain 1..128 UTF-8 bytes without NUL.");
+    if (op == "pick") {
+      const auto question = options.arguments.at("question").get<std::string>();
+      if (question.empty() || question.size() > 4096 || question.find('\0') != std::string::npos) return fail("--question must contain 1..4096 UTF-8 bytes without NUL.");
+    }
   }
-  if (options.command == "events") {
-    if (!options.arguments.contains("after")) return fail("events requires --after CURSOR");
-    if (!options.arguments.contains("waitMs")) options.arguments["waitMs"] = 0;
-  }
+  if (op == "events" && !options.arguments.contains("waitMs")) options.arguments["waitMs"] = 0;
   return result;
 }
 
-std::string Help(const std::string& command) {
-  std::ostringstream out;
-  const auto guidance = [&]() {
-    out << "Guidance on demand: synthcad-cli docs AREA\n"
-        << "  Getting started     start, skill\n"
-        << "  Modeling            modeling, api, design\n"
-        << "  Printing & assembly profiles, checks, print-design, fit-and-assembly, physical-feedback\n"
-        << "  Plates & handoff     build-plates, bambu-handoff\n"
-        << "  Agent review        cli, projects, overview\n"
-        << "Prints complete instructions to stdout; no skill files to install.\n"
-        << "Use synthcad-cli docs to list guides and their current bundle version.\n";
-  };
-  if (!command.empty()) {
-    auto usage = kUsage.find(command);
-    if (usage == kUsage.end()) return "Unknown command: " + command + "\n";
-    out << "Usage: synthcad-cli " << usage->second << "\n\n" << kDescriptions.at(command) << "\n";
-    if (command == "docs") { out << "\n"; guidance(); }
-    if (kReview.count(command)) out << "  --expect-revision TOKEN  Reject a stale displayed revision.\n";
-    if (command == "events") out << "The session retains 256 events. Cursors reset with the session; stale_cursor exits 13.\n"
-        << "A wait timeout preserves your cursor and does not cancel a pending pick.\n"
-        << "Request deadline: max(--timeout, --wait + 1000) ms, plus transport delivery grace.\n";
-    if (command == "pick") out << "ID: 1..128 bytes; question: 1..4096 bytes; neither permits NUL.\n"
-        << "Repeat the same ID and payload to replay the receipt without another UI event.\n";
-  } else {
-    out << "SynthCAD CLI — command-line interface controlling a persistent local viewer\n\nUsage: synthcad-cli COMMAND [OPTIONS]\n\n"
-        << "Start here: synthcad-cli docs start. Edit model files with your agent/editor.\n"
-        << "Use open PATH once; later commands reuse the same viewer session.\n"
-        << "The legacy synthcad executable accepts the same commands.\n\n";
-    guidance();
-    for (const auto& area : std::vector<std::pair<std::string, std::vector<std::string>>>{
-        {"Discovery", {"docs", "capabilities", "version"}},
-        {"Projects & sessions", {"open", "reload", "cancel-load", "sessions", "view"}},
-        {"Reload & revision checks", {"state", "revision", "wait"}},
-        {"Project context", {"overview", "profile", "checks"}},
-        {"Shared review", {"snapshot", "selection", "reference", "highlight", "frame", "screenshot"}},
-        {"Exports", {"export", "export-history"}},
-        {"Guided selection", {"pick", "pick-status", "pick-cancel", "events"}}}) {
-      out << "\n" << area.first << ":\n";
-      for (const auto& name : area.second) out << "  " << kUsage.at(name) << "\n";
-    }
-    out << "\n  help [COMMAND]\n\nExamples:\n"
-        << "  synthcad-cli docs start\n"
-        << "  synthcad-cli docs print-design\n"
-        << "  synthcad-cli profile --template\n"
-        << "  synthcad-cli overview -s bracket --json\n"
-        << "  synthcad-cli open \"My Project/assembly.js\" --session bracket\n"
-        << "  synthcad-cli --session bracket --json snapshot\n"
-        << "  synthcad-cli revision -s bracket --json\n"
-        << "  synthcad-cli wait -s bracket --revision TOKEN --timeout 10000\n"
-        << "  synthcad-cli highlight base lid -s bracket --frame --expect-revision TOKEN\n"
-        << "  synthcad-cli pick --id mount-1 --kind surface --question \"Which surface?\" -s bracket\n"
-        << "  synthcad-cli events --after 0 --wait 30000 -s bracket --json\n";
+json Capabilities() { return Registry().at("capabilities"); }
+json HelpData(const std::string& command) {
+  const auto* node = Node(command);
+  if (!node) throw KnowledgeError("not_found", "Unknown help path: " + command);
+  json data = {{"path",command},{"kind",node->at("kind")},{"summary",node->at("summary")},
+    {"usage",Usage(*node)},{"children",Children(command)},{"arguments",node->at("arguments")},
+    {"requirements",node->at("requirements")},{"examples",node->at("examples")},{"nextSteps",node->at("nextSteps")},
+    {"options",json::array()},{"sources",json::array()}};
+  for (const auto& entry : Registry().at("options").items()) {
+    const auto& allowed = node->at("options");
+    if (entry.value().value("scope", "") != "global" && std::find(allowed.begin(), allowed.end(), entry.key()) == allowed.end()) continue;
+    json option = entry.value(); option.erase("key"); option["name"] = entry.key();
+    const auto& required = node->at("requiredOptions");
+    option["required"] = std::find(required.begin(), required.end(), entry.key()) != required.end();
+    data["options"].push_back(option);
   }
-  out << "\nGlobal options (before or after the command):\n"
-      << "  --session, -s NAME  Address a session; required when several are running.\n"
-      << "  --json             One JSON response on stdout; logs go to stderr.\n"
-      << "  --timeout MS       Timeout from 0 to 300000 milliseconds (default 10000).\n"
-      << "  --help, -h         Show help without starting a viewer.\n"
-      << "  --version          Show version without starting a viewer.\n"
-      << "  --                 Treat remaining arguments as literal values.\n\n"
-      << "Exit codes: 0 success; 2 invalid_argument; 3 no_session; 4 ambiguous_session;\n"
-      << "5 load_failed; 6 timeout; 7 stale_revision; 8 superseded; 9 cancelled;\n"
-      << "10 io_error; 11 busy; 12 not_found; 13 stale_cursor;\n"
-      << "14 warnings_present; 15 destination_exists; 16 empty_export.\n";
+  if (command.empty()) {
+    data["capabilities"] = Capabilities();
+    data["options"].push_back({{"name","--version"},{"type","boolean"},{"description","Read build and CLI protocol versions without a viewer."},{"required",false}});
+  }
+  std::string guidance = node->at("guidance");
+  for (const auto& topic : node->at("guides")) {
+    auto guide = ReadDoc(topic.get<std::string>());
+    if (!guidance.empty()) guidance += "\n\n";
+    guidance += guide.at("content").get<std::string>();
+    guide.erase("content"); guide.erase("bundleVersion"); guide.erase("bundleHash");
+    data["sources"].push_back(guide);
+  }
+  const auto bundle = ListDocs();
+  data["guidance"] = guidance;
+  data["hash"] = Sha256(guidance);
+  data["bundleHash"] = bundle.at("bundleHash");
+  data["bundleVersion"] = bundle.at("bundleVersion");
+  return data;
+}
+std::string Help(const std::string& command) {
+  const auto data = HelpData(command);
+  std::ostringstream out;
+  out << data.at("guidance").get<std::string>() << "\n\nUsage: " << data.at("usage").get<std::string>() << "\n";
+  if (!data.at("examples").empty()) {
+    out << "\nExamples:\n";
+    for (const auto& example : data.at("examples")) out << "  " << example.at("command").get<std::string>() << "\n";
+  }
+  if (!data.at("children").empty()) {
+    out << "\nExplore next (append --help for instructions):\n";
+    for (const auto& child : data.at("children")) out << "  " << child.at("path").get<std::string>() << " — " << child.at("summary").get<std::string>() << "\n";
+  }
+  if (!data.at("requirements").empty()) {
+    out << "\nRequirements:\n";
+    for (const auto& requirement : data.at("requirements")) out << "  " << requirement.get<std::string>() << "\n";
+  }
+  out << "\nOptions (before or after the command):\n";
+  for (const auto& option : data.at("options")) {
+    out << "  " << option.at("name").get<std::string>();
+    if (option.contains("valueName")) out << " " << option.at("valueName").get<std::string>();
+    out << "  " << option.at("description").get<std::string>() << "\n";
+  }
+  if (!data.at("nextSteps").empty()) {
+    out << "\nRelated instructions:\n";
+    for (const auto& next : data.at("nextSteps")) out << "  synthcad-cli " << next.get<std::string>() << " --help\n";
+  }
   return out.str();
 }
 
-json Capabilities() {
-  json commands = json::array();
-  for (const auto& entry : kUsage) commands.push_back(entry.first);
-  return {{"protocolVersion", 1}, {"commands", commands},
-          {"isolatedModelEvaluation",true},{"evaluationTimeoutDefaultMs",120000},{"loadDiagnostics",true},{"persistentSessions", true}, {"semanticSnapshots", true},
-          {"revisionWait", true}, {"agentHighlights", true},
-          {"screenshots", true}, {"bundledGuidance", true}, {"selectionReferences", true},
-          {"projectOverview", true}, {"printerProfiles", true}, {"manufacturingChecks", true}, {"automaticPacking", false}, {"slicerPresetVerification", false},
-          {"guidedPicking", true}, {"sessionEvents", true}, {"geometryEditing", false}, {"export", true}, {"exportFormats", {"3mf", "stl"}}, {"exportHistory", true}};
-}
-
-json Success(const std::string& command, const json& data,
-             const std::string& session, const std::string& revision) {
+json Success(const std::string& command, const json& data, const std::string& session, const std::string& revision) {
   json response = Envelope(command, session, revision, true);
   if (!data.is_null()) response["data"] = data;
   return response;
 }
-
-json Error(const std::string& command, const std::string& code,
-           const std::string& message, const json& details,
-           const std::string& session, const std::string& revision) {
+json Error(const std::string& command, const std::string& code, const std::string& message,
+           const json& details, const std::string& session, const std::string& revision) {
   json response = Envelope(command, session, revision, false);
   response["error"] = {{"code", code}, {"message", message}};
   if (!details.is_null() && !details.empty()) response["error"]["details"] = details;
   return response;
 }
-
+json CliResponse(json response, const std::string& command) {
+  response["protocolVersion"] = 2;
+  response["command"] = command;
+  Rename(response, "session", "project");
+  // Only these operation results contain transport-owned project identities.
+  if (response.contains("data")) {
+    auto& data = response["data"];
+    if (command == "project open") Rename(data, "session", "project");
+    if (command == "project list") {
+      Rename(data, "sessions", "projects");
+      if (data.contains("projects")) for (auto& record : data["projects"]) Rename(record, "session", "project");
+    }
+  }
+  if (response.contains("error")) {
+    auto& error = response["error"];
+    const auto code = error.value("code", "");
+    if (code == "no_session") {
+      error["code"] = "no_project";
+      error["message"] = "No matching open project. Run synthcad-cli project list or project open PATH.";
+    } else if (code == "ambiguous_session") {
+      error["code"] = "ambiguous_project";
+      error["message"] = "Several projects are open; use --project NAME from synthcad-cli project list.";
+    }
+    if (error.contains("details")) {
+      auto& details = error["details"];
+      if (code == "ambiguous_session") Rename(details, "sessions", "projects");
+      if (command == "project open") { Rename(details, "session", "project"); Rename(details, "existingSession", "existingProject"); }
+    }
+    // Translate transport messages only, leaving evaluation diagnostics and authored strings intact.
+    if (command == "project open") {
+      auto message = error.value("message", "");
+      const std::vector<std::pair<std::string,std::string>> phrases = {
+        {"Project is already open as session ","Project is already open as "},
+        {"Session name belongs to another project: ","Project handle belongs to another project: "},
+        {"Project is already opening as session ","Project is already opening as "},
+        {"An existing project session cannot currently be reached.","The existing open project cannot currently be reached."}};
+      for (const auto& phrase : phrases) if (message.rfind(phrase.first, 0) == 0) message.replace(0, phrase.first.size(), phrase.second);
+      error["message"] = message;
+    }
+  }
+  return response;
+}
 int ExitCode(const std::string& code) {
   static const std::map<std::string, int> codes = {
-      {"invalid_argument", 2}, {"no_session", 3}, {"ambiguous_session", 4},
-      {"load_failed", 5}, {"timeout", 6}, {"stale_revision", 7},
-      {"superseded", 8}, {"cancelled", 9}, {"io_error", 10},
-      {"busy", 11}, {"not_found", 12}, {"stale_cursor", 13},
-      {"warnings_present",14}, {"destination_exists",15}, {"empty_export",16}};
+      {"invalid_argument",2},{"no_session",3},{"no_project",3},{"ambiguous_session",4},{"ambiguous_project",4},
+      {"load_failed",5},{"timeout",6},{"stale_revision",7},{"superseded",8},{"cancelled",9},
+      {"io_error",10},{"busy",11},{"not_found",12},{"stale_cursor",13},
+      {"warnings_present",14},{"destination_exists",15},{"empty_export",16}};
   if (code.empty() || code == "ok") return 0;
   const auto found = codes.find(code);
   return found == codes.end() ? 1 : found->second;
 }
-
 std::string FormatResponse(const json& response, bool jsonOutput) {
   if (jsonOutput) return response.dump() + "\n";
   if (!response.value("ok", false)) {
@@ -350,25 +347,14 @@ std::string FormatResponse(const json& response, bool jsonOutput) {
     return error.value("code", "error") + ": " + error.value("message", "Request failed") + "\n";
   }
   const auto data = response.find("data");
-  if (response.value("command", "") == "profile" && data != response.end() && data->contains("profiles"))
-    return data->dump(2) + "\n";
-  if (response.value("command", "") == "docs" && data != response.end()) {
-    if (data->contains("content")) return data->at("content").get<std::string>();
-    std::ostringstream docs;
-    docs << "SynthCAD guidance — print an area with synthcad-cli docs AREA\n\n";
-    for (const auto& topic : data->at("topics"))
-      docs << "  " << topic.at("topic").get<std::string>() << " — " << topic.at("title").get<std::string>() << "\n";
-    docs << "\nBundle: " << data->at("bundleVersion").get<std::string>() << "\n";
-    return docs.str();
-  }
+  if (response.value("command", "") == "print profile" && data != response.end() && data->contains("profiles")) return data->dump(2) + "\n";
   if (data != response.end() && data->is_string()) return data->get<std::string>() + "\n";
   std::ostringstream out;
   out << response.value("command", "request") << ": ok";
-  if (response.contains("session")) out << " (session " << response.at("session").get<std::string>() << ")";
+  if (response.contains("project")) out << " (project " << response.at("project").get<std::string>() << ")";
   if (response.contains("revision")) out << " revision " << response.at("revision").get<std::string>();
   out << "\n";
   if (data != response.end() && !data->empty()) out << data->dump(2) << "\n";
   return out.str();
 }
-
 }  // namespace synthcad

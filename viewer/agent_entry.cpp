@@ -62,27 +62,28 @@ std::vector<std::string> ProcessArguments(int argc,char** argv){
 }
 bool IsAgentCommand(const std::vector<std::string>& arguments){
   if(arguments.size()<2)return false;
-  const std::set<std::string> commands={"docs","open","reload","cancel-load","sessions","snapshot","overview","profile","checks","export","export-history","selection","reference","pick","pick-status","pick-cancel","events","state","revision","wait","highlight","frame","view","screenshot","capabilities","version","help","--help","-h","--version","--json","--session","-s"};
-  if(commands.count(arguments[1]))return true;
-  return arguments[1].rfind("--",0)==0&&arguments[1]!="--render-scene"&&arguments[1]!="--profile-scene"&&arguments[1]!="--check-scene"&&arguments[1]!="--ui-preview"&&arguments[1]!="--agent-session";
+  const auto& first=arguments[1];
+  const std::set<std::string> viewerFlags={"--render-scene","--profile-scene","--check-scene","--ui-preview","--agent-session","--model-worker"};
+  if(viewerFlags.count(first))return false;
+  return IsCliRoot(first) || !IsProjectPath(first);
 }
 int RunAgentCli(const std::vector<std::string>& arguments,const std::string& executable,bool hostsViewer){
-  auto parsed=ParseCli(arguments);
+  auto cliArguments=arguments;
+  if(!cliArguments.empty() && IsProjectPath(cliArguments.front())) cliArguments.insert(cliArguments.begin(), {"project", "open"});
+  auto parsed=ParseCli(cliArguments);
   auto& options=parsed.options;
-  if(!parsed){auto response=Error(options.command,"invalid_argument",parsed.error);std::cout<<FormatResponse(response,options.jsonOutput);return 2;}
+  if(!parsed){auto response=CliResponse(Error(options.command,"invalid_argument",parsed.error),options.command);std::cout<<FormatResponse(response,options.jsonOutput);return 2;}
   if(options.help){
-    if(options.jsonOutput)std::cout<<FormatResponse(Success("help",{{"text",Help(options.command)}}),true);
+    if(options.jsonOutput)std::cout<<FormatResponse(CliResponse(Success(options.command,HelpData(options.command)),options.command),true);
     else std::cout<<Help(options.command);
     return 0;
   }
   nlohmann::json response;
   try{
-    if(options.version||options.command=="version")response=Success("version",{{"product","SynthCAD"},{"version","0.1.0"},{"protocolVersion",1}});
-    else if(options.command=="capabilities")response=Success("capabilities",Capabilities());
-    else if(options.command=="docs")response=Success("docs",options.arguments.contains("topic")?ReadDoc(options.arguments.at("topic").get<std::string>()):ListDocs());
-    else if(options.command=="profile"&&options.arguments.value("template",false))response=Success("profile",PrinterProfileTemplate());
-    else if(options.command=="sessions")response=ListSessions();
-    else if(options.command=="open"){
+    if(options.version)response=Success("--version",{{"product","SynthCAD"},{"version","0.2.0"},{"protocolVersion",2}});
+    else if(options.operation=="profile"&&options.arguments.value("template",false))response=Success("profile",PrinterProfileTemplate());
+    else if(options.operation=="sessions")response=ListSessions();
+    else if(options.operation=="open"){
       const auto project=LoadProject(std::filesystem::u8path(options.arguments.at("path").get<std::string>()));
       auto viewer=std::filesystem::u8path(executable).parent_path()/
 #ifdef _WIN32
@@ -98,13 +99,14 @@ int RunAgentCli(const std::vector<std::string>& arguments,const std::string& exe
         if(!configured.value("ok",false))response=configured;
       }
     }else{
-      if(options.command=="screenshot"||options.command=="export")options.arguments["path"]=std::filesystem::absolute(std::filesystem::u8path(options.arguments.at("path").get<std::string>())).u8string();
-      const int requestTimeout=options.command=="events"?
+      if(options.operation=="screenshot"||options.operation=="export")options.arguments["path"]=std::filesystem::absolute(std::filesystem::u8path(options.arguments.at("path").get<std::string>())).u8string();
+      const int requestTimeout=options.operation=="events"?
           std::max(options.timeoutMs,options.arguments.at("waitMs").get<int>()+1000):options.timeoutMs;
-      response=Request(options.session,{{"protocolVersion",1},{"command",options.command},{"arguments",options.arguments},{"expectRevision",options.expectRevision},{"timeoutMs",requestTimeout}},requestTimeout+500);
+      response=Request(options.session,{{"protocolVersion",1},{"command",options.operation},{"arguments",options.arguments},{"expectRevision",options.expectRevision},{"timeoutMs",requestTimeout}},requestTimeout+500);
     }
   }catch(const KnowledgeError& error){response=Error(options.command,error.code,error.what());}
   catch(const std::exception& error){response=Error(options.command,"invalid_argument",error.what());}
+  response=CliResponse(std::move(response),options.command);
   std::cout<<FormatResponse(response,options.jsonOutput);
   return response.value("ok",false)?0:ExitCode(response.value("error",nlohmann::json::object()).value("code","io_error"));
 }

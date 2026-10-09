@@ -31,37 +31,37 @@ def run(args):
     config,parts=project/'synthcad.json',project/'parts.js'
     metadata=json.loads(config.read_text(encoding='utf-8'))
     client=session.Client(session.discover_executable(args.cli),Path(args.viewer).resolve() if args.viewer else None,40)
-    client.session_dir,client.trace_path=folder/'sessions',folder/'cli-trace.jsonl'
+    client.session_dir,client.trace_path=folder/'projects',folder/'cli-trace.jsonl'
     pids=[]
-    def call(*cmd,**kw):return client.call(*cmd,'-s','feedback',**kw)
-    def token():return session._revision(call('revision'))
+    def call(*cmd,**kw):return client.call(*cmd,'--project','feedback',**kw)
+    def token():return session._revision(call('project', 'revision'))
     def settle(previous=None):
         deadline=time.monotonic()+30
         while time.monotonic()<deadline:
-            response=call('revision',expected_code=(0,11))
+            response=call('project', 'revision',expected_code=(0,11))
             if response['ok']:
                 revision=session._revision(response)
                 if previous is None or revision!=previous:
-                    return call('wait','--revision',revision,'--timeout','25000')
+                    return call('project', 'wait','--revision',revision,'--timeout','25000')
             time.sleep(.1)
         raise RuntimeError('Revision did not settle')
     def write_metadata():
         before=token()
         config.write_text(json.dumps(metadata,ensure_ascii=False,indent=2),encoding='utf-8')
         settle(before)
-    def overview():return call('overview')['data']
-    def view(name):call('view',name);settle()
+    def overview():return call('project', 'inspect')['data']["overview"]
+    def view(name):call('review', 'view',name);settle()
     def basis(name):
         entry=next(v for v in overview()['views'] if v['id']==name)
         require(entry['loaded'] and entry['sourceCurrent'],'Requested basis is not current')
         return {'view':name,'modelRevision':entry['modelRevision'],'profileRevision':None}
     def export(name):
-        response=call('export',str(folder/name),'--allow-warnings','--expect-revision',call('snapshot')['data']['displayedRevision'])['data']
+        response=call('print', 'export',str(folder/name),'--allow-warnings','--expect-revision',call('project', 'inspect')['data']['displayedRevision'])['data']
         require(response['history']['saved'],'Export receipt was not retained')
         return response['record']
     def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()
     try:
-        opened=call('open',str(project),'--hidden')
+        opened=client.call('project', 'open',str(project),'--name','feedback','--hidden')
         pids.extend(pid for pid,_ in session._pid_records(opened));require(pids,'Missing owned viewer PID')
         settle();view('plate')
         initial=overview()
@@ -110,14 +110,14 @@ def run(args):
         updated=export('full-after.3mf')
         require(updated['sha256']!=full['sha256'],'Revised geometry export did not change')
         require(sha(folder/'full-before.3mf')==full_hash and sha(folder/'sample-before.stl')==sample_hash,'Iteration overwrote previous outputs')
-        history={r['id']:r for r in call('export-history')['data']['records']}
+        history={r['id']:r for r in call('print', 'history')['data']['records']}
         require(history[full['id']]['freshness']=='stale','Old generated export was not marked stale')
         metadata['evidence'][0]['stage']='superseded';write_metadata()
         require(overview()['evidence'][0]['stage']=='superseded','Explicit superseded report not retained')
         metadata['compatibilityChanges'][0]['reprintPartIds']=['unrelated']
         write_metadata();invalid=overview()
         require(invalid['compatibilityChanges']==[] and invalid['errors'] and invalid['evidence'],'Invalid reprint subset did not retain valid siblings')
-        require(call('state')['data']['exportValid'],'Optional record error blocked otherwise valid geometry')
+        require(call('project', 'inspect')['data']['exportValid'],'Optional record error blocked otherwise valid geometry')
         metadata['compatibilityChanges'][0]['reprintPartIds']=['socket-1'];write_metadata()
         (folder/'final-overview.json').write_text(json.dumps(overview(),ensure_ascii=False,indent=2),encoding='utf-8')
         print('PASS optional full export, sample references, explicit reports/stages, revision freshness, reprint decisions and preserved outputs',flush=True)

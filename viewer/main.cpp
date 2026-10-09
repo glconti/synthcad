@@ -582,7 +582,7 @@ int main(int argc, char *argv[]) {
   // Positional project paths use the same persistent session as `open`.
   if(!synthcad::IsAgentCommand(utf8Args) && !utf8Args[1].empty() && utf8Args[1][0]!='-') {
     auto arguments=std::vector<std::string>(utf8Args.begin()+1,utf8Args.end());
-    arguments.insert(arguments.begin(),"open");
+    arguments.insert(arguments.begin(),{"project","open"});
     return synthcad::RunAgentCli(arguments,utf8Args.front(),true);
   }
 #endif
@@ -1529,7 +1529,7 @@ int main(int argc, char *argv[]) {
     if((selectionActions.copy||(!captureKeyboard&&IsKeyDown(KEY_LEFT_CONTROL)&&IsKeyPressed(KEY_C)))&&selectionUi.hasSelection&&selectionUi.copyAvailable){
       const auto reference=copyGeometry.at("reference").get<std::string>();SetClipboardText(reference.c_str());
       const auto* copied=GetClipboardText();
-      workspace.toast=copied&&reference==copied?"Selection reference copied":"Clipboard unavailable; use synthcad selection";
+      workspace.toast=copied&&reference==copied?"Selection reference copied":"Clipboard unavailable; use synthcad review selection";
       workspace.toastUntil=GetTime()+4;
     }
     if (!captureMouse && !captureKeyboard && pickGesture.Dragging() && !dimensionControls.buttonGesture) {

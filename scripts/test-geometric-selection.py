@@ -218,22 +218,22 @@ def run(args):
     folder = Path(tempfile.mkdtemp(prefix="synthcad-selection-"))
     print(f"Test evidence directory: {folder}", flush=True)
     client = session.Client(session.discover_executable(args.cli), Path(args.viewer).resolve() if args.viewer else None, 30)
-    client.session_dir, client.trace_path = folder / "sessions", folder / "cli-trace.jsonl"
+    client.session_dir, client.trace_path = folder / 'projects', folder / "cli-trace.jsonl"
     pid = None
     try:
         fixture(folder)
-        opened = client.call("open", str(folder), "--hidden", "--session", "selection-test")
+        opened = client.call('project', 'open', str(folder), "--hidden", '--name', "selection-test")
         records = session._pid_records(opened)
         require(records, "Open response did not report the owned viewer PID")
         pid = records[0][0]
         def call(*cmd, **kwargs):
-            return client.call(*cmd, "-s", "selection-test", **kwargs)
+            return client.call(*cmd, '--project', "selection-test", **kwargs)
         def settle():
             deadline = time.monotonic() + 20
             while True:
-                revision = call("revision", expected_code=(0, 11))
+                revision = call('project', 'revision', expected_code=(0, 11))
                 if revision["ok"]:
-                    return call("wait", "--revision", session._revision(revision))["revision"]
+                    return call('project', 'wait', "--revision", session._revision(revision))["revision"]
                 require(time.monotonic() < deadline, "Initial dependencies did not become ready")
                 time.sleep(.1)
         settle()
@@ -243,9 +243,9 @@ def run(args):
         width, height = native.width / native.scale, native.height / native.scale
         print(f"Owned window PID {pid}: {native.width}x{native.height}, UI scale {native.scale}", flush=True)
         def snapshot():
-            return call("snapshot")["data"]
+            return call('project', 'inspect')["data"]
         def selection():
-            return call("selection")["data"]["selection"]
+            return call('review', 'selection')["data"]["selection"]
         def mode(index):
             # SelectionUi::Layout: 360x116 card, bottom-right 12px inset.
             click(native, [width - 372 + 10 + index * 86.25 + 40.625, height - 128 + 21])
@@ -257,11 +257,11 @@ def run(args):
             geometry = selected["geometry"]
             require(geometry["partId"] == owner, f"Wrong native click owner: {geometry}")
             require(all(key in selected for key in ("key", "name", "group", "partIds")), "Legacy selection fields lost")
-            resolved = call("reference", geometry["reference"])["data"]["geometry"]
+            resolved = call('review', 'selection', geometry["reference"])["data"]["geometry"]
             require(resolved["kind"] == kind and resolved["partId"] == owner and
                     resolved["positionKind"] == "representative", "Copied reference did not resolve current context")
             return geometry
-        call("frame", "cube")
+        call('review', 'frame', "cube")
         baseline = snapshot()
         flags = {p["id"]: p["exportable"] for p in baseline["parts"]}
         mode(0)
@@ -283,7 +283,7 @@ def run(args):
         pick("edge", [10, 0, 10])
         mode(3)
         pick("vertex", [10, -10, 10])
-        call("screenshot", str(folder / "vertex-selection.png"))
+        call('review', 'screenshot', str(folder / "vertex-selection.png"))
         token = selection()["geometry"]["reference"]
         click(native, [width - 141, height - 34])
         try:
@@ -291,9 +291,9 @@ def run(args):
             print("PASS native Copy button clipboard token")
         except (PermissionError, FileNotFoundError) as error:
             print(f"SKIP clipboard readback: {error}; Copy success remains unverified")
-        call("reference", "scsel1.not-hex", expected_code=2)
+        call('review', 'selection', "scsel1.not-hex", expected_code=2)
         before = selection()
-        call("highlight", "cylinder")
+        call('review', 'highlight', "cylinder")
         require(selection() == before and snapshot()["highlights"] == ["cylinder"], "Agent highlights changed human selection")
         # A held button crossing the 5px threshold must orbit without selecting.
         camera = snapshot()["camera"]
@@ -301,41 +301,41 @@ def run(args):
                             ("move", [680, 420]), ("move", [700, 430]), ("up", [700, 430])]:
             native.event(kind, *point)
         require(snapshot()["camera"] != camera and selection() == before, "Drag must orbit and preserve selection")
-        call("frame", "cylinder")
+        call('review', 'frame', "cylinder")
         mode(1)
         # Choose a lateral point facing the camera, away from cap boundaries.
         camera = snapshot()["camera"]
         dx, dy = camera["position"][0] / .1 - 40, -camera["position"][2] / .1
         length = math.hypot(dx, dy)
         curved = pick("curved-patch", [40 + 10*dx/length, 10*dy/length, 0], "cylinder")
-        call("screenshot", str(folder / "curved-selection.png"))
+        call('review', 'screenshot', str(folder / "curved-selection.png"))
         require({p["id"]: p["exportable"] for p in snapshot()["parts"]} == flags, "Picking changed exportability")
         old = curved["reference"]
         source = folder / "parts.js"
         source.write_text(source.read_text(encoding="utf-8").replace("size=20", "size=22"), encoding="utf-8")
-        call("reference", old, expected_code=7)
+        call('review', 'selection', old, expected_code=7)
         settle()
-        call("reference", old, expected_code=7)
-        call("frame", "cube")
+        call('review', 'selection', old, expected_code=7)
+        call('review', 'frame', "cube")
         fresh = pick("planar-face", [0, 0, 10])["reference"]
         valid_source = source.read_text(encoding="utf-8")
         source.write_text(valid_source + "\nthis is a syntax error;\n", encoding="utf-8")
-        revision = call("revision")
-        call("wait", "--revision", session._revision(revision), expected_code=5)
+        revision = call('project', 'revision')
+        call('project', 'wait', "--revision", session._revision(revision), expected_code=5)
         require(snapshot()["displayedRevision"] == selection()["geometry"]["revision"],
                 "Broken reload did not retain the selected displayed revision")
-        call("reference", fresh, expected_code=7)
+        call('review', 'selection', fresh, expected_code=7)
         source.write_text(valid_source, encoding="utf-8")
         settle()
-        call("view", "inspection")
+        call('review', 'view', "inspection")
         settle()
-        call("reference", fresh, expected_code=7)
+        call('review', 'selection', fresh, expected_code=7)
         print(f"PASS native {'Windows' if os.name == 'nt' else 'X11'} selection, reference, reload/view invalidation, camera and export checks")
         print(f"Evidence: {folder}")
     finally:
         if pid:
             try:
-                client.call("screenshot", str(folder / "final-state.png"), "-s", "selection-test")
+                client.call('review', 'screenshot', str(folder / "final-state.png"), '--project', "selection-test")
             except Exception:
                 pass
             session._terminate_owned_pid(pid)

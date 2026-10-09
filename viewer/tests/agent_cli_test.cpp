@@ -1,209 +1,138 @@
 #include "agent_cli.h"
+#include "agent_entry.h"
+#include "project_contract.h"
 
 #include <iostream>
+#include <set>
 #include <stdexcept>
 
 namespace {
-void Require(bool condition, const char* message) {
+using nlohmann::json;
+using synthcad::ParseCli;
+void Require(bool condition, const std::string& message) {
   if (!condition) throw std::runtime_error(message);
 }
+std::vector<std::string> Words(const std::string& path) {
+  std::vector<std::string> words;
+  size_t begin=0;
+  while(begin<path.size()) { auto end=path.find(' ',begin); words.push_back(path.substr(begin,end-begin)); if(end==std::string::npos)break; begin=end+1; }
+  return words;
+}
+void CheckDiscovery() {
+  std::vector<std::string> pending={""};
+  std::set<std::string> seen, operations;
+  int actions=0;
+  while(!pending.empty()) {
+    const auto path=pending.back();pending.pop_back();
+    Require(seen.insert(path).second,"Duplicate path: "+path);
+    const auto data=synthcad::HelpData(path);
+    for(const auto* key:{"path","kind","summary","usage","children","arguments","options","requirements","examples","guidance","nextSteps","hash","bundleVersion","bundleHash"})
+      Require(data.contains(key),std::string("Missing help field: ")+key+" at "+path);
+    Require(!data["guidance"].get<std::string>().empty(),"Empty guidance: "+path);
+    Require(data["hash"]==synthcad::Sha256(data["guidance"]),"Wrong help content hash");
+    auto args=Words(path);args.push_back("--help");args.push_back("--json");
+    auto parsed=ParseCli(args);
+    Require(bool(parsed)&&parsed.options.help&&parsed.options.jsonOutput&&parsed.options.command==path,"Help does not parse: "+path);
+    const auto text=synthcad::Help(path);
+    Require(text.find(data["guidance"].get<std::string>())!=std::string::npos,"Text/JSON guidance diverged");
+    if(data["kind"]=="action") {
+      ++actions;
+      Require(operations.insert(parsed.options.operation).second,"Duplicate executable operation");
+      Require(!data["examples"].empty(),"Action missing example: "+path);
+    } else Require(ParseCli(Words(path)).options.help,"Bare topic should show help");
+    for(const auto& example:data["examples"]) {
+      auto exampleArgs=example["argv"].get<std::vector<std::string>>();
+      auto exampleParse=ParseCli(exampleArgs);
+      Require(bool(exampleParse),"Invalid example: "+example["command"].get<std::string>()+": "+exampleParse.error);
+      Require(exampleParse.options.command==path,"Example belongs to wrong node");
+    }
+    for(const auto& next:data["nextSteps"]) Require(synthcad::HelpData(next.get<std::string>()).is_object(),"Broken next step");
+    for(const auto& child:data["children"])pending.push_back(child["path"]);
+  }
+  Require(actions==20,"Expected exactly 20 executable leaves");
+  const auto root=synthcad::HelpData();
+  Require(root["children"].size()==4,"Expected four domains");
+  Require(!root["capabilities"]["geometryEditing"].get<bool>() && root["capabilities"]["export"].get<bool>(),"Capability truth changed");
+  for(const auto* phrase:{"human","JavaScript","persistent","REQUESTED_TOKEN","DISPLAYED_TOKEN","Slicer","physical","source","--help"})
+    Require(root["guidance"].get<std::string>().find(phrase)!=std::string::npos,std::string("Kickstart missing ")+phrase);
+}
 void CheckParsing() {
-  using synthcad::ParseCli;
-  auto open = ParseCli({"--json", "-s", "bracket", "open", "My Project/scene.js", "--hidden"});
-  Require(bool(open), "open with global flags must parse");
-  Require(open.options.session == "bracket" && open.options.jsonOutput, "global values missing");
-  Require(open.options.arguments.at("path") == "My Project/scene.js", "path must retain spaces");
-  Require(open.options.arguments.at("hidden") == true, "hidden flag missing");
-  auto reload=ParseCli({"reload","--evaluation-timeout","120000"});
-  Require(bool(reload)&&reload.options.arguments.at("evaluationTimeoutMs")==120000,"evaluation limit missing");
-  Require(bool(ParseCli({"cancel-load"})),"cancel load missing");
-  Require(!ParseCli({"reload","--evaluation-timeout","0"})&&!ParseCli({"state","--evaluation-timeout","100"}),"invalid evaluation limit accepted");
-  auto wait = ParseCli({"wait", "--revision=abc", "--timeout", "0", "--session=bracket"});
-  Require(bool(wait) && wait.options.timeoutMs == 0, "zero-time wait must parse");
-  Require(wait.options.arguments.at("revision") == "abc", "revision token missing");
-  Require(ParseCli({"state", "--timeout", "300000"}).options.timeoutMs == 300000, "maximum timeout must parse");
-  auto frame = ParseCli({"frame", "--expect-revision", "abc", "base", "lid"});
-  Require(bool(frame) && frame.options.arguments.at("partIds").size() == 2, "part IDs missing");
-  Require(frame.options.expectRevision == "abc", "review revision guard missing");
-  auto reference = ParseCli({"reference", "scsel1.1234", "--expect-revision", "abc"});
-  Require(bool(reference) && reference.options.arguments.at("reference") == "scsel1.1234" &&
-          reference.options.expectRevision == "abc", "reference resolution arguments missing");
-  Require(!ParseCli({"reference"}) && !ParseCli({"reference", ""}) &&
-          !ParseCli({"reference", "a", "b"}), "invalid reference arguments accepted");
-  auto literal = ParseCli({"open", "--", "--scene.js"});
-  Require(bool(literal) && literal.options.arguments.at("path") == "--scene.js", "literal path missing");
-  for (const auto& args : std::vector<std::vector<std::string>>{
-      {"export"}, {"open"}, {"open", "a", "b"}, {"wait"},
-      {"wait", "--revision"}, {"wait", "--revision", "a", "--timeout", "-1"},
-      {"wait", "--revision", "a", "--timeout", "12x"},
-      {"state", "--timeout", "300001"},
-      {"wait", "--revision", "a", "--timeout", "99999999999999"},
-      {"snapshot", "--unknown"}, {"snapshot", "--hidden"},
-      {"snapshot", "--json=true"}, {"snapshot", "-s", "a", "--session", "b"},
-      {"frame", "base", "--selection"}, {"highlight", "base", "--clear"},
-      {"highlight"}, {"open", "a", "--expect-revision", "b"},
-      {"screenshot", ""}, {"--version", "snapshot"}, {"--session", "a"}}) {
-    Require(!ParseCli(args), "invalid CLI input accepted");
-  }
-  Require(ParseCli({}).options.help, "empty invocation must show help");
-  Require(ParseCli({"open", "--help"}).options.help, "command help must omit required positionals");
-  Require(ParseCli({"help", "wait"}).options.command == "wait", "help command target missing");
-  Require(ParseCli({"--version", "--json"}).options.command == "version", "version discovery missing");
-  Require(bool(ParseCli({"highlight", "--clear"})), "highlight clear must parse");
-  Require(bool(ParseCli({"frame"})), "whole-scene framing must parse");
-  Require(bool(ParseCli({"docs"})), "guidance discovery must parse");
-  Require(bool(ParseCli({"overview", "--expect-revision", "rev"})) &&
-          bool(ParseCli({"profile", "--expect-revision", "rev"})) &&
-          bool(ParseCli({"checks", "--expect-revision", "rev"})), "context reads support revision guards");
-  Require(!ParseCli({"checks", "extra"}) && !ParseCli({"checks", "--template"}), "checks are read-only context");
-  auto profileTemplate = ParseCli({"profile", "--template", "--json"});
-  Require(bool(profileTemplate) && profileTemplate.options.arguments.at("template") == true,
-          "profile template must parse without a session");
-  Require(!ParseCli({"overview", "--template"}) && !ParseCli({"profile", "extra"}) &&
-          !ParseCli({"profile", "--template", "--expect-revision", "rev"}), "invalid context options accepted");
-  auto docs = ParseCli({"docs", "print-design", "--json"});
-  Require(bool(docs) && docs.options.arguments.at("topic") == "print-design", "guide topic missing");
-  Require(!ParseCli({"docs", "a", "b"}) && !ParseCli({"docs", ""}) &&
-          !ParseCli({"docs", "start", "--replace"}), "invalid guidance arguments accepted");
-}
-void CheckResponses() {
-  auto success = synthcad::Success("snapshot", {{"parts", nlohmann::json::array()}}, "bracket", "abc");
-  Require(success.at("protocolVersion") == 1 && success.at("ok") == true, "success envelope invalid");
-  Require(success.at("session") == "bracket" && success.at("revision") == "abc", "response identity missing");
-  Require(!success.contains("error"), "success must not contain an error");
-  auto failure = synthcad::Error("wait", "superseded", "A newer revision exists", {{"requested", "abc"}});
-  Require(failure.at("ok") == false && failure.at("error").at("details").at("requested") == "abc",
-          "error details missing");
-  Require(!failure.contains("data") && !failure.contains("session"), "optional envelope fields leaked");
-  auto encoded = synthcad::FormatResponse(success, true);
-  Require(nlohmann::json::parse(encoded) == success && encoded.back() == '\n', "JSON stdout is not one complete response");
-  Require(synthcad::FormatResponse(failure, false).find("superseded: ") == 0, "human error category missing");
-  const std::vector<std::string> codes = {"invalid_argument", "no_session", "ambiguous_session", "load_failed",
-      "timeout", "stale_revision", "superseded", "cancelled", "io_error", "busy", "not_found", "stale_cursor"};
-  for (size_t i = 0; i < codes.size(); ++i)
-    Require(synthcad::ExitCode(codes[i]) == int(i) + 2, "exit code contract changed");
-  Require(synthcad::ExitCode("") == 0 && synthcad::ExitCode("unrecognized") != 0, "unknown error must fail");
-  Require(synthcad::Help().find("synthcad-cli wait") != std::string::npos, "help needs wait example");
-  Require(synthcad::Help("screenshot").find("--replace") != std::string::npos, "command help missing options");
-  Require(synthcad::Capabilities().at("geometryEditing") == false, "discovery must not promise geometry edits");
-  Require(synthcad::Capabilities().at("export") == true && synthcad::Capabilities().at("exportHistory") == true && synthcad::Capabilities().at("exportFormats") == nlohmann::json({"3mf","stl"}), "export discovery missing");
-  Require(synthcad::ExitCode("warnings_present")==14 && synthcad::ExitCode("destination_exists")==15 && synthcad::ExitCode("empty_export")==16,"export error codes missing");
-  Require(synthcad::Help().find("Exports:")!=std::string::npos && synthcad::Help("export").find("--dry-run")!=std::string::npos,"export help missing");
-  Require(synthcad::Capabilities().at("printerProfiles") == true &&
-          synthcad::Capabilities().at("projectOverview") == true &&
-          synthcad::Capabilities().at("slicerPresetVerification") == false, "context discovery missing");
-  Require(synthcad::Help("profile").find("--template") != std::string::npos &&
-          synthcad::Help("docs").find("profiles") != std::string::npos, "profile help missing");
-  const auto fragment = nlohmann::json({{"activeProfile", "custom"}, {"profiles", {{"custom", nlohmann::json::object()}}}});
-  const auto templateResponse = synthcad::Success("profile", fragment);
-  Require(nlohmann::json::parse(synthcad::FormatResponse(templateResponse, false)) == fragment,
-          "template default stdout must be a standalone JSON fragment");
-  Require(nlohmann::json::parse(synthcad::FormatResponse(templateResponse, true)) == templateResponse,
-          "template JSON mode must retain response envelope");
-  Require(synthcad::Capabilities().at("selectionReferences") == true &&
-          synthcad::Help("reference").find("reference TOKEN") != std::string::npos,
-          "reference discovery missing");
-  Require(synthcad::Capabilities().at("bundledGuidance") == true, "guidance discovery missing");
-  Require(synthcad::Capabilities().at("guidedPicking") == true &&
-          synthcad::Capabilities().at("sessionEvents") == true, "guided selection discovery missing");
-  Require(synthcad::Help("pick").find("--question") != std::string::npos &&
-          synthcad::Help("events").find("stale_cursor") != std::string::npos,
-          "guided selection help missing");
-  Require(synthcad::Help().find("Printing & assembly") != std::string::npos &&
-          synthcad::Help("docs").find("bambu-handoff") != std::string::npos, "area help missing");
-  const auto guide = synthcad::Success("docs", {{"content", u8"# Pièce\n\nExact instructions.\n"}});
-  Require(synthcad::FormatResponse(guide, false) == u8"# Pièce\n\nExact instructions.\n", "guide stdout must be raw text");
-  Require(nlohmann::json::parse(synthcad::FormatResponse(guide, true)) == guide, "guide JSON envelope changed");
-}
-void CheckExportParsing() {
-  using synthcad::ParseCli;
-  auto parsed=ParseCli({"export",u8"Piatto città 日本.3MF","--visible-only","--replace","--allow-warnings","--dry-run","--expect-revision","revision","-s","plate","--timeout","42"});
-  Require(bool(parsed) && parsed.options.arguments==nlohmann::json({{"path",u8"Piatto città 日本.3MF"},{"format","3mf"},{"visibleOnly",true},{"replace",true},{"allowWarnings",true},{"dryRun",true}}),"export payload missing");
-  Require(parsed.options.expectRevision=="revision" && parsed.options.session=="plate" && parsed.options.timeoutMs==42,"export request context missing");
-  parsed=ParseCli({"export","part.stl"});
-  Require(bool(parsed) && parsed.options.arguments["format"]=="stl" && parsed.options.arguments["replace"]==false && parsed.options.arguments["dryRun"]==false,"export defaults missing");
-  Require(bool(ParseCli({"export","destination","--format","3mf"})),"explicit format must defer destination suffix to viewer guard");
-  Require(bool(ParseCli({"export-history","--expect-revision","rev"})),"cached history permits optional revision guard");
+  auto parsed=ParseCli({"--json","project","--name","bracket","open","My Project/scene.js","--hidden"});
+  Require(bool(parsed)&&parsed.options.command=="project open"&&parsed.options.operation=="open"&&parsed.options.session=="bracket","Open targeting missing");
+  Require(parsed.options.arguments==json({{"path","My Project/scene.js"},{"hidden",true}}),"Name leaked into operation payload");
+  parsed=ParseCli({"--project=bracket","review","selection","scsel1.token","--expect-revision","rev"});
+  Require(bool(parsed)&&parsed.options.operation=="reference"&&parsed.options.command=="review selection"&&parsed.options.arguments["reference"]=="scsel1.token","Reference consolidation failed");
+  Require(ParseCli({"review","selection"}).options.operation=="selection","Current selection failed");
+  parsed=ParseCli({"project","open","--","--scene.js"});
+  Require(bool(parsed)&&parsed.options.arguments["path"]=="--scene.js","Literal path failed");
+  parsed=ParseCli({"review","pick","status","--","-request"});
+  Require(bool(parsed)&&parsed.options.arguments["id"]=="-request","Literal request ID failed");
+  Require(ParseCli({"project","wait","--revision=rev","--timeout","0"}).options.timeoutMs==0,"Zero timeout failed");
+  Require(bool(ParseCli({"project","wait","--revision","rev","--timeout","300000"})),"Maximum timeout failed");
+  Require(bool(ParseCli({"project","reload","--evaluation-timeout","3600000"})),"Evaluation maximum failed");
+  Require(bool(ParseCli({"print","profile","--template"})),"Offline template failed");
+  parsed=ParseCli({"project","events","--after","opaque:cursor","--wait","300000"});
+  Require(bool(parsed)&&parsed.options.arguments==json({{"after","opaque:cursor"},{"waitMs",300000}}),"Events changed");
+  Require(ParseCli({"project","events","--after","0"}).options.arguments["waitMs"]==0,"Event default missing");
+  parsed=ParseCli({"print","export",u8"Piatto città 日本.3MF","--visible-only","--replace","--allow-warnings","--dry-run"});
+  Require(bool(parsed)&&parsed.options.arguments["format"]=="3mf"&&parsed.options.arguments["dryRun"]==true,"Export flags missing");
+  Require(bool(ParseCli({"print","export","destination","--format","3mf"})),"Explicit format must reach viewer guard");
+  Require(bool(ParseCli({"review","highlight","--clear"}))&&bool(ParseCli({"review","frame"})),"Highlight/frame modes failed");
+  for(const auto* kind:{"part","surface","edge","vertex"})
+    Require(bool(ParseCli({"review","pick","request","--id","request","--kind",kind,"--question",u8"Which pièce?"})),"Pick kind failed");
+  Require(bool(ParseCli({"review","pick","request","--id",std::string(128,'i'),"--kind","part","--question",std::string(4096,'q')})),"Boundary lengths failed");
   for(const auto& args:std::vector<std::vector<std::string>>{
-      {"export"},{"export",""},{"export","part.obj"},{"export","noextension"},
-      {"export","a.3mf","extra"},{"export","a.3mf","--format","obj"},
-      {"export","a.3mf","--format"},{"export","a.3mf","--dry-run=true"},
-      {"export","a.3mf","--replace","--replace"},{"export",std::string("a\0b.3mf",7)},
-      {"export-history","extra"},{"export-history","--replace"},{"checks","--allow-warnings"},
-      {"snapshot","--format","3mf"},{"screenshot","x.png","--visible-only"},{"frame","--dry-run"}})
-    Require(!ParseCli(args),"invalid export option accepted");
-  Require(ParseCli({"export","--help"}).options.help,"export help must omit destination");
+      {"open","scene.js"},{"snapshot"},{"state"},{"overview"},{"docs"},{"skill"},{"help"},{"capabilities"},{"version"},
+      {"project","open"},{"project","open","a","b"},{"project","open","a","--project","p"},
+      {"project","inspect","--name","p"},{"project","inspect","--session","p"},{"project","inspect","-s","p"},
+      {"project","inspect","--project","p","--project","q"},{"project","inspect","--unknown"},
+      {"project","wait"},{"project","wait","--revision"},{"project","wait","--revision","r","--timeout","-1"},
+      {"project","inspect","--timeout","300001"},{"project","inspect","--timeout","12x"},
+      {"project","inspect","--timeout","99999999999999"},{"project","inspect","--json=true"},
+      {"project","reload","--evaluation-timeout","0"},{"project","inspect","--evaluation-timeout","100"},
+      {"project","revision","--expect-revision","r"},{"print","profile","--template","--expect-revision","r"},
+      {"review","selection",""},{"review","selection","a","b"},{"review","highlight"},
+      {"review","highlight","base","--clear"},{"review","frame","base","--selection"},
+      {"review","pick","status"},{"review","pick","cancel","id","--expect-revision","r"},
+      {"review","pick","request","--id","i","--kind","face","--question","q"},
+      {"review","pick","request","--id",std::string(129,'i'),"--kind","part","--question","q"},
+      {"review","pick","request","--id","i","--kind","part","--question",std::string(4097,'q')},
+      {"review","pick","status",std::string("a\0b",3)},
+      {"project","events"},{"project","events","--after","0","--wait","300001"},
+      {"print","export"},{"print","export","a.obj"},{"print","export","a.stl","--format","obj"},
+      {"print","export",std::string("a\0b.stl",7)},{"print","history","--replace"},
+      {"--version","project"},{"--version","--help"},{"model","unknown"}})
+    Require(!ParseCli(args),"Invalid input accepted: "+args.front());
+  Require(ParseCli({"--version","--json"}).options.version,"Version flag failed");
+  Require(ParseCli({"project","wait","--help"}).options.help,"Help requires action options");
+  Require(ParseCli({"print","export","--help"}).options.help,"Help requires positionals");
+  Require(ParseCli({"wat","--json"}).options.jsonOutput,"Parse errors must respect JSON");
+  Require(ParseCli({"snapshot"}).error.find("project inspect")!=std::string::npos,"Missing migration guidance");
+  Require(ParseCli({"review","wat"}).error.find("review selection")!=std::string::npos,"Missing sibling suggestion");
+  Require(synthcad::IsAgentCommand({"app","wat"})&&!synthcad::IsAgentCommand({"app","./scene.js"}),"Unknown command routed as scene");
+  Require(!synthcad::IsAgentCommand({"app","--check-scene","scene.js"}),"Developer viewer flags changed");
 }
-void CheckGuidedSelectionParsing() {
-  using synthcad::ParseCli;
-  for (const auto* kind : {"part", "surface", "edge", "vertex"}) {
-    auto pick = ParseCli({"-s", "bracket", "pick", "--id", "choose-1", "--kind", kind,
-                          "--question", u8"Which pièce should move?", "--expect-revision", "rev", "--json"});
-    Require(bool(pick) && pick.options.arguments == nlohmann::json({{"id", "choose-1"},
-            {"kind", kind}, {"question", u8"Which pièce should move?"}}), "pick payload changed");
-    Require(pick.options.expectRevision == "rev" && pick.options.session == "bracket" &&
-            pick.options.jsonOutput, "pick context missing");
-  }
-  auto boundary = ParseCli({"pick", "--id", std::string(128, 'i'), "--kind", "part",
-                            "--question", std::string(4096, 'q')});
-  Require(bool(boundary), "maximum pick field lengths must parse");
-  std::string unicodeId;
-  for (int i = 0; i < 64; ++i) unicodeId += u8"é";
-  Require(bool(ParseCli({"pick", "--id", unicodeId, "--kind", "part", "--question", "q"})),
-          "UTF-8 ID at byte limit must parse");
-  unicodeId += u8"é";
-  Require(!ParseCli({"pick", "--id", unicodeId, "--kind", "part", "--question", "q"}),
-          "request ID limit must count UTF-8 bytes");
-  for (const auto* command : {"pick-status", "pick-cancel"}) {
-    auto query = ParseCli({command, "--", "-caller-id"});
-    Require(bool(query) && query.options.arguments == nlohmann::json({{"id", "-caller-id"}}),
-            "pick query ID missing");
-    Require(!ParseCli({command}) && !ParseCli({command, ""}) &&
-            !ParseCli({command, "a", "b"}) && !ParseCli({command, "a", "--expect-revision", "rev"}) &&
-            !ParseCli({command, std::string(129, 'i')}) &&
-            !ParseCli({command, std::string("a\0b", 3)}), "invalid pick query accepted");
-  }
-  auto events = ParseCli({"events", "--after", "0"});
-  Require(bool(events) && events.options.arguments == nlohmann::json({{"after", "0"}, {"waitMs", 0}}),
-          "event default payload changed");
-  events = ParseCli({"events", "--after=opaque:cursor", "--wait", "300000", "--timeout", "2"});
-  Require(bool(events) && events.options.arguments == nlohmann::json({{"after", "opaque:cursor"}, {"waitMs", 300000}}) &&
-          events.options.timeoutMs == 2, "event wait and global timeout must remain independent");
-  Require(bool(ParseCli({"events", "--after", "cursor", "--wait", "0"})), "zero event wait must parse");
-  for (const auto& args : std::vector<std::vector<std::string>>{
-      {"pick"}, {"pick", "--id", "i", "--kind", "part"},
-      {"pick", "--id", "i", "--question", "q"}, {"pick", "--kind", "part", "--question", "q"},
-      {"pick", "--id", "i", "--kind", "face", "--question", "q"},
-      {"pick", "--id", "", "--kind", "part", "--question", "q"},
-      {"pick", "--id", std::string(129, 'i'), "--kind", "part", "--question", "q"},
-      {"pick", "--id", std::string("a\0b", 3), "--kind", "part", "--question", "q"},
-      {"pick", "--id", "i", "--kind", "part", "--question", ""},
-      {"pick", "--id", "i", "--kind", "part", "--question", std::string(4097, 'q')},
-      {"pick", "--id", "i", "--kind", "part", "--question", std::string("a\0b", 3)},
-      {"pick", "extra", "--id", "i", "--kind", "part", "--question", "q"},
-      {"pick", "--id", "i", "--id", "i", "--kind", "part", "--question", "q"},
-      {"events"}, {"events", "--after="}, {"events", "--after", "0", "extra"},
-      {"events", "--after", "0", "--wait=-1"}, {"events", "--after", "0", "--wait=300001"},
-      {"events", "--after", "0", "--wait=1.0"}, {"events", "--after", "0", "--wait=999999999999"},
-      {"events", "--after", "0", "--expect-revision", "rev"},
-      {"state", "--wait", "1"}, {"wait", "--revision", "rev", "--after", "0"},
-      {"snapshot", "--id", "i"}, {"selection", "--kind", "part"}, {"reference", "token", "--question", "q"}})
-    Require(!ParseCli(args), "invalid guided selection options accepted");
-  Require(ParseCli({"pick", "--help"}).options.help &&
-          ParseCli({"events", "--help"}).options.help, "guided help must omit required fields");
+void CheckProtocol() {
+  auto internal=synthcad::Success("snapshot",{{"overview",{{"session","authored"},{"project","also authored"}}}},"bracket","rev");
+  auto response=synthcad::CliResponse(internal,"project inspect");
+  Require(internal["protocolVersion"]==1&&internal["session"]=="bracket","Internal protocol changed");
+  Require(response["protocolVersion"]==2&&response["project"]=="bracket"&&!response.contains("session")&&response["command"]=="project inspect","CLI envelope translation failed");
+  Require(response["data"]==internal["data"],"Authored payload changed");
+  auto list=synthcad::CliResponse(synthcad::Success("sessions",{{"sessions",json::array({{{"session","p"},{"projectPath","/path"}}})}}),"project list");
+  Require(list["data"]["projects"][0]["project"]=="p"&&!list["data"].contains("sessions"),"Project list translation failed");
+  auto failure=synthcad::CliResponse(synthcad::Error("snapshot","ambiguous_session","old",{{"sessions",{"a","b"}}}),"project inspect");
+  Require(failure["error"]["code"]=="ambiguous_project"&&failure["error"]["details"]["projects"].size()==2,"Ambiguous translation failed");
+  Require(synthcad::ExitCode("no_project")==3&&synthcad::ExitCode("ambiguous_project")==4&&synthcad::ExitCode("empty_export")==16,"Exit codes changed");
+  auto diagnostic=synthcad::CliResponse(synthcad::Error("wait","load_failed","session is an authored variable",{{"session","authored"}}),"project wait");
+  Require(diagnostic["error"]["details"]["session"]=="authored"&&diagnostic["error"]["message"]=="session is an authored variable","Authored diagnostic changed");
+  Require(json::parse(synthcad::FormatResponse(response,true))==response,"JSON encoding changed");
+  auto fragment=json{{"activeProfile","custom"},{"profiles",{{"custom",json::object()}}}};
+  auto templ=synthcad::CliResponse(synthcad::Success("profile",fragment),"print profile");
+  Require(json::parse(synthcad::FormatResponse(templ,false))==fragment,"Plain template must remain JSON");
+  Require(json::parse(synthcad::FormatResponse(templ,true))==templ,"Template envelope changed");
 }
 }
-
 int main() {
-  try {
-    CheckParsing();
-    CheckGuidedSelectionParsing();
-    CheckExportParsing();
-    CheckResponses();
-    std::cout << "Agent CLI tests passed\n";
-    return 0;
-  } catch (const std::exception& error) {
-    std::cerr << error.what() << '\n';
-    return 1;
-  }
+  try { CheckDiscovery();CheckParsing();CheckProtocol();std::cout<<"Domain CLI tests passed\n";return 0; }
+  catch(const std::exception& error) { std::cerr<<error.what()<<'\n';return 1; }
 }

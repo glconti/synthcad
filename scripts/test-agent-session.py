@@ -33,8 +33,8 @@ ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "viewer" / "tests" / "agent-fixtures"
 EXIT_CODES = {
     "invalid_argument": 2,
-    "no_session": 3,
-    "ambiguous_session": 4,
+    'no_project': 3,
+    'ambiguous_project': 4,
     "load_failed": 5,
     "timeout": 6,
     "stale_revision": 7,
@@ -315,7 +315,7 @@ class Client:
             ) from error
         if not isinstance(response, dict) or not isinstance(response.get("ok"), bool):
             raise AcceptanceFailure(f"Malformed JSON envelope: {completed.stdout!r}")
-        if response.get("protocolVersion") != 1:
+        if response.get("protocolVersion") != 2:
             raise AcceptanceFailure(f"Unsupported or missing protocol version: {response}")
         if completed.returncode not in expected_codes:
             raise AcceptanceFailure(
@@ -334,7 +334,14 @@ class Client:
                 raise AcceptanceFailure(
                     f"Exit {completed.returncode} used error category {actual_error!r}, expected {expected_error!r}: {response}"
                 )
-        if response.get("command") not in (None, arguments[0] if arguments else None):
+        if arguments and arguments[0] == "--version":
+            expected_command = "--version"
+        elif arguments and arguments[0] == "--help":
+            expected_command = ""
+        else:
+            depth = 3 if arguments[:2] == ("review", "pick") else 2
+            expected_command = " ".join(arg for arg in arguments[:depth] if not arg.startswith("--"))
+        if response.get("command") != expected_command:
             raise AcceptanceFailure(f"Response command does not match request: {response}")
         return response
 
@@ -387,7 +394,7 @@ class AgentSessionAcceptance:
 
     def _remember_session(self, response: dict[str, Any], path: Path, name: str) -> None:
         data = response.get("data", {})
-        session_id = _find(response, "session", "sessionId")
+        session_id = _find(response, 'project', "sessionId")
         if not isinstance(session_id, str) or not session_id:
             session_id = name
         pids = [pid for pid, _ in _pid_records(data)]
@@ -395,7 +402,7 @@ class AgentSessionAcceptance:
 
     def open(self, path: Path, session: str) -> dict[str, Any]:
         response = self.client.call(
-            "open", str(path), "--session", session, "--hidden"
+            'project', 'open', str(path), '--name', session, "--hidden"
         )
         record_path = path / "synthcad.json" if path.is_dir() else path
         self._remember_session(response, record_path, session)
@@ -405,7 +412,7 @@ class AgentSessionAcceptance:
         deadline = time.monotonic() + self.timeout_ms / 1000
         while True:
             response = self.client.call(
-                "revision", "--session", session, expected_code=(0, EXIT_CODES["busy"])
+                'project', 'revision', '--project', session, expected_code=(0, EXIT_CODES["busy"])
             )
             if response["ok"]:
                 return _revision(response)
@@ -417,18 +424,18 @@ class AgentSessionAcceptance:
 
     def wait(self, session: str, revision: str, expected_code: int = 0) -> dict[str, Any]:
         response = self.client.call(
-            "wait", "--session", session, "--revision", revision,
+            'project', 'wait', '--project', session, "--revision", revision,
             "--timeout", str(self.timeout_ms), expected_code=expected_code,
             timeout=self.timeout_ms / 1000 + 5,
         )
         return response
 
     def state(self, session: str) -> dict[str, Any]:
-        return self.client.call("state", "--session", session)
+        return self.client.call('project', 'inspect', '--project', session)
 
     def snapshot(self, session: str, *extra: str, expected_code: int = 0) -> dict[str, Any]:
         return self.client.call(
-            "snapshot", "--session", session, *extra, expected_code=expected_code
+            'project', 'inspect', '--project', session, *extra, expected_code=expected_code
         )
 
     def _load_state(self, response: dict[str, Any]) -> str:
@@ -461,16 +468,15 @@ class AgentSessionAcceptance:
     def run(self) -> None:
         # SC02/SC03: stable machine-readable output, no-session behavior, and
         # simultaneous opens to one Unicode project must converge on one ID.
-        capabilities = self.client.call("capabilities")
-        commands = _find(capabilities, "commands")
-        self.check(isinstance(commands, list), f"capabilities omits command list: {capabilities}")
-        required = {"open", "sessions", "snapshot", "selection", "state", "revision", "wait", "highlight", "frame", "view", "screenshot"}
-        self.check(required.issubset(set(commands)), f"capabilities missing {sorted(required - set(commands))}: {commands}")
-        self.client.call("snapshot", expected_code=EXIT_CODES["no_session"])
+        discovery = self.client.call('--help')['data']
+        self.check({node['path'] for node in discovery['children']} == {'project', 'model', 'review', 'print'},
+                   f"Missing root domains: {discovery}")
+        self.check(discovery['capabilities']['persistentProjects'], "Persistent projects missing")
+        self.client.call('project', 'inspect', expected_code=EXIT_CODES['no_project'])
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
             opens = list(pool.map(lambda _: self.open(self.paths["project"], self.session_a), range(2)))
-        session_ids = {response.get("session") for response in opens}
+        session_ids = {response.get('project') for response in opens}
         self.check(len(session_ids) == 1, f"simultaneous open created multiple session IDs: {opens}")
         self.check(all(response.get("ok") is True for response in opens), "one simultaneous open failed")
         open_pids = {int(_find(response, "pid")) for response in opens if _find(response, "pid") is not None}
@@ -481,7 +487,7 @@ class AgentSessionAcceptance:
 
         # Repeating open after the race must attach to the same session.
         repeated = self.open(self.paths["project"], self.session_a)
-        self.check(repeated.get("session") in (None, next(iter(session_ids))), f"repeat open changed session: {repeated}")
+        self.check(repeated.get('project') in (None, next(iter(session_ids))), f"repeat open changed session: {repeated}")
         repeated_pid = _find(repeated, "pid")
         self.check(repeated_pid is not None and int(repeated_pid) == first_pid,
                    f"repeating open changed the viewer process: {repeated}")
@@ -527,11 +533,11 @@ class AgentSessionAcceptance:
         ornament_snapshot = self.snapshot(self.session_b)
         self.check({"foot", "stem", "bead"}.issubset(self._part_ids(ornament_snapshot)),
                    f"standalone scene did not expose its named parts: {ornament_snapshot}")
-        sessions = self.client.call("sessions")
-        session_records = _find(sessions, "sessions")
+        sessions = self.client.call('project', 'list')
+        session_records = _find(sessions, 'projects')
         self.check(isinstance(session_records, list) and len(session_records) >= 2,
                    f"two projects were not visible as two sessions: {sessions}")
-        self.client.call("snapshot", expected_code=EXIT_CODES["ambiguous_session"])
+        self.client.call('project', 'inspect', expected_code=EXIT_CODES['ambiguous_project'])
         targeted = self.snapshot(self.session_a)
         self.check({"wall", "base", "cap"}.issubset(self._part_ids(targeted)),
                    "named session addressed the wrong active project")
@@ -539,7 +545,7 @@ class AgentSessionAcceptance:
         # SC05: views, semantic state, highlights, framing and screenshots.
         active_view = _find(targeted, "activeView", "view")
         self.check(active_view in ("assembly", None), f"wrong default project view: {active_view!r}")
-        self.client.call("view", "inspection", "--session", self.session_a)
+        self.client.call('review', 'view', "inspection", '--project', self.session_a)
         inspect_revision = self.revision(self.session_a)
         inspect_wait = self.wait(self.session_a, inspect_revision)
         inspect_displayed_revision = _find(inspect_wait, "displayedRevision") or inspect_wait.get("revision")
@@ -550,13 +556,13 @@ class AgentSessionAcceptance:
                    f"switching views did not load inspection model: {inspection}")
         self.check(_find(inspection, "view") == "inspection",
                    f"active view was not reported after switching: {inspection}")
-        self.client.call("view", "assembly", "--session", self.session_a)
+        self.client.call('review', 'view', "assembly", '--project', self.session_a)
         assembly_revision = self.revision(self.session_a)
         assembly_wait = self.wait(self.session_a, assembly_revision)
         assembly_displayed_revision = _find(assembly_wait, "displayedRevision") or assembly_wait.get("revision")
         self.check(isinstance(assembly_displayed_revision, str) and bool(assembly_displayed_revision),
                    f"assembly wait omitted the displayed graph revision: {assembly_wait}")
-        before_selection = self.client.call("selection", "--session", self.session_a)
+        before_selection = self.client.call('review', 'selection', '--project', self.session_a)
         before_snapshot = self.snapshot(self.session_a)
         before_parts = _part_map(before_snapshot)
         before_export = {
@@ -564,16 +570,16 @@ class AgentSessionAcceptance:
             for part_id, part in before_parts.items()
         }
 
-        self.client.call("frame", "base", "cap", "--session", self.session_a)
+        self.client.call('review', 'frame', "base", "cap", '--project', self.session_a)
         stale_token = "0" * 64
         self.snapshot(self.session_a, "--expect-revision", stale_token,
                       expected_code=EXIT_CODES["stale_revision"])
-        self.client.call("highlight", "base", "--session", self.session_a, "--frame")
+        self.client.call('review', 'highlight', "base", '--project', self.session_a, "--frame")
         highlighted = self.snapshot(self.session_a)
         highlights = _find(highlighted, "highlights", "agentHighlights")
         self.check("base" in json.dumps(highlights, ensure_ascii=False),
                    f"highlight command did not expose the highlighted ID: {highlighted}")
-        after_selection = self.client.call("selection", "--session", self.session_a)
+        after_selection = self.client.call('review', 'selection', '--project', self.session_a)
         after_parts = _part_map(highlighted)
         after_export = {
             part_id: _find(part, "exportable", "exportEnabled")
@@ -583,25 +589,25 @@ class AgentSessionAcceptance:
                    f"agent highlight changed user selection: {before_selection} -> {after_selection}")
         self.check(before_export == after_export,
                    f"agent highlight changed export flags: {before_export} -> {after_export}")
-        self.client.call("highlight", "missing-fixture-id", "--session", self.session_a,
+        self.client.call('review', 'highlight', "missing-fixture-id", '--project', self.session_a,
                          "--expect-revision", assembly_displayed_revision,
                          expected_code=EXIT_CODES["not_found"])
-        self.client.call("highlight", "base", "--session", self.session_a,
+        self.client.call('review', 'highlight', "base", '--project', self.session_a,
                          "--expect-revision", stale_token,
                          expected_code=EXIT_CODES["stale_revision"])
-        self.client.call("highlight", "--clear", "--session", self.session_a)
+        self.client.call('review', 'highlight', "--clear", '--project', self.session_a)
         cleared = self.snapshot(self.session_a)
         cleared_highlights = _find(cleared, "highlights", "agentHighlights")
         self.check(not cleared_highlights, f"clear left agent highlights behind: {cleared_highlights}")
         camera_before_reload = _find(cleared, "camera")
 
         screenshot = self.paths["screenshot"]
-        self.client.call("screenshot", str(screenshot), "--session", self.session_a)
+        self.client.call('review', 'screenshot', str(screenshot), '--project', self.session_a)
         self.check(screenshot.is_file() and screenshot.read_bytes().startswith(b"\x89PNG\r\n\x1a\n"),
                    f"screenshot was not a PNG at the requested Unicode path: {screenshot}")
-        self.client.call("screenshot", str(screenshot), "--session", self.session_a,
+        self.client.call('review', 'screenshot', str(screenshot), '--project', self.session_a,
                          expected_code=EXIT_CODES["io_error"])
-        self.client.call("screenshot", str(screenshot), "--session", self.session_a, "--replace")
+        self.client.call('review', 'screenshot', str(screenshot), '--project', self.session_a, "--replace")
 
         # SC01/SC04: project errors leave their source untouched; a change in
         # an imported module changes the requested revision and load outcome.
@@ -610,7 +616,7 @@ class AgentSessionAcceptance:
         malformed = bad_project / "synthcad.json"
         malformed_bytes = b'{"schemaVersion":1,"defaultView":"missing","views":{}}\n'
         malformed.write_bytes(malformed_bytes)
-        self.client.call("open", str(bad_project), "--session", self.test_prefix + "-malformed",
+        self.client.call('project', 'open', str(bad_project), '--name', self.test_prefix + "-malformed",
                          "--hidden", expected_code=EXIT_CODES["invalid_argument"])
         self.check(malformed.read_bytes() == malformed_bytes,
                    "opening malformed project metadata rewrote the source")
@@ -646,7 +652,7 @@ class AgentSessionAcceptance:
         self.check(slow_revision != imported_revision,
                    "the delayed imported-module edit did not change the desired revision")
         timed_wait = self.client.call(
-            "wait", "--session", self.session_a, "--revision", slow_revision,
+            'project', 'wait', '--project', self.session_a, "--revision", slow_revision,
             "--timeout", "1", expected_code=EXIT_CODES["timeout"], timeout=5,
         )
         self.check(self._error_code(timed_wait) == "timeout",
@@ -707,14 +713,14 @@ class AgentSessionAcceptance:
         issues: list[str] = []
         if self.owned:
             try:
-                listed = self.client.call("sessions")
-                records = _find(listed, "sessions")
+                listed = self.client.call('project', 'list')
+                records = _find(listed, 'projects')
                 if isinstance(records, list):
                     for owned in self.owned:
                         for record in records:
                             if not isinstance(record, dict):
                                 continue
-                            record_id = _find(record, "session", "sessionId")
+                            record_id = _find(record, 'project', "sessionId")
                             path_value = _find(record, "projectPath")
                             if record_id != owned["id"] and record_id != owned["name"]:
                                 continue

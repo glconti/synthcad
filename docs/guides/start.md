@@ -1,6 +1,6 @@
 # Start a SynthCAD design
 
-Run `synthcad-cli docs` to list topics or `synthcad-cli docs start` to print this guide.
+Run `synthcad-cli --help` to list topics or `synthcad-cli project --help` to print this guide.
 
 ## Establish the project
 
@@ -20,7 +20,7 @@ For example, both views in `synthcad.json` can use the same JavaScript entry poi
 }
 ```
 
-Keep these named views in the shared design graph below. Split source files only when the model's complexity benefits from it. Run `synthcad-cli docs projects` for manifest and revision details and `synthcad-cli docs api` for the complete model contract.
+Keep these named views in the shared design graph below. Split source files only when the model's complexity benefits from it. Run `synthcad-cli project files --help` for manifest and revision details and `synthcad-cli model api --help` for the complete model contract.
 
 Read routine CLI responses directly or parse their JSON in memory. Do not save separate check reports, dry-run reviews or export-response dumps by default: the app already keeps export history in `.synthcad/`. Prefer a final 3MF under `exports/`; add STL when requested. Use OS temporary files for review screenshots and retain previews or print-note documents only when requested.
 
@@ -66,28 +66,28 @@ Dimensions are authored annotations: the viewer does not infer them from the mes
 Open the standalone entry or project directory:
 
 ```text
-synthcad-cli open ./my-design
-synthcad-cli snapshot --json
+synthcad-cli project open ./my-design
+synthcad-cli project inspect --json
 ```
 
-`open` returns the session name and whether an existing viewer was reused. Use that session for subsequent calls; edits hot-reload without another launch. If startup is slow, check `sessions` and retry the same project. If access is denied, use the required execution permissions with the same registry. Do not switch `SYNTHCAD_SESSION_DIR` or create a project-local session directory as a recovery workaround.
+`project open` returns the project handle and whether an existing viewer was reused. Use that handle with `--project` for subsequent calls; edits hot-reload without another launch. If startup is slow, check `project list` and retry the same project. If access is denied, use the required execution permissions with the same registry. Do not switch `SYNTHCAD_SESSION_DIR` or create a project-local session directory as a recovery workaround.
 
-After editing a source file, request the current revision, then pass the requested token from its JSON result to `wait`:
+After editing a source file, request the current revision, then pass the requested token from its JSON result to `project wait`:
 
 ```text
-synthcad-cli revision --json
-synthcad-cli wait --revision REQUESTED_TOKEN --timeout 10000 --json
+synthcad-cli project revision --json
+synthcad-cli project wait --revision REQUESTED_TOKEN --timeout 10000 --json
 ```
 
-Replace `REQUESTED_TOKEN` with the revision returned by `revision`. Proceed only when `wait` succeeds. Its envelope `revision` / `data.displayedRevision` identifies the geometry actually displayed. Use that displayed revision with `--expect-revision` for later snapshot, highlight, frame or screenshot calls. If the files change again, capture and wait for a fresh revision. Run `synthcad-cli docs cli` for full command behavior and failure states.
+Replace `REQUESTED_TOKEN` with the revision returned by `project revision`. Proceed only when `project wait` succeeds. Its envelope `revision` / `data.displayedRevision` identifies the geometry actually displayed. Use that displayed revision with `--expect-revision` for later snapshot, highlight, frame or screenshot calls. If the files change again, capture and wait for a fresh revision. Run `synthcad-cli review --help` for full command behavior and failure states.
 
 Inspect the part tree, authored annotations, bounds, diagnostic and selected view. A screenshot is useful for shape and placement review, but it does not test clearances, wall thickness, bed fit, supports, toolpaths or strength. Record printer, nozzle and material details only when supplied for this project; unknown details can remain open during initial modeling.
 
-If the user wants a targeted sample before a full print, run `synthcad-cli docs physical-feedback` for shared sample geometry, explicit user reports and revision-linked reprint decisions. This flow is optional; exporting a file never implies it was printed or tested.
+If the user wants a targeted sample before a full print, run `synthcad-cli print feedback --help` for shared sample geometry, explicit user reports and revision-linked reprint decisions. This flow is optional; exporting a file never implies it was printed or tested.
 
 
-If a model fails, read `state --json`: `loadFailure` explains the processing stage
+If a model fails, read `project inspect --json`: `loadFailure` explains the processing stage
 and available cause. The viewer retains its last successful model and disables
-export. Fix the source and wait for its new revision, or use `reload` to retry.
-Use `cancel-load` for stuck work; `reload --evaluation-timeout 240000` raises the
-session's two-minute default limit. A CLI wait timeout alone does not cancel it.
+export. Fix the source and wait for its new revision, or use `project reload` to retry.
+Use `project cancel-load` for stuck work; `project reload --evaluation-timeout 240000` raises the
+open project's two-minute default limit. A CLI wait timeout alone does not cancel it.

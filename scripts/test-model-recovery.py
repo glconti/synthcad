@@ -19,7 +19,7 @@ owned = []
 env = os.environ.copy()
 root_context = tempfile.TemporaryDirectory(prefix='synthcad-recovery-')
 root = Path(root_context.name)
-env['SYNTHCAD_SESSION_DIR'] = str(root / 'sessions')
+env['SYNTHCAD_SESSION_DIR'] = str(root / 'projects')
 env['SYNTHCAD_VIEWER'] = str(cli)
 name = 'worker-recovery'
 
@@ -31,7 +31,7 @@ def call(*args, okay=True):
     return j
 
 def state(session=name):
-    return call('state', '-s', session)['data']
+    return call('project', 'inspect', '--project', session)['data']
 
 def wait_status(status, session=name):
     deadline = time.monotonic() + 15
@@ -68,72 +68,72 @@ try:
     scene = root/'design.js'
     good = "export const scene=cube({size:[20,30,4]});"
     scene.write_text(good)
-    opened = call('open',scene,'-s',name)
+    opened = call('project', 'open',scene,'--name',name)
     pid = opened['data']['pid']; owned.append(pid)
     before = wait_status('ready'); revision = before['displayedRevision']
-    call('frame','-s',name)
+    call('review', 'frame','--project',name)
     camera = state()['camera']
     scene.write_text("import './shape.js'; export const scene=cube({size:[20,30,4]});")
     failed = wait_status('failed')
     assert failed['displayedRevision'] == revision and not failed['exportValid']
     assert any(k.endswith('shape.js') for k in failed['dependencies'])
-    token = call('revision','-s',name)['data']['revision']
-    result = call('wait','-s',name,'--revision',token,okay=False)
+    token = call('project', 'revision','--project',name)['data']['revision']
+    result = call('project', 'wait','--project',name,'--revision',token,okay=False)
     assert result['error']['code'] == 'load_failed' and result['error']['details']['loadFailure']
-    call('screenshot',out/'error.png','-s',name,'--replace')
+    call('review', 'screenshot',out/'error.png','--project',name,'--replace')
     (root/'shape.js').write_text('export const value=1;')
     recovered = wait_status('ready')
     assert recovered['camera'] == camera
-    call('screenshot',out/'recovered.png','-s',name,'--replace')
+    call('review', 'screenshot',out/'recovered.png','--project',name,'--replace')
     revision = recovered['displayedRevision']
     scene.write_text('while(true){}; export const scene=cube({size:[1,1,1]});')
     wait_status('loading')
     start = time.monotonic(); assert state()['status'] == 'loading'; assert time.monotonic()-start < 2
-    call('screenshot',out/'loading.png','-s',name,'--replace')
-    token = call('revision','-s',name)['data']['revision']
-    result = call('wait','-s',name,'--revision',token,'--timeout','30',okay=False)
+    call('review', 'screenshot',out/'loading.png','--project',name,'--replace')
+    token = call('project', 'revision','--project',name)['data']['revision']
+    result = call('project', 'wait','--project',name,'--revision',token,'--timeout','30',okay=False)
     assert result['error']['code'] == 'timeout' and state()['status'] == 'loading'
-    call('cancel-load','-s',name)
+    call('project', 'cancel-load','--project',name)
     assert wait_status('failed')['loadFailure']['category'] == 'cancelled'
-    call('reload','-s',name,'--evaluation-timeout','150')
+    call('project', 'reload','--project',name,'--evaluation-timeout','150')
     assert wait_status('failed')['loadFailure']['category'] == 'evaluation_timeout'
-    call('reload','-s',name,'--evaluation-timeout','10000')
+    call('project', 'reload','--project',name,'--evaluation-timeout','10000')
     wait_status('loading'); kill(worker_pid(pid))
     crashed = wait_status('failed')
     assert crashed['loadFailure']['category'] == 'worker_crash' and crashed['loadFailure']['nativeExitCode']
     assert crashed['displayedRevision'] == revision
-    call('screenshot',out/'native-error.png','-s',name,'--replace')
-    call('reload','-s',name)
+    call('review', 'screenshot',out/'native-error.png','--project',name,'--replace')
+    call('project', 'reload','--project',name)
     wait_status('loading')
     scene.write_text(good.replace('20','21'))
     final = wait_status('ready')
     assert final['displayedRevision'] != revision and final['exportValid']
-    assert call('open',scene,'-s',name)['data']['pid'] == pid
-    call('export',out/'recovered.3mf','-s',name,'--allow-warnings','--replace')
-    call('export',out/'recovered.stl','-s',name,'--allow-warnings','--replace')
-    events = call('events','-s',name,'--after','0')['data']['events']
+    assert call('project', 'open',scene,'--name',name)['data']['pid'] == pid
+    call('print', 'export',out/'recovered.3mf','--project',name,'--allow-warnings','--replace')
+    call('print', 'export',out/'recovered.stl','--project',name,'--allow-warnings','--replace')
+    events = call('project', 'events','--project',name,'--after','0')['data']['events']
     assert {'load-loading','load-failed','load-ready'} <= {e['type'] for e in events}
     # Real reduced field from the reported native fault: either it renders or
     # its worker failure is contained with a useful diagnostic and unchanged PID.
-    call('open',scene,'-s',name,'--evaluation-timeout','30000')
+    call('project', 'open',scene,'--name',name,'--evaluation-timeout','30000')
     field = Path(__file__).resolve().parents[1]/'viewer/tests/agent-fixtures/implicit-field.js'
     scene.write_text(field.read_text(encoding='utf-8'),encoding='utf-8')
-    token = call('revision','-s',name)['data']['revision']
-    field_result = call('wait','-s',name,'--revision',token,'--timeout','30000',okay=False)
+    token = call('project', 'revision','--project',name)['data']['revision']
+    field_result = call('project', 'wait','--project',name,'--revision',token,'--timeout','30000',okay=False)
     assert field_result['ok'] or field_result['error']['code'] == 'load_failed', field_result
     field_state = state()
     if not field_result['ok']:
         assert field_state['loadFailure']['category'] == 'worker_crash'
         assert field_state['loadFailure']['context']['operation'] == 'levelSet'
         assert field_state['displayedRevision'] == final['displayedRevision']
-    assert call('open',scene,'-s',name)['data']['pid'] == pid
+    assert call('project', 'open',scene,'--name',name)['data']['pid'] == pid
     (out/'implicit-field-result.json').write_text(json.dumps(field_result,indent=2))
     scene.write_text(good);wait_status('ready')
     other = root/'invalid.js'; other.write_text("throw Error('First load failed');")
-    opened = call('open',other,'-s','failed-first'); owned.append(opened['data']['pid'])
+    opened = call('project', 'open',other,'--name','failed-first'); owned.append(opened['data']['pid'])
     first = wait_status('failed','failed-first')
     assert first['parts'] == [] and first['displayedRevision'] == ''
-    call('screenshot',out/'first-load-error.png','-s','failed-first','--replace')
+    call('review', 'screenshot',out/'first-load-error.png','--project','failed-first','--replace')
     (out/'results.json').write_text(json.dumps({'viewerPid':pid,'crash':crashed['loadFailure'],'recoveredRevision':final['displayedRevision'],'result':'passed'},indent=2))
     print('PASS responsive viewer, native crash, imports, timeout, cancellation, superseding, recovery, events, export and first-load error')
 finally:

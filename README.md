@@ -99,28 +99,29 @@ Development builds retain `synthcad` (`synthcad.exe` on Windows) and
 accepts them too:
 
 ```powershell
-.\scripts\run-windows.ps1 open .\scene.js --session review
-.\out\build\windows-x64-release\viewer\synthcad.exe snapshot --session review --json
+.\scripts\run-windows.ps1 project open .\scene.js --name review
+.\out\build\windows-x64-release\viewer\synthcad.exe project inspect --project review --json
 ```
 
-Running `synthcad-cli` with no arguments groups commands and guidance by area.
-Read just the instructions you need with `synthcad-cli docs start`,
-`synthcad-cli docs modeling`, `synthcad-cli docs print-design` or `synthcad-cli docs api`.
+Running `synthcad-cli` with no arguments prints a self-contained agent kickstart:
+what the app does, how the agent and human collaborate, and the edit/review loop.
+Read just the instructions you need with `synthcad-cli project --help`,
+`synthcad-cli model --help`, `synthcad-cli print design --help` or `synthcad-cli model api --help`.
 For optional sample prints and user-reported results, use
-`synthcad-cli docs physical-feedback`. Full exports never require sample records.
-`synthcad-cli docs` lists all areas. Complete guides print to stdout from the CLI's
+`synthcad-cli print feedback --help`. Full exports never require sample records.
+`synthcad-cli --help` lists all areas. Complete guides print to stdout from the CLI's
 compiled bundle, without installing skill files or accessing this checkout.
 Add `--json` for content and version metadata in a structured response.
 
-The CLI opens or reuses a persistent session. Agents edit model files normally;
-the viewer hot-reloads them. Capture a requested revision with `revision`, then
-use `wait --revision TOKEN` to acknowledge the loaded result. Highlights, framing,
+The CLI opens or reuses a persistent project viewer. Agents edit model files normally;
+the viewer hot-reloads them. Capture a requested revision with `project revision`, then
+use `project wait --revision TOKEN` to acknowledge the loaded result. Highlights, framing,
 named project views, selection readback and PNG screenshots share that viewer.
 These commands do not edit geometry or generate print layouts. Use
-`synthcad-cli export current-plate.3mf --session review --dry-run --json` to review
+`synthcad-cli print export current-plate.3mf --project review --dry-run --json` to review
 the current arrangement before exporting. Both 3MF and STL use the viewer's
 selection rules, warning acknowledgement and overwrite protection. Successful
-exports retain revision-linked records; `synthcad-cli export-history` reads them.
+exports retain revision-linked records; `synthcad-cli print history` reads them.
 
 Start small: keep geometry and named views in `design.js` plus `synthcad.json`.
 Place requested final outputs in `exports/` (prefer 3MF), read routine command
@@ -131,16 +132,16 @@ additional previews or print notes when requested. Export history is managed in
 For a new assembly with several layouts, export a shared `design` graph:
 source parts define geometry once, instances identify physical copies, and
 groups/views reference those instances. Plate placements can override assembly
-poses without copying the model. `synthcad docs design` prints the full contract;
+poses without copying the model. `synthcad model assembly --help` prints the full contract;
 the [public shared-design fixture](viewer/tests/agent-fixtures/shared-design)
-shows four views sharing one entry. `synthcad checks` reports geometric plate
+shows four views sharing one entry. `synthcad print checks` reports geometric plate
 fit, overlap and authored allowances against the supplied build volume;
 support generation, slicing and automatic packing remain outside this workflow.
 
 See the [agent CLI guide](docs/agent-cli.md) for commands, errors and session
 lifecycle, and the [project/revision contract](docs/agent-contract.md) for optional
-`synthcad.json` projects. Standalone `.js` scenes remain supported. Named sessions
-are created through `open`; legacy direct scene launches keep their existing
+`synthcad.json` projects. Standalone `.js` scenes remain supported. Named project handles
+are created through `project open PATH --name NAME`; legacy direct scene launches keep their existing
 viewer behavior. The complete review loop also passes on Linux under Xvfb/Mesa;
 automated CI and distribution validation remain part of the v1 backlog.
 
@@ -148,18 +149,18 @@ automated CI and distribution validation remain part of the v1 backlog.
 
 Use **Project** beside the scene filename to review named views, measurements,
 assumptions, printer context, checks, exports and optional physical notes.
-`synthcad overview --json` and `synthcad profile --json` expose the same context
-to the agent. `synthcad profile --template` prints an incomplete setup fragment;
-`synthcad docs profiles` guides printer/nozzle/material setup without installing
+`synthcad project inspect --json` and `synthcad print profile --json` expose the same context
+to the agent. `synthcad print profile --template` prints an incomplete setup fragment;
+`synthcad print profile --help` guides printer/nozzle/material setup without installing
 files or inheriting another project's settings. Missing setup permits review.
 Read [the overview contract](docs/project-overview.md) for record formats and
 revision freshness. Authored check results remain distinct from engine checks.
 
 Use **Checks** to review generated geometry and manufacturing evidence. Named
 `plate` views render the configured bed and exclusions while reusing the same
-source parts as the assembly. `synthcad checks --json` reports transformed bounds,
+source parts as the assembly. `synthcad print checks --json` reports transformed bounds,
 bed contact, actual solid overlaps, conservative clearance allowances and planned
-quantities with revision-bound affected IDs. `synthcad docs checks` explains each
+quantities with revision-bound affected IDs. `synthcad print checks --help` explains each
 method and its limits. Automatic packing, slicing and verified load capacity are
 not implied by a passing geometric check.
 
@@ -170,12 +171,12 @@ not implied by a passing geometric check.
   radius and respect occlusion. Dragging more than 4 logical pixels orbits
   without selecting. Hidden parts cannot be picked.
 - **Copy ref** (or **Ctrl+C** outside text entry) copies the selected part or
-  feature reference. An agent reads the same context with `synthcad selection`
-  or resolves a copied token with `synthcad reference TOKEN`. Geometric IDs are
+  feature reference. An agent reads the same context with `synthcad review selection`
+  or resolves a copied token with `synthcad review selection TOKEN`. Geometric IDs are
   revision-local: editing source or changing layouts invalidates old tokens.
   Unsupported topology remains selectable in Part mode with diagnostics in
-  `snapshot`. Model files and export flags are unaffected by picking.
-- An agent can ask a question with `synthcad pick --id mount-1 --kind surface --question "Which surface should receive the mount?"`. Choose fresh geometry, then **Confirm**, or **Cancel**/**Escape**. Starting a question preserves your existing selection; it never submits it automatically. Agents read outcomes with `pick-status` or `events`.
+  `project inspect`. Model files and export flags are unaffected by picking.
+- An agent can ask a question with `synthcad review pick request --id mount-1 --kind surface --question "Which surface should receive the mount?"`. Choose fresh geometry, then **Confirm**, or **Cancel**/**Escape**. Starting a question preserves your existing selection; it never submits it automatically. Agents read outcomes with `review pick status` or `project events`.
 - **Space** frames all currently visible parts from the front; **R** reloads the scene manually.
 - **M** or the **Dimensions** button cycles Hover, All, and Off. In Hover mode,
   hover the small blue feature markers to see measurements in millimetres.

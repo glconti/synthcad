@@ -101,7 +101,7 @@ rotate XYZ in degrees then translate in mm; a view override replaces the entire
 instance pose. They do not scale the source or move another view. Quantity is
 declared intent, not an instruction to generate copies or a plate check.
 
-Run `synthcad-cli docs design` for the complete schema, limits, defaults and reference
+Run `synthcad-cli model assembly --help` for the complete schema, limits, defaults and reference
 validation contract ([source](docs/design-graph.md)). All groups and views are
 validated, including unused ones; invalid references/cycles disable export and
 retain the previous valid view. A manifest maps named views to the shared entry:
@@ -178,7 +178,7 @@ printer/material presets. Choose those settings in the slicer. Switching format
 updates the filename extension; the destination must match the selected format.
 See [standard 3MF export](docs/three-mf-export.md).
 
-The `synthcad-cli export` command uses the same viewer-owned export service. A dry
+The `synthcad-cli print export` command uses the same viewer-owned export service. A dry
 run returns the included instances, source quantities, revision basis and
 cached checks without creating files. Actual exports require explicit warning
 and replacement acknowledgement when applicable. Committed files receive

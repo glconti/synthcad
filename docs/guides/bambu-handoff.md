@@ -1,10 +1,10 @@
 # Standard 3MF/STL handoff and slicer review
 
-Run `synthcad-cli docs bambu-handoff` to print this guide.
+Run `synthcad-cli print handoff --help` to print this guide.
 
 ## Export authored geometry
 
-Use the viewer's export dialog or `synthcad-cli export` for geometry handoff. Both offer standard Core 3MF and STL through the same review and guarded writer. The dialog defaults to 3MF; the CLI infers the format from the `.3mf` or `.stl` destination, or accepts `--format` with a matching extension.
+Use the viewer's export dialog or `synthcad-cli print export` for geometry handoff. Both offer standard Core 3MF and STL through the same review and guarded writer. The dialog defaults to 3MF; the CLI infers the format from the `.3mf` or `.stl` destination, or accepts `--format` with a matching extension.
 
 Choose all exportable parts or visible exportable parts deliberately: all-parts mode includes hidden exportable parts, and external references are excluded by default unless their export flag is enabled. Both formats keep selected solids in the current scene coordinates. Export does not move an assembly onto a bed, rearrange parts, or union overlapping bodies. Export the assembly view when its assembly poses are intended; export a manually authored plate view when those plate placements are intended.
 
@@ -17,23 +17,29 @@ The viewer asks before replacing an existing destination. Confirm the scene, inc
 Before exporting, author the intended plate views and run the geometry review:
 
 ```text
-synthcad-cli docs print-design
-synthcad-cli docs build-plates
-synthcad-cli view plate-a --session NAME --json
-synthcad-cli checks --session NAME --json
+synthcad-cli print design --help
+synthcad-cli print plates --help
+synthcad-cli review view plate-a --project NAME --json
+synthcad-cli project revision --project NAME --json
+synthcad-cli project wait --project NAME --revision REQUESTED_TOKEN --json
+synthcad-cli print checks --project NAME --expect-revision DISPLAYED_TOKEN --json
 ```
+
+Use `data.revision` from `project revision` for REQUESTED_TOKEN. Proceed only
+after wait succeeds; use its `revision` / `data.displayedRevision` for
+DISPLAYED_TOKEN.
 
 Create plate views by editing the authored scene files using the print-design and build-plates guidance. Open the intended plate view and run the checks against that view. Read the report's basis, profile status, check methods, affected IDs and quantity scope. It checks current geometry against supplied dimensions and allowances; it does not simulate slicing. You can author and geometrically review a plate using a known build volume without selecting a catalog printer or a material profile. Add printer/nozzle/material choices when the actual slicer handoff is being prepared.
 
 Review the export before creating a file:
 
 ```text
-synthcad-cli export plate-a.3mf --session NAME --dry-run --json
-synthcad-cli export plate-a.3mf --session NAME --expect-revision TOKEN --allow-warnings --json
-synthcad-cli export-history --session NAME --json
+synthcad-cli print export plate-a.3mf --project NAME --dry-run --json
+synthcad-cli print export plate-a.3mf --project NAME --expect-revision TOKEN --allow-warnings --json
+synthcad-cli print history --project NAME --json
 ```
 
-Use the intended displayed revision from the loaded viewer for `TOKEN`. Read the dry run's view, quantities, context and risks before acknowledging them with `--allow-warnings`; unchecked strength, supports and slicing remain unchecked after export. The GUI shows the same review with **Export anyway** for outstanding concerns. `--visible-only` selects only currently visible exportable parts; omission includes hidden exportable parts too. Existing destinations require `--replace` or explicit GUI confirmation. Empty, invalid or stale exports leave destination files intact. Dry runs write neither geometry nor history. Each successful export saves a receipt with output hash and source/layout/profile revisions; if history cannot be saved, the output remains usable and the response reports that separately. Local history is stored alongside the project under `.synthcad/exports/`, separately from authored metadata. Older files are not regenerated after edits. If a request times out around file commit, inspect the destination and `export-history` before retrying.
+Use the intended displayed revision from the loaded viewer for `TOKEN`. Read the dry run's view, quantities, context and risks before acknowledging them with `--allow-warnings`; unchecked strength, supports and slicing remain unchecked after export. The GUI shows the same review with **Export anyway** for outstanding concerns. `--visible-only` selects only currently visible exportable parts; omission includes hidden exportable parts too. Existing destinations require `--replace` or explicit GUI confirmation. Empty, invalid or stale exports leave destination files intact. Dry runs write neither geometry nor history. Each successful export saves a receipt with output hash and source/layout/profile revisions; if history cannot be saved, the output remains usable and the response reports that separately. Local history is stored alongside the project under `.synthcad/exports/`, separately from authored metadata. Older files are not regenerated after edits. If a request times out around file commit, inspect the destination and `print history` before retrying.
 
 Import the resulting file into the target slicer and verify the object count, authored names, orientations and positions against the intended viewer scene. Slicers can interpret or rearrange imported models differently, so the exported arrangement is not a promise about the slicer's final plate layout.
 

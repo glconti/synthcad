@@ -58,24 +58,24 @@ def main():
             for name in ('design.js', 'synthcad.json'):
                 shutil.copy2(args.source_project / name, project / name)
         else:
-            guide = call('docs', 'start')['data']['content']
+            guide = call('project', '--help')['data']['guidance']
             source = re.search(r'```javascript\n(.*?)\n```', guide, re.S).group(1)
             manifest = json.loads(re.search(r'```json\n(.*?)\n```', guide, re.S).group(1))
             manifest.update(activeProfile='qa-volume', profiles={'qa-volume': {
                 'buildVolume': [120, 120, 120], 'exclusions': []}})
             (project / 'design.js').write_text(source, encoding='utf-8')
             (project / 'synthcad.json').write_text(json.dumps(manifest, indent=2), encoding='utf-8')
-        evidence = {'session': session, 'project': str(project), 'cli': str(cli)}
+        evidence = {'project': session, 'projectPath': str(project), 'cli': str(cli)}
         save()
         print('PASS setup: two authored files only')
         return
 
     evidence = json.loads(evidence_path.read_text(encoding='utf-8'))
-    session = evidence['session']
+    session = evidence['project']
     if str(cli) != evidence['cli']:
         raise RuntimeError('Executable changed between phases')
     if args.phase == 'open':
-        opened = call('open', project, '-s', session)
+        opened = call('project', 'open', project, '--name', session)
         evidence['pid'] = opened['data']['pid']
         save()  # retain ownership evidence even if a later assertion fails
         assert not opened['data']['reused'], opened
@@ -83,32 +83,32 @@ def main():
     elif args.phase == 'restricted':
         # When the host sandbox denies pipe access, the CLI must retain the
         # recorded viewer and report io_error, never mislabel it as no_session.
-        sessions = call('sessions')['data']['sessions']
-        match = next(r for r in sessions if r['session'] == session)
+        sessions = call('project', 'list')['data']['projects']
+        match = next(r for r in sessions if r['project'] == session)
         assert match['pid'] == evidence['pid']
         if match['reachable']:
-            assert call('open', project, '-s', session)['data']['pid'] == evidence['pid']
+            assert call('project', 'open', project, '--name', session)['data']['pid'] == evidence['pid']
             evidence['restrictedAccess'] = 'available'
         else:
-            state = call('state', '-s', session, expected=10)
-            opened = call('open', project, '-s', session, expected=10)
+            state = call('project', 'inspect', '--project', session, expected=10)
+            opened = call('project', 'open', project, '--name', session, expected=10)
             assert state['error']['code'] == opened['error']['code'] == 'io_error'
             if 'details' in opened['error']:
                 assert opened['error']['details']['pid'] == evidence['pid']
             else:
                 assert 'Windows error 5' in opened['error']['message'], opened
-            after = call('sessions')['data']['sessions']
-            assert [r['pid'] for r in after if r['session'] == session] == [evidence['pid']]
+            after = call('project', 'list')['data']['projects']
+            assert [r['pid'] for r in after if r['project'] == session] == [evidence['pid']]
             evidence['restrictedAccess'] = {'state': state['error'], 'open': opened['error']}
         save()
         print('PASS restricted call: recorded PID retained; permission failure cannot create a second viewer')
     elif args.phase in ('review', 'export'):
         # This process starts after the previous caller has already exited.
-        state = call('state', '-s', session)
-        reused = call(project / 'synthcad.json', '-s', session)
+        state = call('project', 'inspect', '--project', session)
+        reused = call(project / 'synthcad.json', '--name', session)
         assert reused['data']['reused'] and reused['data']['pid'] == evidence['pid'], reused
-        sessions = call('sessions')['data']['sessions']
-        matches = [r for r in sessions if r['session'] == session]
+        sessions = call('project', 'list')['data']['projects']
+        matches = [r for r in sessions if r['project'] == session]
         assert len(matches) == 1 and matches[0]['pid'] == evidence['pid'], matches
         if os.name == 'nt':
             user = ctypes.windll.user32
@@ -126,7 +126,7 @@ def main():
         deadline = time.monotonic() + 30
         while state['data']['status'] == 'loading' and time.monotonic() < deadline:
             time.sleep(0.1)
-            state = call('state', '-s', session)
+            state = call('project', 'inspect', '--project', session)
         assert state['data']['status'] == 'ready', state
         if args.phase == 'review':
             evidence['displayedBeforeEdit'] = state['data']['displayedRevision']
@@ -137,20 +137,20 @@ def main():
             else:
                 text += '\n// QA copy: revision acknowledgement edit.\n'
             source.write_text(text, encoding='utf-8')
-            desired = call('revision', '-s', session)['data']['revision']
-            ready = call('wait', '-s', session, '--revision', desired, '--timeout', '30000')
+            desired = call('project', 'revision', '--project', session)['data']['revision']
+            ready = call('project', 'wait', '--project', session, '--revision', desired, '--timeout', '30000')
             assert ready['data']['displayedRevision'] != evidence['displayedBeforeEdit'], ready
             evidence['displayedAfterEdit'] = ready['data']['displayedRevision']
             print(f'PASS review: same PID {evidence["pid"]}, one viewer, positional reuse and hot reload')
         else:
             manifest = json.loads((project / 'synthcad.json').read_text(encoding='utf-8'))
             plate = next(name for name in manifest['views'] if 'plate' in name)
-            call('view', plate, '-s', session)
-            desired = call('revision', '-s', session)['data']['revision']
-            ready = call('wait', '-s', session, '--revision', desired, '--timeout', '30000')
+            call('review', 'view', plate, '--project', session)
+            desired = call('project', 'revision', '--project', session)['data']['revision']
+            ready = call('project', 'wait', '--project', session, '--revision', desired, '--timeout', '30000')
             output = project / 'exports' / 'model.3mf'
             output.parent.mkdir(exist_ok=True)
-            call('export', output, '-s', session, '--expect-revision', ready['revision'], '--allow-warnings')
+            call('print', 'export', output, '--project', session, '--expect-revision', ready['revision'], '--allow-warnings')
             assert output.exists()
             assert {p.name for p in project.iterdir()} == {'design.js', 'synthcad.json', 'exports', '.synthcad'}
             assert {p.name for p in output.parent.iterdir()} == {'model.3mf'}
@@ -159,8 +159,8 @@ def main():
         save()
     else:
         # Only terminate the PID whose live session and project still match.
-        sessions = call('sessions')['data']['sessions']
-        match = next((r for r in sessions if r['session'] == session), None)
+        sessions = call('project', 'list')['data']['projects']
+        match = next((r for r in sessions if r['project'] == session), None)
         if match:
             assert match['pid'] == evidence['pid']
             if os.name == 'nt':

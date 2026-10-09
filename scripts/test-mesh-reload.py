@@ -59,67 +59,67 @@ def run(args):
     source.write_text("export const scene=loadMesh("+json.dumps(str(mesh))+ ");\n", encoding="utf-8")
     source_digest = hashlib.sha256(source.read_bytes()).hexdigest()
     client = session.Client(session.discover_executable(args.cli), Path(args.viewer).resolve() if args.viewer else None, 40)
-    client.session_dir, client.trace_path = folder / "sessions", folder / "cli-trace.jsonl"
+    client.session_dir, client.trace_path = folder / 'projects', folder / "cli-trace.jsonl"
     name, owned = "mesh-reload", []
 
     def call(*commands, **kwargs):
-        return client.call(*commands, "-s", name, **kwargs)
+        return client.call(*commands, '--project', name, **kwargs)
 
     def ready(previous=None, expected=0):
         deadline = time.monotonic()+30
         while time.monotonic() < deadline:
-            response = call("revision", expected_code=(0, 11))
+            response = call('project', 'revision', expected_code=(0, 11))
             if response["ok"]:
                 token = session._revision(response)
                 if previous is None or token != previous:
-                    return call("wait", "--revision", token, "--timeout", "25000", expected_code=expected)
+                    return call('project', 'wait', "--revision", token, "--timeout", "25000", expected_code=expected)
             time.sleep(.1)
         raise RuntimeError("Mesh source revision did not settle")
 
     def export(filename):
         path = folder / filename
-        result = call("export", str(path), "--allow-warnings")["data"]
+        result = call('print', 'export', str(path), "--allow-warnings")["data"]
         require(result["code"] == "saved" and result["history"]["saved"], "Mesh export/history failed")
         record = result["record"]
         require(record["dependencies"][mesh_key] == hashlib.sha256(mesh.read_bytes()).hexdigest(), "Primary mesh digest missing/wrong in export receipt")
         return path, record
 
     try:
-        opened = call("open", str(source), "--hidden")
+        opened = client.call('project', 'open', str(source), '--name', name, '--hidden')
         owned.extend(pid for pid, _ in session._pid_records(opened))
         require(len(set(owned)) == 1, "Open must report one owned viewer PID")
         ready()
-        initial = call("snapshot")["data"]
+        initial = call('project', 'inspect')["data"]
         old_revision = initial["displayedRevision"]
         require(initial["parts"][0]["bounds"]["max"] == [1, 1, 1], "Original imported tetrahedron bounds wrong")
-        files = call("revision")["data"]["files"]
+        files = call('project', 'revision')["data"]["files"]
         require(files[mesh_key] == hashlib.sha256(mesh.read_bytes()).hexdigest(), "Primary mesh digest absent from source revision")
         original_export, receipt = export("initial.stl")
         require(abs(volume(original_export)-1/6) < 1e-7, "Original imported tetrahedron volume wrong")
-        previous = session._revision(call("revision"))
+        previous = session._revision(call('project', 'revision'))
         tetrahedron(mesh, 2)
         ready(previous)
-        changed = call("snapshot")["data"]
+        changed = call('project', 'inspect')["data"]
         require(changed["displayedRevision"] != old_revision and changed["parts"][0]["bounds"]["max"] == [2, 1, 1], "Mesh-only edit failed to update displayed revision/bounds")
         changed_export, _ = export("changed.stl")
         require(abs(volume(changed_export)-1/3) < 1e-7, "Mesh-only edit failed to update exported volume")
         blocked = folder / "stale.3mf"
-        call("export", str(blocked), "--allow-warnings", "--expect-revision", old_revision, expected_code=7)
+        call('print', 'export', str(blocked), "--allow-warnings", "--expect-revision", old_revision, expected_code=7)
         require(not blocked.exists(), "Old mesh revision guard allowed an export")
-        records = {item["id"]: item for item in call("export-history")["data"]["records"]}
+        records = {item["id"]: item for item in call('print', 'history')["data"]["records"]}
         require(records[receipt["id"]]["freshness"] == "stale", "Mesh-only edit did not stale prior export history")
-        previous = session._revision(call("revision"))
+        previous = session._revision(call('project', 'revision'))
         mesh.unlink()
         ready(previous, expected=5)
-        require(call("state")["data"]["status"] == "failed", "Missing imported mesh did not fail current evaluation")
-        require(call("revision")["data"]["files"][mesh_key] == "missing", "Missing primary mesh dependency was discarded")
+        require(call('project', 'inspect')["data"]["status"] == "failed", "Missing imported mesh did not fail current evaluation")
+        require(call('project', 'revision')["data"]["files"][mesh_key] == "missing", "Missing primary mesh dependency was discarded")
         failed_export = folder / "missing.3mf"
-        call("export", str(failed_export), "--allow-warnings", expected_code=7)
+        call('print', 'export', str(failed_export), "--allow-warnings", expected_code=7)
         require(not failed_export.exists(), "Missing mesh permitted retained geometry export")
-        previous = session._revision(call("revision"))
+        previous = session._revision(call('project', 'revision'))
         tetrahedron(mesh, 3)
         ready(previous)
-        recovered = call("snapshot")["data"]
+        recovered = call('project', 'inspect')["data"]
         require(recovered["exportValid"] and recovered["parts"][0]["bounds"]["max"] == [3, 1, 1], "Restoring primary mesh failed recovery")
         recovered_export, _ = export("recovered.stl")
         require(abs(volume(recovered_export)-.5) < 1e-7, "Recovered mesh export volume wrong")

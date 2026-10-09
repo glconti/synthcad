@@ -40,15 +40,15 @@ def run(args):
     baseline_metadata = json.loads(config.read_text(encoding="utf-8"))
     metadata = json.loads(json.dumps(baseline_metadata))
     client = session.Client(session.discover_executable(args.cli), Path(args.viewer).resolve() if args.viewer else None, 35)
-    client.session_dir, client.trace_path = folder / "sessions", folder / "cli-trace.jsonl"
+    client.session_dir, client.trace_path = folder / 'projects', folder / "cli-trace.jsonl"
     pids = []
     name = "manufacturing-test"
     def call(*cmd, **kwargs):
-        return client.call(*cmd, "-s", name, **kwargs)
+        return client.call(*cmd, '--project', name, **kwargs)
     def revision():
         deadline = time.monotonic() + 25
         while time.monotonic() < deadline:
-            response = call("revision", expected_code=(0, 11))
+            response = call('project', 'revision', expected_code=(0, 11))
             if response["ok"]:
                 return session._revision(response)
             time.sleep(.1)
@@ -58,7 +58,7 @@ def run(args):
         while True:
             current = revision()
             if previous is None or current != previous:
-                return call("wait", "--revision", current, "--timeout", "25000", expected_code=error)
+                return call('project', 'wait', "--revision", current, "--timeout", "25000", expected_code=error)
             require(time.monotonic() < deadline, "Source edit did not change revision")
             time.sleep(.1)
     def edit(path, text, error=0):
@@ -68,15 +68,15 @@ def run(args):
     def manifest():
         edit(config, json.dumps(metadata, ensure_ascii=False, indent=2))
     def view(view_id):
-        call("view", view_id)
+        call('review', 'view', view_id)
         settle()
         report = checks()
         require(report["view"] == view_id, "Checks returned a different named view")
         return report
     def snapshot():
-        return call("snapshot")["data"]
+        return call('project', 'inspect')["data"]
     def checks():
-        response = call("checks")
+        response = call('print', 'checks')
         report = response["data"]
         require(report["schemaVersion"] == 1 and isinstance(report["checks"], list), "Manufacturing report contract missing")
         for check in report["checks"]:
@@ -105,10 +105,10 @@ def run(args):
             edit(entry, baseline_design)
     def screenshot(label):
         path = folder / (label + ".png")
-        call("screenshot", str(path))
+        call('review', 'screenshot', str(path))
         require(path.read_bytes().startswith(b"\x89PNG"), "Screenshot missing")
     try:
-        opened = client.call("open", str(project), "--hidden", "--session", name)
+        opened = client.call('project', 'open', str(project), "--hidden", '--name', name)
         pids.extend(pid for pid, _ in session._pid_records(opened))
         require(pids, "Open did not report owned viewer PID")
         settle()
@@ -147,14 +147,14 @@ def run(args):
                 and quantities["panel"]["platePlacements"] == 2 and quantities["panel"]["placedInstances"] == 2,
                 "Distinct intentional copies or group aliases counted incorrectly")
         require(quantities["spacer"]["plates"] == [{"instanceId": "spacer-1", "view": "plate-b"}], "Inactive plate quantity omitted")
-        guarded = call("checks", "--expect-revision", "0" * 64, expected_code=7)
+        guarded = call('print', 'checks', "--expect-revision", "0" * 64, expected_code=7)
         require(not guarded["ok"], "Checks stale revision guard ignored")
         before = snapshot()
         checks()
         after = snapshot()
         require(before["selection"] == after["selection"] and before["camera"] == after["camera"]
                 and before["parts"] == after["parts"], "Reading checks mutated selection, visibility, exports or camera")
-        call("frame")
+        call('review', 'frame')
         camera_before_panel = snapshot()["camera"]
         screenshot("plate-good")
         overview_tests.selection.click(native, [242, 77])
@@ -177,12 +177,12 @@ def run(args):
         exclusions = pose("panel-a", [2, 2, 0])
         warning = check(exclusions, "plate-exclusions", "warning")
         require(warning["scope"] == "heuristic" and warning["evidence"]["possibleConflicts"] and warning["nextActions"], "Exclusion warning lacks useful evidence/actions")
-        require(call("state")["data"]["exportValid"] is True, "A manufacturing warning disabled routine export")
+        require(call('project', 'inspect')["data"]["exportValid"] is True, "A manufacturing warning disabled routine export")
         selection_before = snapshot()["selection"]
-        call("highlight", *warning["partIds"])
+        call('review', 'highlight', *warning["partIds"])
         require(snapshot()["selection"] == selection_before, "Warning highlight changed selection")
         screenshot("exclusion-warning-highlight")
-        call("highlight", "--clear")
+        call('review', 'highlight', "--clear")
         overview_tests.selection.click(native, [242, 77])
         overview_tests.wheel(native, -20)
         highlighted = False
@@ -252,12 +252,12 @@ def run(args):
         extreme = checks()
         require(extreme["current"] is True and extreme["profileStatus"] == "complete"
                 and extreme["bed"]["size"] == [1e100, 100, 100], "Finite extreme numeric profile metadata was discarded")
-        call("frame")
+        call('review', 'frame')
         camera = snapshot()["camera"]
         camera_values = [camera["fovy"], *camera["position"], *camera["target"], *camera["up"]]
         require(all(isinstance(value, (int, float)) and math.isfinite(value) for value in camera_values),
                 "Non-float-safe bed metadata produced an invalid camera")
-        require(call("state")["data"]["status"] == "ready", "Non-renderable bed metadata crashed scene review")
+        require(call('project', 'inspect')["data"]["status"] == "ready", "Non-renderable bed metadata crashed scene review")
         overview_tests.selection.click(native, [242, 77])
         overview_tests.wheel(native, 100)
         screenshot("overflow-bed-numeric-context")
@@ -309,18 +309,18 @@ def run(args):
                 and changed["basis"]["sourceRevision"] != source_basis["sourceRevision"], "Changed shared source retained old check basis")
         last_good_revision = revision()
         edit(source, "export const invalid = ;\n", error=5)
-        failed = call("state")["data"]
+        failed = call('project', 'inspect')["data"]
         require(failed["status"] == "failed" and failed["exportValid"] is False, "Failed reload left current export enabled")
         retained = checks()
         require(retained["current"] is False and retained["diagnostic"], "Failed desired source retained a current passing report")
-        call("checks", "--expect-revision", last_good_revision, expected_code=7)
+        call('print', 'checks', "--expect-revision", last_good_revision, expected_code=7)
         overview_tests.selection.click(native, [242, 77])
         overview_tests.wheel(native, 100)
         screenshot("failed-source")
         overview_tests.selection.click(native, [484, 40])
         edit(source, baseline_source)
         check(checks(), "plate-bounds", "passed")
-        require(call("state")["data"]["exportValid"] is True, "Recovery did not restore export")
+        require(call('project', 'inspect')["data"]["exportValid"] is True, "Recovery did not restore export")
         print("PASS manufacturing bounds/contact/overlap/allowances/quantities/profile/guards/source recovery", flush=True)
     finally:
         for pid in dict.fromkeys(pids):

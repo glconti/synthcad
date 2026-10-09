@@ -1,6 +1,6 @@
 # Manufacturing review
 
-`synthcad-cli checks --session NAME --json` reads the viewer's manufacturing report
+`synthcad-cli print checks --project NAME --json` reads the viewer's manufacturing report
 for its displayed view. The viewer evaluates checks against the same placed
 solids used for display and export. The report does not introduce a second
 editable geometry model, arrange parts automatically, or validate a slicer.

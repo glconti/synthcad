@@ -366,9 +366,9 @@ struct DocumentBuilder {
           StringField(item ? *item : empty, "reason"));
     }
     if (status == "invalid")
-      Add("Profile setup has errors. Ask your agent to run synthcad docs profiles.");
+      Add("Profile setup has errors. Ask your agent to run synthcad print profile --help.");
     else if (status != "complete")
-      Add("Profile setup is incomplete. Ask your agent to run synthcad docs profiles.");
+      Add("Profile setup is incomplete. Ask your agent to run synthcad print profile --help.");
     Add("Slicer preset verification: Unknown; a preset has not been verified.");
     if (Field(context, "profileRevision"))
       Add("Profile revision: " + ShortIdentifier(Field(context, "profileRevision")));
