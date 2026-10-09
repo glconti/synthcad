@@ -1,6 +1,6 @@
 # SynthCAD product requirements
 
-Status: Draft for review. Updated: 2026-10-08.
+Status: Draft for review. Updated: 2026-10-09.
 
 SynthCAD helps people design better printable objects with an external AI agent.
 The agent authors local model files; a shared CAD viewer reloads those files and
@@ -8,11 +8,15 @@ lets the person and agent inspect the same design. The finished deliverable is
 an STL or standard 3MF plate, with an explicit distinction
 between geometric checks, printing recommendations and physical evidence.
 
-This document defines v1. [BACKLOG.md](BACKLOG.md) breaks it into deliverable work.
+This document defines v1 and a separately prioritized modeling direction beyond
+v1. [BACKLOG.md](BACKLOG.md) breaks it into deliverable work.
 The [GitHub v1 milestone](https://github.com/glconti/synthcad/milestone/1) tracks
 the release stories and their live status; deferred ideas have no milestone.
 Requirements below describe intended behavior, not capabilities already shipped.
 [API.md](../../API.md) remains the contract for the implemented model API.
+The [modeling API roadmap](MODELING-API.md) and
+[SC29 epic](https://github.com/glconti/synthcad/issues/30) track the later
+requirements M01–M10. They are not additional v1 acceptance gates.
 
 ## User and problem
 
@@ -29,6 +33,12 @@ parts fit a print bed, can be assembled, or will carry a requested load.
 SynthCAD should make those relationships visible and inspectable while keeping
 ordinary file editing as the modeling workflow. Its primary value is better
 printable designs; reducing coordination overhead supports that outcome.
+
+As designs grow, agents also repeat profile construction, coordinate arithmetic
+and feature helpers. A successful evaluation does not show that a revision
+preserved wall thickness, mating alignment or clearance. The next modeling
+investment should make design intent explicit, reusable and verifiable so an
+agent can revise an object reliably and explain the resulting evidence.
 
 ## Product decisions
 
@@ -105,7 +115,7 @@ See [README.md](../../README.md), [viewer/main.cpp](../../viewer/main.cpp),
 [API.md](../../API.md) and the
 [existing design skill](../../.agents/skills/dingcad-design/SKILL.md).
 
-## Functional requirements
+## Functional requirements for v1
 
 ### R01 Discovery and guidance
 
@@ -318,7 +328,76 @@ Full structural simulation, certified strength and permanent topology identities
 across arbitrary edits are not promised. The product must explain the limits of
 its checks and preserve useful physical evidence when provided.
 
-## Acceptance and success
+## Modeling requirements beyond v1
+
+The current CLI and local-session work remains the active engineering focus.
+M01–M08 are P2: the next modeling investments after that work and the existing
+v1 commitments. M09–M10 are P3: later investigations requiring evidence and
+coordination before implementation. None has a release milestone or date.
+Priority and delivery dependencies are maintained in [MODELING-API.md](MODELING-API.md)
+and the linked GitHub issues; R01–R11 remain the v1 contract.
+
+### Intended modeling journey
+
+An agent defines parameters, profiles and named construction references, then
+uses reusable features to build source parts and attach physical instances.
+When the user asks to enlarge an enclosure, change its mounting pattern or
+rotate a component, the agent edits the relevant source definitions. Dependent
+features and assembly placements follow their declared relationships, while
+print layouts retain their independent placements. The agent inspects the
+resulting geometry, runs model-specific checks and reports measurements or
+actionable failures against the evaluated revision.
+
+### Product outcomes and traceability
+
+| ID | Requirement | Priority | Delivery issue |
+| --- | --- | --- | --- |
+| M01 | Provide a versioned, typed modeling contract with consistent units, defaults and actionable argument/operation diagnostics. JavaScript authors can validate usage before costly evaluation, and documentation examples match actual runtime behavior. | P2 | [SC30 / #32](https://github.com/glconti/synthcad/issues/32) |
+| M02 | Let agents construct and combine reusable 2D profiles, offset them and build on oriented workplanes. Common shapes and walls should not require repeated manual polygon or 3D hull construction; invalid, collapsed or split profiles have explicit outcomes. | P2 | [SC31 / #33](https://github.com/glconti/synthcad/issues/33) |
+| M03 | Let parts expose named origins and orientations for deterministic attachment of physical instances. Parameter changes preserve declared attachment relationships, with explicit missing/cyclic-reference failures and independent assembly/plate arrangements. | P2 | [SC32 / #34](https://github.com/glconti/synthcad/issues/34) |
+| M04 | Provide tested, composable holes, patterns and mechanical feature helpers that expose useful axes and mounting frames. Distinguish nominal hardware dimensions, radial/diametral fit allowance and printer compensation without inheriting hidden process defaults. | P2 | [SC33 / #36](https://github.com/glconti/synthcad/issues/36) |
+| M05 | Preserve opt-in named parameters and feature provenance so agents can identify controlling inputs, dependent features, construction references and source context. Authored feature identity remains separate from transient output faces and mesh indices. | P2 | [SC34 / #37](https://github.com/glconti/synthcad/issues/37) |
+| M06 | Let agents query geometry and author executable design checks for measured distances, interference, connectivity and other supported conditions. Results report measured evidence, affected references and ambiguity or unsupported cases using the existing evidence/revision conventions. | P2 | [SC35 / #38](https://github.com/glconti/synthcad/issues/38) |
+| M07 | Make geometric approximation quality explicit and reproducible, distinct from numerical tolerance and physical clearance. Checks and exports identify the evaluated geometry and effective quality; quality changes invalidate evidence when their geometry changes. | P2 | [SC36 / #35](https://github.com/glconti/synthcad/issues/35) |
+| M08 | Measure agent success on initial models and subsequent parameter changes with independent geometric expectations. Record requirement pass rate, repair effort and evaluation cost against a reproducible baseline before setting improvement targets. | P2 | [SC37 / #31](https://github.com/glconti/synthcad/issues/31) |
+| M09 | Establish which sweep, loft, fillet/chamfer and shell capabilities are justified by failed modeling tasks. Publish tested coverage, limitations and a scoped implementation decision before committing to broad operations or a different kernel. | P3 investigation | [SC38 / #39](https://github.com/glconti/synthcad/issues/39) |
+| M10 | Establish a feasible path to bounded, cancellable model evaluation with useful progress and recovery. Coordinate evaluator ownership with the CLI/session work; a request timeout must not be represented as cancellation of an ongoing native computation. | P3 investigation | [SC39 / #40](https://github.com/glconti/synthcad/issues/40) |
+
+### Compatibility and evidence boundaries
+
+- Ordinary source files remain authoritative. Preserve the low-level modeling
+  API and existing scene/shared-design contracts through compatible additions.
+- Extend the existing source-part, instance and view model. Named frames,
+  features and checks do not establish a second geometry source of truth.
+- A named construction reference may be stable while a Boolean splits or removes
+  output faces. Missing or ambiguous geometric correspondence must be reported;
+  arbitrary topology identities are not promised across edits.
+- General sketch/assembly constraint solvers, arbitrary constant-thickness
+  shelling and a kernel replacement are not prerequisites or committed features.
+  Mesh smoothing does not establish a specified-radius fillet, and subtracting
+  a scaled solid does not generally establish constant wall thickness.
+- Preserve the R07 distinction between measured geometry, heuristic indicators,
+  sliced evidence and physical results. No new API implies verified strength,
+  printer compensation or physical fit.
+
+### Modeling acceptance and success
+
+Start M08's baseline alongside M01's contract. Use public synthetic enclosure,
+rotated-mount, repeated-instance and curved-profile tasks. Revisions must include
+enlarging an enclosure while preserving wall thickness, changing mounting
+patterns while preserving mating alignment, rotating a component while retaining
+required clearance, and changing hardware dimensions consistently.
+
+Validate resulting geometry or resolved construction references, rather than
+only echoing authored parameters or accepting a plausible screenshot. Include
+boundary values and deliberately broken models that the checks detect.
+Distinguish deterministic parameter-sweep regression tests from repeated agent
+trials, recording agent/model version, guidance, runtime/build and quality
+settings for the latter. Set improvement targets after collecting the baseline.
+These results guide later priorities and M09's capability decisions; they do not
+add gates to the v1 release acceptance below.
+
+## Acceptance and success for v1
 
 Release acceptance uses public, non-personal fixtures: a dimensioned fitting,
 a multi-part assembled object and a curved decorative object. For each, an agent
@@ -342,15 +421,17 @@ Required evidence includes:
   orientation produce appropriately scoped results with actionable context.
 - A valid export with acknowledged warnings succeeds; empty, cancelled and
   invalid exports do not alter output files.
-- Tested Bambu projects open with expected names, transforms, plates and supported
-  settings. The user can review and slice them independently.
+- Tested standard 3MF exports open in the chosen slicer with the expected current
+  arrangement, object names, transforms and millimetre scale. The user selects
+  printer/material settings and reviews slicing independently; exact Bambu
+  presets and native multi-plate project interoperability remain deferred by R09.
 - Both the direct-export journey and optional sample/test journey work. No test
   record is fabricated or required just to proceed.
 - Windows and the declared Linux matrix pass packaging and regression checks;
   representative authored Italian names remain unchanged.
 
 During pilot sessions, record time to first valid model, context-copying steps,
-reload/selection misunderstandings, successful Bambu handoffs and avoidable
+reload/selection misunderstandings, successful slicer handoffs and avoidable
 reprints attributed to recorded constraints. Establish a baseline before setting
 numerical improvement targets. Do not add mandatory telemetry for these studies.
 
@@ -360,7 +441,7 @@ numerical improvement targets. Do not add mandatory telemetry for these studies.
 | --- | --- |
 | Project schema and dependency-aware revision identity | Shared session implementation |
 | Face/edge semantics and performance in the existing mesh pipeline | Full geometric guided picking |
-| Initial Bambu Studio version and supported profile matrix | 3MF compatibility commitment |
+| Target slicer/version for standard 3MF import evidence | v1 export acceptance; exact Bambu profile/native-project matrix remains deferred |
 | Linux support matrix and distribution formats | Cross-platform release candidate |
 | License and redistribution terms | Public packaged release |
 

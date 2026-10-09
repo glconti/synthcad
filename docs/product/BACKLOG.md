@@ -1,20 +1,24 @@
 # SynthCAD delivery backlog
 
-Status: Tracked in GitHub Issues. Updated: 2026-10-08.
+Status: Tracked in GitHub Issues. Updated: 2026-10-09.
 
-This backlog implements [the v1 PRD](PRD.md). The
+This backlog implements [the v1 PRD](PRD.md) and tracks later modeling API work. The
 [v1 release milestone](https://github.com/glconti/synthcad/milestone/1) contains
 the release stories below. SC15 is now deferred. The five delivery phases sequence that single release; they are
 not separate GitHub milestones. No release date is set.
 
 GitHub Issues is the source of truth for status, discussion and completion.
-This document retains the scope and delivery order. All 28 issues were open when
-created; existing partial functionality does not make a story complete. SC23–SC28
-are tracked as deferred ideas without a release milestone.
+This document retains the scope and delivery order. SC01–SC28 are the original
+release and deferred stories; existing partial functionality does not make a
+story complete. SC23–SC28 remain deferred ideas without a release milestone.
+SC29–SC39 form the [modeling API roadmap](MODELING-API.md), also outside v1.
 
 P0 establishes the shared review workflow. P1 completes the agreed printing and
 release requirements; it is still required for v1. Later items are outside v1.
-Dependencies name backlog IDs. PRD references use its R01–R11 requirement IDs.
+P2 identifies the next modeling investments after the current CLI/session and v1
+work; P3 identifies later investigations that need foundational evidence first.
+Neither adds a v1 requirement or release date. Dependencies name backlog IDs.
+PRD references use R01–R11 for v1 and M01–M10 for the modeling roadmap beyond v1.
 
 ## GitHub tracking
 
@@ -48,6 +52,17 @@ Dependencies name backlog IDs. PRD references use its R01–R11 requirement IDs.
 | SC26 | [#27 Agent-specific integrations and event wake-up](https://github.com/glconti/synthcad/issues/27) | Deferred |
 | SC27 | [#28 Direct slicer launch and printer handoff](https://github.com/glconti/synthcad/issues/28) | Deferred |
 | SC28 | [#29 Web workspace and multi-project library](https://github.com/glconti/synthcad/issues/29) | Deferred |
+| SC29 | [#30 Track the agentic modeling API roadmap](https://github.com/glconti/synthcad/issues/30) | Beyond v1 |
+| SC30 | [#32 Define a typed and versioned JavaScript modeling contract](https://github.com/glconti/synthcad/issues/32) | Beyond v1 |
+| SC31 | [#33 Add first-class 2D profiles, offsets and workplanes](https://github.com/glconti/synthcad/issues/33) | Beyond v1 |
+| SC32 | [#34 Add named reference frames and deterministic part attachments](https://github.com/glconti/synthcad/issues/34) | Beyond v1 |
+| SC33 | [#36 Add reusable holes, patterns and mechanical feature helpers](https://github.com/glconti/synthcad/issues/36) | Beyond v1 |
+| SC34 | [#37 Preserve named parameters, features and modeling provenance](https://github.com/glconti/synthcad/issues/37) | Beyond v1 |
+| SC35 | [#38 Add geometric queries and executable design checks](https://github.com/glconti/synthcad/issues/38) | Beyond v1 |
+| SC36 | [#35 Define consistent tessellation quality and approximation contracts](https://github.com/glconti/synthcad/issues/35) | Beyond v1 |
+| SC37 | [#31 Benchmark agent modeling and parameter-change reliability](https://github.com/glconti/synthcad/issues/31) | Beyond v1 |
+| SC38 | [#39 Evaluate sweeps, lofts, fillets and shelling against modeling tasks](https://github.com/glconti/synthcad/issues/39) | Beyond v1 |
+| SC39 | [#40 Assess bounded and cancellable model evaluation](https://github.com/glconti/synthcad/issues/40) | Beyond v1 |
 
 ## Existing capabilities to preserve
 
@@ -368,7 +383,7 @@ P1 · R01–R11 · Dependencies: SC09, SC14, SC17, SC18, SC21 · New
 
 - Use public fitting, assembled-object and curved-object fixtures for the PRD
   journeys, including CLI-only guidance discovery and optional iteration.
-- Record platform and Bambu version results, unresolved limitations and pilot
+- Record platform and target-slicer version results for standard 3MF, unresolved limitations and pilot
   measures: time to first valid model, context copying, misunderstandings,
   handoff success and avoidable reprints. Establish a baseline before targets.
 - Publish a quick start, architecture/contribution guide, supported versions and
@@ -386,6 +401,20 @@ P1 · R01–R11 · Dependencies: SC09, SC14, SC17, SC18, SC21 · New
 | SC26 | Agent-specific integrations and event wake-up | Keep the portable CLI contract sufficient for ordinary use |
 | SC27 | Direct slicer launch and printer handoff | Separate user intent and lifecycle from file export |
 | SC28 | Web workspace and multi-project library | Reassess demand and local/cloud boundaries after local v1 |
+
+## Modeling API roadmap beyond v1
+
+[SC29 / #30](https://github.com/glconti/synthcad/issues/30) tracks the ten
+modeling follow-ups SC30–SC39. The [modeling API roadmap](MODELING-API.md)
+records scope, priority rationale, dependencies and acceptance strategy.
+
+CLI and local-session stabilization remains the active engineering priority.
+The modeling track starts with SC30's typed contract and SC37's revision-task
+baseline, followed by profiles (SC31), attachment frames (SC32) and quality
+controls (SC36). Those enable reusable features (SC33), named provenance (SC34)
+and executable design checks (SC35). Advanced geometry (SC38) and bounded
+evaluation (SC39) are P3 investigations; SC39 requires coordination with the
+session/runtime work before implementation. No new story is in the v1 milestone.
 
 ## Recommended next implementation
 
