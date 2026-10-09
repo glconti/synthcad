@@ -96,6 +96,16 @@ target_link_libraries(dingcad_viewer
     synthcad_design_graph
 )
 
+option(SYNTHCAD_SINGLE_EXECUTABLE "Use the viewer as a standalone CLI and GUI executable" OFF)
+if(SYNTHCAD_SINGLE_EXECUTABLE)
+  target_compile_definitions(dingcad_viewer PRIVATE SYNTHCAD_SINGLE_EXECUTABLE)
+  if(WIN32)
+    # The vcpkg static raylib package does not carry its external GLFW link.
+    find_package(glfw3 CONFIG REQUIRED)
+    target_link_libraries(raylib INTERFACE glfw winmm)
+  endif()
+endif()
+
 # Must match the linked raylib build. The pinned Windows vcpkg dependency uses
 # custom frame control; system/default Linux raylib normally presents itself.
 if(WIN32)
@@ -240,7 +250,7 @@ else()
   target_compile_options(synthcad_export_service_tests PRIVATE -UNDEBUG)
 endif()
 
-if(WIN32)
+if(WIN32 AND NOT SYNTHCAD_SINGLE_EXECUTABLE)
   # Keep the viewer self-contained: Windows only probes the executable's
   # directory for dependent DLLs by default.
   set(dingcad_vcpkg_runtime_dir

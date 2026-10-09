@@ -783,8 +783,11 @@ struct PartModels {
 
 int main(int argc, char *argv[]) {
   auto utf8Args=synthcad::ProcessArguments(argc,argv);
+#ifdef SYNTHCAD_SINGLE_EXECUTABLE
+  if(utf8Args.size()==1)return synthcad::RunAgentCli({},utf8Args.front(),true);
+#endif
   if(synthcad::IsAgentCommand(utf8Args))return synthcad::RunAgentCli(
-    std::vector<std::string>(utf8Args.begin()+1,utf8Args.end()),utf8Args.front());
+    std::vector<std::string>(utf8Args.begin()+1,utf8Args.end()),utf8Args.front(),true);
   std::vector<char*> utf8Pointers;for(auto& arg:utf8Args)utf8Pointers.push_back(arg.data());
   argc=static_cast<int>(utf8Pointers.size());argv=utf8Pointers.data();
   std::string agentSession,agentProject;

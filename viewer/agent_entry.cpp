@@ -66,7 +66,7 @@ bool IsAgentCommand(const std::vector<std::string>& arguments){
   if(commands.count(arguments[1]))return true;
   return arguments[1].rfind("--",0)==0&&arguments[1]!="--render-scene"&&arguments[1]!="--profile-scene"&&arguments[1]!="--check-scene"&&arguments[1]!="--ui-preview"&&arguments[1]!="--agent-session";
 }
-int RunAgentCli(const std::vector<std::string>& arguments,const std::string& executable){
+int RunAgentCli(const std::vector<std::string>& arguments,const std::string& executable,bool hostsViewer){
   auto parsed=ParseCli(arguments);
   auto& options=parsed.options;
   if(!parsed){auto response=Error(options.command,"invalid_argument",parsed.error);std::cout<<FormatResponse(response,options.jsonOutput);return 2;}
@@ -90,6 +90,7 @@ int RunAgentCli(const std::vector<std::string>& arguments,const std::string& exe
 #else
         "dingcad_viewer";
 #endif
+      if(hostsViewer)viewer=std::filesystem::u8path(executable);
       if(const char* configured=std::getenv("SYNTHCAD_VIEWER"))viewer=std::filesystem::u8path(configured);
       response=OpenSession(project.path.u8string(),options.session,options.arguments.value("hidden",false),std::filesystem::absolute(viewer).u8string(),options.timeoutMs);
     }else{

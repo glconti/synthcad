@@ -29,6 +29,19 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release"
       }
+    },
+    {
+      "name": "windows-x64-portable-release",
+      "displayName": "Windows x64 standalone Release",
+      "inherits": "windows-x64-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "BUILD_SHARED_LIBS": "OFF",
+        "SYNTHCAD_SINGLE_EXECUTABLE": "ON",
+        "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreaded",
+        "VCPKG_TARGET_TRIPLET": "x64-windows-static-release",
+        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/cmake/triplets"
+      }
     }
   ],
   "buildPresets": [
@@ -41,6 +54,11 @@
       "name": "windows-x64-release",
       "configurePreset": "windows-x64-release",
       "targets": ["dingcad_viewer", "synthcad"]
+    },
+    {
+      "name": "windows-x64-portable-release",
+      "configurePreset": "windows-x64-portable-release",
+      "targets": ["dingcad_viewer"]
     }
   ]
 }
