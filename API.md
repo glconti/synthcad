@@ -25,6 +25,13 @@
 - slice{manifold, height?:number}
 - project{manifold}
 - levelSet{options:{sdf(point:[x,y,z])=>number, bounds:{min:[x,y,z], max:[x,y,z]}, edgeLength:number, level?:number, tolerance?:number}}
+
+  The SDF must return a finite number. Bounds must be finite and strictly ordered;
+  `edgeLength` must be positive and no larger than the smallest bounds extent.
+  Requests above 16 million estimated sampling cells are rejected; increase
+  `edgeLength` or reduce bounds. JavaScript callbacks run sequentially.
+  Callback exceptions preserve their message and stack in the load diagnostic.
+
 - loadMesh{path:string, forceCleanup?:bool}
 
   The viewer tracks the primary mesh file for reloads, revision guards, and export
@@ -94,7 +101,7 @@ rotate XYZ in degrees then translate in mm; a view override replaces the entire
 instance pose. They do not scale the source or move another view. Quantity is
 declared intent, not an instruction to generate copies or a plate check.
 
-Run `synthcad docs design` for the complete schema, limits, defaults and reference
+Run `synthcad-cli docs design` for the complete schema, limits, defaults and reference
 validation contract ([source](docs/design-graph.md)). All groups and views are
 validated, including unused ones; invalid references/cycles disable export and
 retain the previous valid view. A manifest maps named views to the shared entry:
@@ -171,7 +178,7 @@ printer/material presets. Choose those settings in the slicer. Switching format
 updates the filename extension; the destination must match the selected format.
 See [standard 3MF export](docs/three-mf-export.md).
 
-The `synthcad export` command uses the same viewer-owned export service. A dry
+The `synthcad-cli export` command uses the same viewer-owned export service. A dry
 run returns the included instances, source quantities, revision basis and
 cached checks without creating files. Actual exports require explicit warning
 and replacement acknowledgement when applicable. Committed files receive

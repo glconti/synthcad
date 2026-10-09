@@ -20,6 +20,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <sddl.h>
 #else
 #include <sys/stat.h>
 #include <unistd.h>
@@ -142,6 +143,95 @@ void CheckClosingEventDelivery(const fs::path& root) {
   const auto events=response.at("error").at("details").at("events");
   Require(events.size()==2&&events[0].at("type")=="pick-cancelled"&&events[1].at("type")=="viewer-closed", "shutdown lost final event payload");
 }
+#ifdef _WIN32
+// A real process DACL, not a simulated timeout: OpenProcess must fail while the
+// test retains the creation handle to safely terminate its suspended child.
+struct UninspectableProcess {
+  PROCESS_INFORMATION process{};
+  explicit UninspectableProcess(const std::string& executable) {
+    PSECURITY_DESCRIPTOR descriptor=nullptr;
+    Require(ConvertStringSecurityDescriptorToSecurityDescriptorW(
+        L"D:(D;;0x1000;;;WD)(A;;GA;;;OW)",SDDL_REVISION_1,&descriptor,nullptr)!=0,"process test DACL failed");
+    SECURITY_ATTRIBUTES attributes{sizeof(SECURITY_ATTRIBUTES),descriptor,FALSE};
+    STARTUPINFOW startup{};startup.cb=sizeof(startup);
+    const auto path=fs::u8path(executable).wstring();
+    const bool created=CreateProcessW(path.c_str(),nullptr,&attributes,nullptr,FALSE,
+        CREATE_SUSPENDED|CREATE_NO_WINDOW,nullptr,nullptr,&startup,&process)!=0;
+    LocalFree(descriptor);
+    Require(created,"cannot create test-owned suspended process");
+  }
+  ~UninspectableProcess(){
+    if(process.hProcess){TerminateProcess(process.hProcess,0);WaitForSingleObject(process.hProcess,3000);CloseHandle(process.hProcess);}
+    if(process.hThread)CloseHandle(process.hThread);
+  }
+};
+void CheckDeniedInspection(const fs::path& root,const std::string& executable) {
+  UninspectableProcess child(executable);
+  HANDLE query=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,FALSE,child.process.dwProcessId);
+  const auto code=GetLastError();if(query)CloseHandle(query);
+  Require(!query&&code==ERROR_ACCESS_DENIED,"test process inspection must really be denied");
+  const auto project=root/"access.js";std::ofstream(project)<<"// access fixture";
+  synthcad::SessionServer server;std::string error;
+  Require(server.Start("access",project.u8string(),[](const json& request){
+    return synthcad::Success(request.at("command"),{},"access");
+  },error),"access fixture server failed");
+  fs::path recordPath;json record;
+  for(const auto& file:fs::directory_iterator(root))if(file.path().extension()==".json"){
+    std::ifstream input(file.path());json candidate;input>>candidate;
+    if(candidate.value("session","")=="access"){recordPath=file.path();record=std::move(candidate);break;}
+  }
+  Require(!recordPath.empty(),"access fixture record absent");
+  // Retain the real nonce/endpoint but make process inspection unavailable.
+  record["pid"]=child.process.dwProcessId;
+  const std::string original=record.dump();std::ofstream(recordPath)<<original;
+  const auto listed=synthcad::ListSessions();
+  Require(listed.at("data").at("sessions").size()==1,"unknown process must remain discoverable");
+  const auto entry=listed.at("data").at("sessions")[0];
+  Require(entry.at("reachable")==true&&entry.at("processStatus")=="unknown","authenticated handshake should recover denied inspection");
+  Require(synthcad::Request("access",{{"command","state"}}).at("ok")==true,"denied process query must not block working RPC");
+  const auto reused=synthcad::OpenSession(project.u8string(),"access",true,"must-not-launch.exe",200);
+  Require(reused.at("ok")==true&&reused.at("data").at("reused")==true,"unknown responding process must be reused");
+  synthcad::SessionServer duplicate;
+  Require(!duplicate.Start("access",project.u8string(),[](const json&){return json{};},error),"unknown process must block duplicate registration");
+  server.Stop();
+  // The same private record now describes an inaccessible, unresponsive process.
+  std::ofstream(recordPath)<<original;
+  const auto unavailable=synthcad::ListSessions();
+  Require(unavailable.at("data").at("sessions").size()==1&&!unavailable.at("data").at("sessions")[0].at("reachable").get<bool>(),"unreachable unknown process must remain listed");
+  const auto refused=synthcad::OpenSession(project.u8string(),"access",true,"must-not-launch.exe",100);
+  Require(refused.at("error").at("code")=="io_error"&&refused.at("error").contains("details"),"unknown unreachable process needs diagnostics, not a new launch");
+  std::ifstream input(recordPath);std::string after((std::istreambuf_iterator<char>(input)),{});input.close();
+  Require(after==original,"permission failure modified the session record");
+  fs::remove(recordPath);
+  const auto launch=synthcad::OpenSession(project.u8string(),"slow",true,executable,20);
+  Require(launch.at("error").at("code")=="timeout","slow fixture must leave a pending launch");
+  const auto pid=launch.at("error").at("details").at("pid").get<DWORD>();
+  HANDLE launched=OpenProcess(PROCESS_TERMINATE|SYNCHRONIZE,FALSE,pid);
+  Require(launched!=nullptr,"cannot clean up slow test-owned launch");
+  TerminateProcess(launched,0);WaitForSingleObject(launched,3000);CloseHandle(launched);
+  fs::path pendingPath;
+  for(const auto& file:fs::directory_iterator(root))if(file.path().extension()==".launch")pendingPath=file.path();
+  Require(!pendingPath.empty(),"missing pending launch fixture");
+  const std::string pending=json({{"pid",child.process.dwProcessId},{"processIdentity","unknown-identity"},{"session","slow"}}).dump();
+  std::ofstream(pendingPath)<<pending;
+  const auto pendingResult=synthcad::OpenSession(project.u8string(),"slow",true,"must-not-launch.exe",30);
+  Require(pendingResult.at("error").at("code")=="io_error"&&pendingResult.at("error").at("details").at("pid")==child.process.dwProcessId,"uncertain pending launch was replaced");
+  std::ifstream pendingInput(pendingPath);std::string pendingAfter((std::istreambuf_iterator<char>(pendingInput)),{});pendingInput.close();
+  Require(pendingAfter==pending,"uncertain pending launch was modified");
+  fs::remove(pendingPath);
+}
+void CheckDeniedLock(const fs::path& root,const std::string& executable) {
+  const auto project=root/"lock.js";std::ofstream(project)<<"// lock fixture";
+  const auto path=root/"open.lock";std::ofstream(path).close();
+  Require(SetFileAttributesW(path.c_str(),FILE_ATTRIBUTE_READONLY)!=0,"cannot make test lock read-only");
+  const auto start=std::chrono::steady_clock::now();
+  const auto denied=synthcad::OpenSession(project.u8string(),"lock",true,executable,2000);
+  SetFileAttributesW(path.c_str(),FILE_ATTRIBUTE_NORMAL);
+  Require(denied.at("error").at("code")=="io_error","access denied must not masquerade as a lock timeout");
+  Require(std::chrono::steady_clock::now()-start<std::chrono::seconds(1),"lock access failure must return promptly");
+  Require(denied.at("error").at("message").get<std::string>().find("Windows error 5")!=std::string::npos,"lock error lost native diagnostic");
+}
+#endif
 void CheckLaunch(const fs::path& root, const std::string& executable) {
   fs::path project = root / fs::u8path(u8"Project \u00e8.js");
   std::ofstream(project) << "// test project";
@@ -162,8 +252,18 @@ void CheckLaunch(const fs::path& root, const std::string& executable) {
   for (int i = 0; i < 100 && !synthcad::ListSessions().at("data").at("sessions").empty(); ++i)
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
   Require(synthcad::ListSessions().at("data").at("sessions").empty(), "test child session did not close");
+  auto delayed=synthcad::OpenSession(project.u8string(),"slow",true,executable,20);
+  Require(delayed.at("error").at("code")=="timeout","delayed startup must preserve pending launch on timeout");
+  auto recovered=synthcad::OpenSession(project.u8string(),"slow",true,executable,5000);
+  Require(recovered.at("ok")==true&&recovered.at("data").at("reused")==true&&
+      recovered.at("data").at("pid")==delayed.at("error").at("details").at("pid"),"retry after slow startup created a duplicate");
+  Require(synthcad::Request("slow",{{"command","shutdown"}}).at("ok")==true,"slow child failed to stop");
+  for(int i=0;i<100&&!synthcad::ListSessions().at("data").at("sessions").empty();++i)
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  Require(synthcad::ListSessions().at("data").at("sessions").empty(),"slow child did not close");
 }
 int Child(const std::string& session, const std::string& project) {
+  if(session=="slow")std::this_thread::sleep_for(std::chrono::milliseconds(600));
   std::atomic<bool> stop{false};
   synthcad::SessionServer server;
   std::string error;
@@ -195,6 +295,10 @@ int Run(int argc, char** argv) {
     CheckTransport(root);
     CheckClosingEventDelivery(root);
     CheckLaunch(root, fs::absolute(fs::u8path(argv[0])).u8string());
+#ifdef _WIN32
+    CheckDeniedInspection(root,fs::absolute(fs::u8path(argv[0])).u8string());
+    CheckDeniedLock(root,fs::absolute(fs::u8path(argv[0])).u8string());
+#endif
     fs::remove_all(root);
     std::cout << "Agent transport tests passed\n";
     return 0;

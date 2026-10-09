@@ -1,3 +1,4 @@
+#include "model_worker.h"
 #include "raylib.h"
 #include "raymath.h"
 #include "rlgl.h"
@@ -60,6 +61,8 @@ extern "C" {
 #include "display_scale.h"
 
 namespace {
+using LoadResult=synthcad::ModelResult;
+double ElapsedMilliseconds(std::chrono::steady_clock::time_point start){return std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count();}
 const Color kBaseColor = {210, 210, 220, 255};
 
 using dingcad::kSceneScale;
@@ -275,14 +278,6 @@ void main(){
     finalColor = vec4(inked, col.a);
 }
 )glsl";
-
-struct ModuleLoaderData {
-  std::filesystem::path baseDir;
-  std::set<std::filesystem::path> dependencies;
-  synthcad::FileSnapshot files;
-};
-
-ModuleLoaderData g_module_loader_data;
 
 void DestroyModel(Model &model) {
   if (model.meshes != nullptr || model.materials != nullptr) {
@@ -540,208 +535,6 @@ std::optional<std::filesystem::path> FindDefaultScene() {
   return std::nullopt;
 }
 
-std::optional<std::string> ReadTextFile(const std::filesystem::path &path) {
-  return synthcad::ReadTrackedFile(path,g_module_loader_data.files);
-}
-
-char* FilesystemModuleNormalize(JSContext* ctx,const char* base,const char* name,void*){
-  try {
-    auto path=std::filesystem::u8path(name);
-    if(path.is_relative())path=std::filesystem::u8path(base).parent_path()/path;
-    const auto normalized=synthcad::CanonicalPath(path);
-    return js_strdup(ctx,normalized.c_str());
-  }catch(const std::exception& error){JS_ThrowReferenceError(ctx,"%s",error.what());return nullptr;}
-}
-
-JSModuleDef *FilesystemModuleLoader(JSContext *ctx, const char *module_name, void *opaque) {
-  auto *data = static_cast<ModuleLoaderData *>(opaque);
-  std::filesystem::path resolved=std::filesystem::u8path(module_name);
-  if (resolved.is_relative()) {
-    const std::filesystem::path base = data && !data->baseDir.empty()
-                                           ? data->baseDir
-                                           : std::filesystem::current_path();
-    resolved = base / resolved;
-  }
-  resolved = std::filesystem::absolute(resolved).lexically_normal();
-
-  if (data) {
-    data->dependencies.insert(resolved);
-  }
-
-  auto source = ReadTextFile(resolved);
-  if (!source) {
-    JS_ThrowReferenceError(ctx, "Unable to load module '%s'", resolved.u8string().c_str());
-    return nullptr;
-  }
-
-  const std::string moduleName = resolved.u8string();
-  JSValue funcVal = JS_Eval(ctx, source->c_str(), source->size(), moduleName.c_str(),
-                            JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY);
-  if (JS_IsException(funcVal)) {
-    return nullptr;
-  }
-
-  auto *module = static_cast<JSModuleDef *>(JS_VALUE_GET_PTR(funcVal));
-  JS_FreeValue(ctx, funcVal);
-  return module;
-}
-
-double ElapsedMilliseconds(std::chrono::steady_clock::time_point start) {
-  return std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count();
-}
-
-struct LoadResult {
-  bool success = false;
-  double loadMilliseconds=0, evaluationMilliseconds=0;
-  std::shared_ptr<manifold::Manifold> manifold;
-  std::string message;
-  std::vector<std::filesystem::path> dependencies;
-  std::vector<dingcad::Dimension> dimensions;
-  dingcad::Appearance appearance;
-  nlohmann::json design;
-  synthcad::FileSnapshot files;
-};
-
-LoadResult LoadSceneFromFile(JSRuntime *runtime, const std::filesystem::path &path,
-                             const std::string& requestedView = "") {
-  LoadResult result;
-  const auto loadStarted=std::chrono::steady_clock::now();
-  const auto absolutePath = std::filesystem::absolute(path);
-  g_module_loader_data.baseDir = absolutePath.parent_path();
-  g_module_loader_data.dependencies.clear();
-  g_module_loader_data.files.clear();
-  g_module_loader_data.dependencies.insert(absolutePath);
-  auto sourceOpt = ReadTextFile(absolutePath);
-  if (!sourceOpt) {
-    result.message = "Unable to read scene file: " + absolutePath.u8string();
-    result.dependencies.assign(g_module_loader_data.dependencies.begin(),
-                               g_module_loader_data.dependencies.end());
-    result.files=g_module_loader_data.files;
-    return result;
-  }
-  JSContext *ctx = JS_NewContext(runtime);
-  RegisterBindings(ctx,ReadTextFile);
-
-  auto captureException = [&]() {
-    JSValue exc = JS_GetException(ctx);
-    JSValue stack = JS_GetPropertyStr(ctx, exc, "stack");
-    const char *exceptionStr=JS_ToCString(ctx,exc);
-    const char *stackStr=JS_IsUndefined(stack)?nullptr:JS_ToCString(ctx,stack);
-    result.message=exceptionStr?exceptionStr:"JavaScript error";
-    if(stackStr)result.message+=std::string("\n")+stackStr;
-    JS_FreeCString(ctx,exceptionStr);
-    JS_FreeCString(ctx, stackStr);
-    JS_FreeValue(ctx, stack);
-    JS_FreeValue(ctx, exc);
-  };
-  auto assignDependencies = [&]() {
-    result.dependencies.assign(g_module_loader_data.dependencies.begin(),
-                               g_module_loader_data.dependencies.end());
-    result.files=g_module_loader_data.files;
-  };
-
-  JSValue moduleFunc = JS_Eval(ctx, sourceOpt->c_str(), sourceOpt->size(), absolutePath.u8string().c_str(),
-                               JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY);
-  if (JS_IsException(moduleFunc)) {
-    captureException();
-    assignDependencies();
-    JS_FreeContext(ctx);
-    return result;
-  }
-
-  if (JS_ResolveModule(ctx, moduleFunc) < 0) {
-    captureException();
-    JS_FreeValue(ctx, moduleFunc);
-    assignDependencies();
-    JS_FreeContext(ctx);
-    return result;
-  }
-
-  auto *module = static_cast<JSModuleDef *>(JS_VALUE_GET_PTR(moduleFunc));
-  const auto evaluationStarted=std::chrono::steady_clock::now();
-  JSValue evalResult = JS_EvalFunction(ctx, moduleFunc);
-  result.evaluationMilliseconds=ElapsedMilliseconds(evaluationStarted);
-  if (JS_IsException(evalResult)) {
-    captureException();
-    assignDependencies();
-    JS_FreeContext(ctx);
-    return result;
-  }
-  // QuickJS module evaluation returns a promise, including synchronous throws.
-  // Preserve its rejection before touching uninitialized namespace exports.
-  if(JS_PromiseState(ctx,evalResult)==JS_PROMISE_REJECTED){
-    JS_Throw(ctx,JS_PromiseResult(ctx,evalResult));
-    captureException();assignDependencies();
-    JS_FreeValue(ctx,evalResult);JS_FreeContext(ctx);return result;
-  }
-  JS_FreeValue(ctx, evalResult);
-
-  JSValue moduleNamespace = JS_GetModuleNamespace(ctx, module);
-  if (JS_IsException(moduleNamespace)) {
-    captureException();
-    assignDependencies();
-    JS_FreeContext(ctx);
-    return result;
-  }
-
-  auto design = dingcad::ReadDesignGraph(ctx, moduleNamespace, requestedView);
-  if (!design.diagnostic.empty()) {
-    result.message = design.diagnostic;
-    JS_FreeValue(ctx, moduleNamespace);assignDependencies();JS_FreeContext(ctx);
-    return result;
-  }
-  JSValue sceneVal = design.specified ? JS_UNDEFINED : JS_GetPropertyStr(ctx, moduleNamespace, "scene");
-  if (JS_IsException(sceneVal)) {
-    JS_FreeValue(ctx, moduleNamespace);
-    captureException();
-    assignDependencies();
-    JS_FreeContext(ctx);
-    return result;
-  }
-  auto annotations = dingcad::ReadDimensions(ctx, moduleNamespace);
-  result.appearance = design.specified ? std::move(design.appearance) : dingcad::ReadAppearance(ctx, moduleNamespace);
-  if (design.specified) result.design = std::move(design.metadata);
-  JS_FreeValue(ctx, moduleNamespace);
-
-  if(!result.appearance.diagnostic.empty()){
-    result.message=result.appearance.diagnostic;
-    JS_FreeValue(ctx,sceneVal);JS_FreeContext(ctx);assignDependencies();return result;
-  }
-
-  if (!design.specified && JS_IsUndefined(sceneVal)) {
-    JS_FreeValue(ctx, sceneVal);
-    JS_FreeContext(ctx);
-    result.message = "Scene module must export 'scene'";
-    assignDependencies();
-    return result;
-  }
-
-  auto sceneHandle = design.specified ? design.scene : GetManifoldHandle(ctx, sceneVal);
-  if (!sceneHandle) {
-    JS_FreeValue(ctx, sceneVal);
-    JS_FreeContext(ctx);
-    result.message = "Exported 'scene' is not a manifold";
-    assignDependencies();
-    return result;
-  }
-
-  result.manifold = sceneHandle;
-  result.success = true;
-  result.message = "Loaded " + absolutePath.u8string();
-  result.dimensions = std::move(annotations.entries);
-  for (const auto &diagnostic : annotations.diagnostics) {
-    TraceLog(LOG_WARNING, "%s", diagnostic.c_str());
-  }
-  if (!annotations.diagnostics.empty()) {
-    result.message += " (" + std::to_string(annotations.diagnostics.size()) + " dimension warning(s))";
-  }
-  assignDependencies();
-  JS_FreeValue(ctx, sceneVal);
-  JS_FreeContext(ctx);
-  result.loadMilliseconds=ElapsedMilliseconds(loadStarted);
-  return result;
-}
-
 std::vector<dingcad::DisplayPart> SceneParts(const std::shared_ptr<manifold::Manifold> &scene,
                                            const dingcad::Appearance &appearance){
   if(appearance.specified)return appearance.parts;
@@ -751,10 +544,10 @@ struct PartModels {
   std::vector<Model> models;
   std::vector<BoundingBox> bounds;
   void Clear(){for(auto &m:models)DestroyModel(m);models.clear();bounds.clear();}
-  void Reload(const dingcad::PartTree &tree){
+  void Reload(const dingcad::PartTree &tree,const std::vector<manifold::MeshGL>* meshes=nullptr){
     const auto started=std::chrono::steady_clock::now();
     Clear();for(const auto &part:tree.parts){
-      models.push_back(CreateRaylibModelFrom(dingcad::DisplayMesh({part}),true,!kUsePostProcessing));
+      models.push_back(CreateRaylibModelFrom(meshes?meshes->at(models.size()):dingcad::DisplayMesh({part}),true,!kUsePostProcessing));
       bounds.push_back(GetModelBoundingBox(models.back()));
     }
     TraceLog(LOG_INFO,"Display mesh conversion and GPU upload: %.1f ms",ElapsedMilliseconds(started));
@@ -783,18 +576,27 @@ struct PartModels {
 
 int main(int argc, char *argv[]) {
   auto utf8Args=synthcad::ProcessArguments(argc,argv);
+  if(utf8Args.size()==3&&utf8Args[1]=="--model-worker")return synthcad::RunModelWorker(std::filesystem::u8path(utf8Args[2]));
 #ifdef SYNTHCAD_SINGLE_EXECUTABLE
   if(utf8Args.size()==1)return synthcad::RunAgentCli({},utf8Args.front(),true);
+  // Positional project paths use the same persistent session as `open`.
+  if(!synthcad::IsAgentCommand(utf8Args) && !utf8Args[1].empty() && utf8Args[1][0]!='-') {
+    auto arguments=std::vector<std::string>(utf8Args.begin()+1,utf8Args.end());
+    arguments.insert(arguments.begin(),"open");
+    return synthcad::RunAgentCli(arguments,utf8Args.front(),true);
+  }
 #endif
   if(synthcad::IsAgentCommand(utf8Args))return synthcad::RunAgentCli(
     std::vector<std::string>(utf8Args.begin()+1,utf8Args.end()),utf8Args.front(),true);
+  int initialEvaluationTimeoutMs=120000;
   std::vector<char*> utf8Pointers;for(auto& arg:utf8Args)utf8Pointers.push_back(arg.data());
   argc=static_cast<int>(utf8Pointers.size());argv=utf8Pointers.data();
   std::string agentSession,agentProject;
   bool agentHidden=false;
   if(argc>1&&std::string(argv[1])=="--agent-session"){
     for(int i=1;i<argc;++i){const std::string flag=argv[i];
-      if(flag=="--agent-session"&&i+1<argc)agentSession=argv[++i];
+      if(flag=="--agent-evaluation-timeout"&&i+1<argc){initialEvaluationTimeoutMs=std::stoi(argv[++i]);}
+      else if(flag=="--agent-session"&&i+1<argc)agentSession=argv[++i];
       else if(flag=="--agent-project"&&i+1<argc)agentProject=argv[++i];
       else if(flag=="--agent-hidden")agentHidden=true;
       else {std::cerr<<"Invalid agent viewer option\n";return 2;}
@@ -821,10 +623,9 @@ int main(int argc, char *argv[]) {
   // Deterministic preview using the same mesh colors, creases and default
   // material as the interactive Windows view. Never exports or changes solids.
   if (argc==4 && std::string(argv[1])=="--render-scene") {
-    JSRuntime *runtime=JS_NewRuntime();EnsureManifoldClass(runtime);
-    JS_SetModuleLoaderFunc(runtime,FilesystemModuleNormalize,FilesystemModuleLoader,&g_module_loader_data);
-    auto load=LoadSceneFromFile(runtime,argv[2]);
-    if (!load.success) {std::cerr<<load.message<<'\n';JS_FreeRuntime(runtime);return 1;}
+
+    auto load=synthcad::CheckModel(utf8Args.front(),std::filesystem::u8path(utf8Args[2]));
+    if (!load.success) {std::cerr<<load.message<<'\n';return 1;}
     SetConfigFlags(FLAG_WINDOW_HIDDEN|FLAG_MSAA_4X_HINT);InitWindow(1600,1000,"dingcad preview");
     auto mesh=dingcad::DisplayMesh(!load.appearance.specified?
       std::vector<dingcad::DisplayPart>{{load.manifold,kBaseColor}}:load.appearance.parts);
@@ -840,17 +641,16 @@ int main(int argc, char *argv[]) {
       if(frame==2){Image preview=LoadImageFromScreen();saved=ExportImage(preview,argv[3]);UnloadImage(preview);}
       EndDrawing();
     }
-    DestroyModel(model);CloseWindow();load.appearance.parts.clear();load.manifold.reset();JS_FreeRuntime(runtime);
+    DestroyModel(model);CloseWindow();load.appearance.parts.clear();load.manifold.reset();
     return saved?0:1;
   }
   // Separate eager model evaluation from deferred tessellation. This headless
   // diagnostic never writes geometry and uses the same parts as the viewer.
   if(argc==3&&std::string(argv[1])=="--profile-scene"){
     const auto started=std::chrono::steady_clock::now();
-    JSRuntime *runtime=JS_NewRuntime();EnsureManifoldClass(runtime);
-    JS_SetModuleLoaderFunc(runtime,FilesystemModuleNormalize,FilesystemModuleLoader,&g_module_loader_data);
-    auto load=LoadSceneFromFile(runtime,argv[2]);
-    if(!load.success){std::cerr<<load.message<<'\n';JS_FreeRuntime(runtime);return 1;}
+
+    auto load=synthcad::CheckModel(utf8Args.front(),std::filesystem::u8path(utf8Args[2]));
+    if(!load.success){std::cerr<<load.message<<'\n';return 1;}
     const auto meshStarted=std::chrono::steady_clock::now();
     size_t triangles=0;
     const auto parts=SceneParts(load.manifold,load.appearance);
@@ -861,16 +661,15 @@ int main(int argc, char *argv[]) {
              <<"Display mesh conversion (ms): "<<meshMilliseconds<<'\n'
              <<"Total before GPU (ms): "<<ElapsedMilliseconds(started)<<'\n'
              <<"Parts: "<<parts.size()<<", triangles: "<<triangles<<'\n';
-    JS_FreeRuntime(runtime);return 0;
+    return 0;
   }
   // Validate scene code and annotations without opening a window, useful for
   // agents and automated checks before replacing the live scene.
   if (argc == 3 && std::string(argv[1]) == "--check-scene") {
-    JSRuntime *runtime = JS_NewRuntime();
-    EnsureManifoldClass(runtime);
-    JS_SetModuleLoaderFunc(runtime, FilesystemModuleNormalize, FilesystemModuleLoader, &g_module_loader_data);
-    auto load = LoadSceneFromFile(runtime, argv[2]);
+
+    auto load = synthcad::CheckModel(utf8Args.front(),std::filesystem::u8path(utf8Args[2]));
     std::cout << load.message << '\n';
+    if(!load.success&&!load.failure.is_null())std::cerr<<load.failure.dump(2)<<'\n';
     if (load.success) {
       const auto bounds = load.manifold->BoundingBox();
       std::cout << "Bounds (mm): " << bounds.Size().x << " x " << bounds.Size().y << " x " << bounds.Size().z << '\n';
@@ -878,7 +677,7 @@ int main(int argc, char *argv[]) {
       std::cout << "Colored display parts: " << load.appearance.parts.size() << '\n';
     }
     load.manifold.reset();
-    JS_FreeRuntime(runtime);
+
     return load.success ? 0 : 1;
   }
   // Keep event polling nonblocking while minimized so live reload still runs.
@@ -938,9 +737,10 @@ int main(int argc, char *argv[]) {
                           camera.position.z - camera.target.z);
   float orbitPitch = asinf((camera.position.y - camera.target.y) / orbitDistance);
 
-  JSRuntime *runtime = JS_NewRuntime();
-  EnsureManifoldClass(runtime);
-  JS_SetModuleLoaderFunc(runtime, FilesystemModuleNormalize, FilesystemModuleLoader, &g_module_loader_data);
+  synthcad::ModelWorker modelWorker(utf8Args.front());
+  int evaluationTimeoutMs=initialEvaluationTimeoutMs;
+  nlohmann::json loadFailure=nullptr,loadProgress=nlohmann::json::object();
+  std::vector<std::shared_ptr<synthcad::AgentAction>> pendingViews;
 
   std::shared_ptr<manifold::Manifold> scene = nullptr;
   std::vector<dingcad::Dimension> dimensions;
@@ -1028,6 +828,9 @@ int main(int argc, char *argv[]) {
       load.success=false;load.message="Source changed during evaluation; waiting for a stable revision.";loadStatus="loading";
     }else loadStatus=load.success?"ready":"failed";
     loadDiagnostic=load.success?"":load.message;
+    loadFailure=load.success?nlohmann::json(nullptr):load.failure;
+    if(!load.success&&loadFailure.is_null())loadFailure={{"category","model_error"},{"stage","load"},{"message",load.message},{"details",load.message}};
+    if(!loadFailure.is_null()){loadFailure["attemptedRevision"]=attemptedRevision;loadFailure["displayedRevision"]=displayedRevision;}
     // Preserve old dependency keys after failure without recapturing consumed
     // file digests. Newly edited bytes must still trigger another attempt.
     if(load.success)watchedFiles=attemptedFiles;
@@ -1048,15 +851,7 @@ int main(int argc, char *argv[]) {
       const auto profile=synthcad::PrinterProfileContext(metadata);
       const auto basis=nlohmann::json{{"view",activeView},{"modelRevision",modelRevision},
         {"sourceRevision",attemptedRevision},{"profileRevision",profile.value("profileRevision",nlohmann::json(nullptr))}};
-      nlohmann::json nextManufacturing;
-      try {
-        nextManufacturing=dingcad::ManufacturingChecks(SceneParts(load.manifold,load.appearance),load.design,profile,metadata,basis);
-      }catch(const std::exception& error){
-        nextManufacturing={{"view",activeView},{"basis",basis},{"checks",nlohmann::json::array({
-          {{"id","engine-unavailable"},{"name","Manufacturing checks"},{"result","not-checked"},{"scope","geometry"},
-           {"partIds",nlohmann::json::array()},{"basis",basis},{"method","engine failure"},{"evidence",{{"diagnostic",error.what()}}},
-           {"nextActions",{"Correct the diagnostic and reload before relying on these checks."}}}})}};
-      }
+      auto nextManufacturing=load.checks;
       // Intersection checks can take time. Never acknowledge bytes replaced
       // while checks were running as the currently displayed revision.
       if(!synthcad::MatchesDisk(attemptedFiles)){
@@ -1082,20 +877,18 @@ int main(int argc, char *argv[]) {
       agent->Publish({{"status","loading"},{"view",activeView},{"projectPath",project->path.u8string()},
         {"displayedRevision",""},{"attemptedRevision",""},{"exportValid",false},{"selection",nullptr}},initial);
     }
-    auto load = LoadSceneFromFile(runtime, scriptPath, project&&!project->standalone?activeView:"");
-    recordLoad(load);
-    if (load.success) {
-      scene = load.manifold;
-      exportValid=true;
-      dimensions = std::move(load.dimensions);
-      appearance = std::move(load.appearance);
-      reportStatus(load.message);
-      TraceLog(LOG_INFO,"Scene load: %.1f ms (model evaluation %.1f ms)",load.loadMilliseconds,load.evaluationMilliseconds);
-    } else {
-      workspace.Failed(load.message);
-      reportStatus(load.message);
+    watchedFiles=synthcad::CaptureFiles({scriptPath});
+    if(project)watchedFiles.insert(project->files.begin(),project->files.end());
+    if(uiPreview){
+      auto load=synthcad::CheckModel(utf8Args.front(),scriptPath);recordLoad(load);
+      if(load.success){scene=load.manifold;exportValid=true;dimensions=std::move(load.dimensions);appearance=std::move(load.appearance);reportStatus(load.message);}
+      else {workspace.Failed(load.message);reportStatus(load.message);}
+    }else{
+      try{modelWorker.Start(scriptPath,project&&!project->standalone?activeView:"",project,evaluationTimeoutMs);workspace.loading=true;}
+      catch(const std::exception& e){LoadResult load;load.files=watchedFiles;load.message=e.what();recordLoad(load);workspace.Failed(load.message);}
     }
   }
+
   if (!scene) {
     manifold::Manifold cube = manifold::Manifold::Cube({2.0, 2.0, 2.0}, true);
     manifold::Manifold sphere = manifold::Manifold::Sphere(1.2, 0);
@@ -1253,7 +1046,7 @@ int main(int argc, char *argv[]) {
     refreshOverview();
     refreshExportHistory();
     projectOverview["activeView"]=activeView;projectOverview["displayedView"]=displayedView;
-    projectOverview["geometryStatus"]=loadStatus;projectOverview["geometryDiagnostic"]=loadDiagnostic;
+    projectOverview["loadFailure"]=loadFailure;projectOverview["loadProgress"]=loadProgress;projectOverview["geometryStatus"]=loadStatus;projectOverview["geometryDiagnostic"]=loadDiagnostic;
     manufacturing["current"]=loadStatus=="ready"&&projectOverview.value("metadataCurrent",true)&&activeView==displayedView;
     manufacturing["diagnostic"]=manufacturing.value("current",false)?"":"Retained checks are not current; correct the source and reload.";
     projectOverview["generatedChecks"]=manufacturing.value("checks",nlohmann::json::array());
@@ -1274,7 +1067,7 @@ int main(int argc, char *argv[]) {
     snapshot["overview"]=projectOverview;
     snapshot["manufacturing"]=manufacturing;
     snapshot["exportHistory"]=exportHistory;
-    snapshot["diagnostic"]=loadDiagnostic;snapshot["view"]=activeView;
+    snapshot["diagnostic"]=loadDiagnostic;snapshot["loadFailure"]=loadFailure;snapshot["loadProgress"]=loadProgress;snapshot["evaluationTimeoutMs"]=evaluationTimeoutMs;snapshot["view"]=activeView;
     snapshot["projectPath"]=project?project->path.u8string():scriptPath.u8string();
     snapshot["views"]=nlohmann::json::object();
     if(project)for(const auto& view:project->views)snapshot["views"][view.first]=view.second.u8string();
@@ -1307,11 +1100,12 @@ int main(int argc, char *argv[]) {
 
   if (outlineShader.id == 0 || toonShader.id == 0 || normalDepthShader.id == 0 || edgeShader.id == 0) {
     TraceLog(LOG_ERROR, "Failed to load one or more shaders.");
-    partModels.Clear();
+    if(modelWorker.Running())modelWorker.Cancel();
+  partModels.Clear();
     if (brandingFontCustom) {
       UnloadFont(brandingFont);
     }
-    JS_FreeRuntime(runtime);
+
     dingcad::UnloadApplicationIcons();
     CloseWindow();
     return 1;
@@ -1441,43 +1235,65 @@ int main(int argc, char *argv[]) {
     const auto input=dingcad::LogicalInput(dingcad::ReadPanelInput(),uiScale);
 
     bool exportReviewInvalidated=false;
+    auto finishLoad = [&](LoadResult load) {
+      const bool firstModel=displayedRevision.empty();
+      if(load.success){
+        try{
+          if(!synthcad::MatchesDisk(load.files))throw std::runtime_error("Source changed during evaluation; waiting for a stable revision.");
+          dingcad::PartTree candidate;candidate.state=tree.state;candidate.Reload(SceneParts(load.manifold,load.appearance));
+          PartModels candidateModels;
+          try{candidateModels.Reload(candidate,&load.displayMeshes);}catch(...){candidateModels.Clear();throw;}
+          recordLoad(load);
+          if(load.success){
+            scene=load.manifold;tree=std::move(candidate);partModels.Clear();partModels=std::move(candidateModels);
+            clearGeometry();guidedCandidate=nullptr;picker.Reload(tree,displayedRevision);updateBounds();if(firstModel)frameParts(false);
+            liveSceneKey=scriptPath.u8string()+"\nview:"+activeView;
+            dimensions=std::move(load.dimensions);exportValid=true;workspace.Loaded();
+            panel.scenePath=scriptPath.u8string();panel.sceneName=scriptPath.filename().u8string();
+            SetWindowTitle((std::string("SynthCAD \xE2\x80\x94 ")+panel.sceneName).c_str());
+            defaultExportPath=dingcad::SuggestedExportPath(GetHomeDirectory().value_or(std::filesystem::current_path()),scriptPath).u8string();
+            reportStatus(load.message);
+          }else candidateModels.Clear();
+        }catch(const std::exception& e){load.success=false;load.message=e.what();load.failure={{"category","preparation_error"},{"stage","prepare"},{"message",load.message},{"details",load.message}};}
+      }
+      if(!load.success){recordLoad(load);exportValid=false;workspace.Failed(load.message);reportStatus(load.message+" | export disabled until corrected");}
+      workspace.loading=false;workspace.retained=!displayedRevision.empty();
+      if(!loadFailure.is_null())workspace.loadError=loadDiagnostic+"\n\n"+loadFailure.dump(2);
+      publishAgent();
+      for(auto& action:pendingViews){
+        const auto name=action->request.at("arguments").at("name").get<std::string>();
+        if(name!=activeView)action->result.set_value(synthcad::Error("view","superseded","The active view changed",{},agentSession,displayedRevision));
+        else if(loadStatus=="ready")action->result.set_value(synthcad::Success("view",{{"view",activeView}},agentSession,displayedRevision));
+        else action->result.set_value(synthcad::Error("view","load_failed",loadDiagnostic,loadFailure,agentSession,displayedRevision));
+      }
+      pendingViews.clear();
+    };
     auto reloadScene = [&](bool allowDefaultFallback=true) {
-      // A click on an older rendered review must never approve new geometry.
-      exportReviewInvalidated|=exportDialog.open;
-      exportDialog.open=false;exportDialog.overwrite=false;
-      loadStatus="loading";exportValid=false;publishAgent();
-      LoadResult load;
+      exportReviewInvalidated|=exportDialog.open;exportDialog.open=false;exportDialog.overwrite=false;
+      if(modelWorker.Running())modelWorker.Cancel("superseded");
+      loadStatus="loading";loadDiagnostic.clear();loadFailure=nullptr;exportValid=false;
+      workspace.Loaded();workspace.loading=true;workspace.retained=!displayedRevision.empty();
       try {
         if(project){auto next=synthcad::LoadProject(project->path);
           if(allowDefaultFallback&&!next.views.count(activeView))activeView=next.defaultView;
           auto nextPath=synthcad::ResolveView(next,activeView);project=std::move(next);scriptPath=nextPath;}
-        load=LoadSceneFromFile(runtime,scriptPath,project&&!project->standalone?activeView:"");
-      }catch(const std::exception& error){load.message=error.what();
-        if(project)synthcad::ReadTrackedFile(project->path,load.files);
-      }
-      recordLoad(load);
-      if (load.success) {
-        sessions[liveSceneKey]=tree.state;
-        const auto key=scriptPath.u8string()+"\nview:"+activeView;
-        tree.state=sessions.count(key)?sessions.at(key):dingcad::TreeSession{};
-        scene = load.manifold;
-        tree.Reload(SceneParts(scene,load.appearance));
-        clearGeometry();guidedCandidate=nullptr;picker.Reload(tree,displayedRevision);
-        partModels.Reload(tree);updateBounds();liveSceneKey=key;
-        exportValid=true;exportDialog.overwrite=false;workspace.Loaded();
-        dimensions = std::move(load.dimensions);
-        agentHighlights.erase(std::remove_if(agentHighlights.begin(),agentHighlights.end(),[&](const auto& id){
-          return std::none_of(tree.parts.begin(),tree.parts.end(),[&](const auto& part){return part.id==id;});}),agentHighlights.end());
-        panel.scenePath=scriptPath.u8string();panel.sceneName=scriptPath.filename().u8string();
-        SetWindowTitle((std::string("SynthCAD \xE2\x80\x94 ")+panel.sceneName).c_str());
-        defaultExportPath=dingcad::SuggestedExportPath(GetHomeDirectory().value_or(std::filesystem::current_path()),scriptPath).u8string();
-        reportStatus(load.message);
-      } else {
-        exportValid=false;exportDialog.overwrite=false;workspace.Failed(load.message);
-        reportStatus(load.message+" | export disabled until corrected");
-      }
+        watchedFiles=synthcad::RecoverDependencies(watchedFiles,synthcad::CaptureFiles({scriptPath}));
+        if(project)for(auto& f:project->files)watchedFiles[f.first]=f.second;
+        attemptedFiles=watchedFiles;attemptedRevision=synthcad::Revision(attemptedFiles);
+        modelWorker.Start(scriptPath,project&&!project->standalone?activeView:"",project,evaluationTimeoutMs);
+      }catch(const std::exception& e){LoadResult load;load.message=e.what();load.files=synthcad::RecoverDependencies(watchedFiles,synthcad::CaptureFiles({scriptPath,project?project->path:scriptPath}));finishLoad(std::move(load));}
       publishAgent();
     };
+    if(modelWorker.Running()){
+      auto progress=modelWorker.Progress();
+      if(progress!=loadProgress){loadProgress=progress;
+        if(progress.contains("files"))for(const auto& f:progress["files"].items())watchedFiles[f.key()]=f.value().get<std::string>();
+        attemptedFiles=watchedFiles;attemptedRevision=synthcad::Revision(attemptedFiles);publishAgent();}
+      if(auto result=modelWorker.Poll())finishLoad(std::move(*result));
+    }
+    for(auto it=pendingViews.begin();it!=pendingViews.end();){
+      if(frameStarted>=(*it)->deadline){(*it)->result.set_value(synthcad::Error("view","timeout","View is still loading; inspect state or wait for its revision",{},agentSession,displayedRevision));it=pendingViews.erase(it);}else ++it;
+    }
 
     if (!scriptPath.empty() && frameStarted >= nextSceneCheck) {
       overviewDirty=true;
@@ -1498,6 +1314,16 @@ int main(int argc, char *argv[]) {
       const auto guard=request.value("expectRevision","");
       if(!guard.empty()&&(guard!=displayedRevision||loadStatus!="ready"||!synthcad::MatchesDisk(displayedFiles))){fail("stale_revision","Displayed revision is no longer current");continue;}
       try{
+        if(command=="reload"||command=="cancel-load"||command=="configure-evaluation"){
+          if(args.contains("evaluationTimeoutMs")){
+            const auto value=args.at("evaluationTimeoutMs");
+            if(!value.is_number_integer()||value<1||value>3600000){fail("invalid_argument","evaluationTimeoutMs must be 1..3600000");continue;}
+            evaluationTimeoutMs=value.get<int>();
+          }
+          if(command=="reload")reloadScene();
+          else if(command=="cancel-load"&&modelWorker.Running())finishLoad(modelWorker.Cancel());
+          publishAgent();action->result.set_value(synthcad::Success(command,{{"status",loadStatus},{"evaluationTimeoutMs",evaluationTimeoutMs}},agentSession,displayedRevision));continue;
+        }
         if(command=="export"){
           auto result=dingcad::ExecuteExport(tree,exportContext(true),args,[&](){
             if(std::chrono::steady_clock::now()>=action->deadline)return std::string("timeout");
@@ -1518,8 +1344,8 @@ int main(int argc, char *argv[]) {
           if(!project){fail("not_found","This scene has no named project views");continue;}
           const auto name=args.at("name").get<std::string>();
           synthcad::ResolveView(*project,name);activeView=name;agentHighlights.clear();reloadScene(false);
-          if(loadStatus!="ready"){fail("load_failed",loadDiagnostic);continue;}
-          action->result.set_value(synthcad::Success(command,{{"view",activeView}},agentSession,displayedRevision));continue;
+          if(loadStatus=="failed"){fail("load_failed",loadDiagnostic);continue;}
+          pendingViews.push_back(action);continue;
         }
         if(command=="screenshot"){
           if(minimized){fail("busy","Restore the viewer before capturing a screenshot");continue;}
@@ -1627,6 +1453,7 @@ int main(int argc, char *argv[]) {
     if(!overviewActions.view.empty()&&project&&project->views.count(overviewActions.view)){
       activeView=overviewActions.view;agentHighlights.clear();reloadRequested=true;
     }
+    if(workspaceActions.cancelLoad&&modelWorker.Running())finishLoad(modelWorker.Cancel());
     if(workspaceActions.reload||(!captureKeyboard&&IsKeyPressed(KEY_R)))reloadRequested=true;
     if(reloadRequested&&!scriptPath.empty())reloadScene(overviewActions.view.empty());
     if(actions.openExport||(!captureKeyboard&&IsKeyPressed(KEY_P)))exportDialog.Open(defaultExportPath);
@@ -1884,6 +1711,8 @@ int main(int argc, char *argv[]) {
     if(uiPreview&&++previewFrames>=previewFrameLimit)break;
   }
 
+  for(auto& action:pendingViews)action->result.set_value(synthcad::Error("view","cancelled","Viewer closed",{},agentSession,displayedRevision));
+  pendingViews.clear();
   if(agent){agent->Close();agentServer.Stop();}
   UnloadRenderTexture(rtColor);
   UnloadRenderTexture(rtNormalDepth);
@@ -1891,11 +1720,12 @@ int main(int argc, char *argv[]) {
   UnloadMaterial(normalDepthMat);
   UnloadMaterial(outlineMat);   // also releases the shader
   UnloadShader(edgeShader);
+  if(modelWorker.Running())modelWorker.Cancel();
   partModels.Clear();
   if (brandingFontCustom) {
     UnloadFont(brandingFont);
   }
-  JS_FreeRuntime(runtime);
+
   dingcad::UnloadApplicationIcons();
   CloseWindow();
 

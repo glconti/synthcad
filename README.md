@@ -92,21 +92,23 @@ the limits of Xvfb/Mesa testing.
 
 ## Agent CLI and shared review
 
-Release builds also produce `synthcad` (`synthcad.exe` on Windows). Start with
-`synthcad --help`, or pass the same commands to `dingcad_viewer`. The existing
-Windows launcher accepts them too:
+The standalone Windows Release is **`synthcad-cli.exe`**, a command-line interface
+that opens and controls a persistent viewer. Start with `synthcad-cli --help`.
+Development builds retain `synthcad` (`synthcad.exe` on Windows) and
+`dingcad_viewer`; both accept the same commands. The existing Windows launcher
+accepts them too:
 
 ```powershell
 .\scripts\run-windows.ps1 open .\scene.js --session review
 .\out\build\windows-x64-release\viewer\synthcad.exe snapshot --session review --json
 ```
 
-Running `synthcad` with no arguments groups commands and guidance by area.
-Read just the instructions you need with `synthcad docs start`,
-`synthcad docs modeling`, `synthcad docs print-design` or `synthcad docs api`.
+Running `synthcad-cli` with no arguments groups commands and guidance by area.
+Read just the instructions you need with `synthcad-cli docs start`,
+`synthcad-cli docs modeling`, `synthcad-cli docs print-design` or `synthcad-cli docs api`.
 For optional sample prints and user-reported results, use
-`synthcad docs physical-feedback`. Full exports never require sample records.
-`synthcad docs` lists all areas. Complete guides print to stdout from the CLI's
+`synthcad-cli docs physical-feedback`. Full exports never require sample records.
+`synthcad-cli docs` lists all areas. Complete guides print to stdout from the CLI's
 compiled bundle, without installing skill files or accessing this checkout.
 Add `--json` for content and version metadata in a structured response.
 
@@ -115,10 +117,16 @@ the viewer hot-reloads them. Capture a requested revision with `revision`, then
 use `wait --revision TOKEN` to acknowledge the loaded result. Highlights, framing,
 named project views, selection readback and PNG screenshots share that viewer.
 These commands do not edit geometry or generate print layouts. Use
-`synthcad export current-plate.3mf --session review --dry-run --json` to review
+`synthcad-cli export current-plate.3mf --session review --dry-run --json` to review
 the current arrangement before exporting. Both 3MF and STL use the viewer's
 selection rules, warning acknowledgement and overwrite protection. Successful
-exports retain revision-linked records; `synthcad export-history` reads them.
+exports retain revision-linked records; `synthcad-cli export-history` reads them.
+
+Start small: keep geometry and named views in `design.js` plus `synthcad.json`.
+Place requested final outputs in `exports/` (prefer 3MF), read routine command
+responses in memory, and use temporary paths for review screenshots. Only retain
+additional previews or print notes when requested. Export history is managed in
+`.synthcad/`; session storage is managed outside the project.
 
 For a new assembly with several layouts, export a shared `design` graph:
 source parts define geometry once, instances identify physical copies, and

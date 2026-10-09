@@ -6,9 +6,9 @@ checks, exports and optional physical notes. Select a view to load it in the
 same viewer. Scroll the overview independently of the camera; Close returns to
 the parts tree. Ctrl+F returns to part search.
 
-Use `synthcad overview --json` for the same context, `synthcad profile --json`
-for printer settings and missing values, and `synthcad profile --template` for
-an incomplete setup fragment. Run `synthcad docs profiles` for the short setup
+Use `synthcad-cli overview --json` for the same context, `synthcad-cli profile --json`
+for printer settings and missing values, and `synthcad-cli profile --template` for
+an incomplete setup fragment. Run `synthcad-cli docs profiles` for the short setup
 conversation. Agents author metadata in `synthcad.json` with ordinary file edits.
 No project fields are written by these commands.
 

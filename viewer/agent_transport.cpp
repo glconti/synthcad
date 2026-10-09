@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <future>
+#include <limits>
 #include <random>
 #include <sstream>
 #include <stdexcept>
@@ -23,6 +24,7 @@
 #endif
 #include <windows.h>
 #include <sddl.h>
+#include <shlobj.h>
 #else
 #include <cerrno>
 #include <csignal>
@@ -60,6 +62,23 @@ std::string Nonce() {
 }
 std::string Canonical(const std::string& path) {
   return CanonicalPath(fs::u8path(path));
+}
+enum class ProcessState { Alive, Exited, Unknown };
+struct ProcessProbe {
+  ProcessState state;
+  std::string identity;
+  std::string diagnostic;
+};
+bool ConfirmedStale(const ProcessProbe& probe, const std::string& identity) {
+  return probe.state == ProcessState::Exited ||
+      (probe.state == ProcessState::Alive && !identity.empty() && probe.identity != identity);
+}
+std::string NativeFailure(const std::string& operation, unsigned long code) {
+#ifdef _WIN32
+  return operation + " (Windows error " + std::to_string(code) + "). Check access permissions in this execution context; keep the same session registry.";
+#else
+  return operation + " (errno " + std::to_string(code) + "). Check access permissions in this execution context; keep the same session registry.";
+#endif
 }
 #ifdef _WIN32
 std::wstring Wide(const std::string& value) {
@@ -99,31 +118,55 @@ struct UserSecurity {
   ~UserSecurity() { if (descriptor) LocalFree(descriptor); }
 };
 unsigned long ProcessId() { return GetCurrentProcessId(); }
-std::string ProcessIdentity(unsigned long pid) {
-  HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
-  if (!process) return {};
+ProcessProbe ProbeProcess(unsigned long pid) {
+  const bool self = pid == ProcessId();
+  HANDLE process = self ? GetCurrentProcess() : OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+  if (!process) {
+    const auto code = GetLastError();
+    return {code == ERROR_INVALID_PARAMETER ? ProcessState::Exited : ProcessState::Unknown, {},
+            NativeFailure("Cannot inspect viewer process " + std::to_string(pid), code)};
+  }
   FILETIME created{}, exit{}, kernel{}, user{};
-  bool ok = GetProcessTimes(process, &created, &exit, &kernel, &user) != 0;
   DWORD status = 0;
-  ok = ok && GetExitCodeProcess(process, &status) && status == STILL_ACTIVE;
-  CloseHandle(process);
-  if (!ok) return {};
-  return std::to_string((uint64_t(created.dwHighDateTime) << 32) | created.dwLowDateTime);
+  if (!GetExitCodeProcess(process, &status)) {
+    const auto code = GetLastError();
+    if (!self) CloseHandle(process);
+    return {ProcessState::Unknown, {}, NativeFailure("Cannot read viewer process state", code)};
+  }
+  if (status != STILL_ACTIVE) {
+    if (!self) CloseHandle(process);
+    return {ProcessState::Exited, {}, {}};
+  }
+  const bool ok = GetProcessTimes(process, &created, &exit, &kernel, &user) != 0;
+  const auto code = ok ? ERROR_SUCCESS : GetLastError();
+  if (!self) CloseHandle(process);
+  if (!ok) return {ProcessState::Unknown, {}, NativeFailure("Cannot read viewer process identity", code)};
+  return {ProcessState::Alive, std::to_string((uint64_t(created.dwHighDateTime) << 32) | created.dwLowDateTime), {}};
 }
 #else
 unsigned long ProcessId() { return static_cast<unsigned long>(getpid()); }
-std::string ProcessIdentity(unsigned long pid) {
-  if (kill(static_cast<pid_t>(pid), 0) != 0 && errno != EPERM) return {};
+ProcessProbe ProbeProcess(unsigned long pid) {
+  if (!pid || pid > static_cast<unsigned long>(std::numeric_limits<pid_t>::max()))
+    return {ProcessState::Exited, {}, {}};
+  if (kill(static_cast<pid_t>(pid), 0) != 0 && errno != EPERM) {
+    const auto code = errno;
+    return {code == ESRCH ? ProcessState::Exited : ProcessState::Unknown, {},
+            NativeFailure("Cannot inspect viewer process " + std::to_string(pid), code)};
+  }
   std::ifstream stat("/proc/" + std::to_string(pid) + "/stat");
   std::string line;
   std::getline(stat, line);
   auto close = line.rfind(')');
-  if (close == std::string::npos) return {};
+  if (close == std::string::npos)
+    return {ProcessState::Unknown, {}, "Cannot read /proc process identity; retaining the session record."};
   std::istringstream fields(line.substr(close + 2));
   std::string value;
   // The first field following comm is field 3, the start time is field 22.
-  for (int field = 3; field <= 22; ++field) if (!(fields >> value)) return {};
-  return value;
+  for (int field = 3; field <= 22; ++field) {
+    if (!(fields >> value)) return {ProcessState::Unknown, {}, "Incomplete /proc process identity; retaining the session record."};
+    if (field == 3 && (value == "Z" || value == "X")) return {ProcessState::Exited, {}, {}};
+  }
+  return {ProcessState::Alive, value, {}};
 }
 #endif
 
@@ -134,7 +177,15 @@ fs::path Root() {
   else {
 #ifdef _WIN32
     UserSecurity security;
-    root = fs::temp_directory_path() / ("synthcad-" + Hash(security.identity));
+    // Agent sandboxes can redirect TEMP and LOCALAPPDATA differently for every
+    // tool invocation. Keep the usual per-user registry independent of that
+    // redirection, so short-lived callers discover the same persistent viewer.
+    PWSTR localAppData = nullptr;
+    const auto result = SHGetKnownFolderPath(FOLDERID_LocalAppData,
+        KF_FLAG_NO_PACKAGE_REDIRECTION, nullptr, &localAppData);
+    if (FAILED(result)) throw std::runtime_error("Cannot locate stable per-user session storage");
+    root = fs::path(localAppData) / "Temp" / ("synthcad-" + Hash(security.identity));
+    CoTaskMemFree(localAppData);
 #else
     root = fs::temp_directory_path() / ("synthcad-" + std::to_string(getuid()));
 #endif
@@ -142,11 +193,11 @@ fs::path Root() {
 #ifdef _WIN32
   UserSecurity security;
   if (!CreateDirectoryW(root.c_str(), &security.attributes) && GetLastError() != ERROR_ALREADY_EXISTS)
-    throw std::runtime_error("Cannot create private session directory: " + root.u8string());
+    throw std::runtime_error(NativeFailure("Cannot create private session directory " + root.u8string(), GetLastError()));
   // Apply a protected owner-only DACL even when the directory already exists.
   if (!SetFileSecurityW(root.c_str(), DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
                         security.descriptor))
-    throw std::runtime_error("Cannot secure session directory: " + root.u8string());
+    throw std::runtime_error(NativeFailure("Cannot secure session directory " + root.u8string(), GetLastError()));
 #else
   if (mkdir(root.c_str(), 0700) != 0 && errno != EEXIST)
     throw std::runtime_error("Cannot create private session directory: " + root.u8string());
@@ -175,10 +226,18 @@ class OpenLock {
       handle_ = CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
                             OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
       if (handle_ != INVALID_HANDLE_VALUE) return;
+      const auto code = GetLastError();
+      if (code != ERROR_SHARING_VIOLATION && code != ERROR_LOCK_VIOLATION)
+        throw std::runtime_error(NativeFailure("Cannot open session launch lock " + path.u8string(), code));
 #else
       if (handle_ < 0) handle_ = open(path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
-      if (handle_ < 0) throw std::runtime_error("Cannot open session launch lock");
+      if (handle_ < 0) throw std::runtime_error(NativeFailure("Cannot open session launch lock " + path.u8string(), errno));
       if (!flock(handle_, LOCK_EX | LOCK_NB)) return;
+      if (errno != EWOULDBLOCK && errno != EAGAIN && errno != EINTR) {
+        const auto code = errno;
+        close(handle_); handle_ = -1;
+        throw std::runtime_error(NativeFailure("Cannot acquire session launch lock", code));
+      }
 #endif
       Pause();
     } while (Clock::now() < deadline);
@@ -265,7 +324,7 @@ bool ReadMessage(Connection connection, std::string& message, Clock::time_point 
   return false;
 }
 
-Connection Connect(const std::string& endpoint, Clock::time_point deadline) {
+Connection Connect(const std::string& endpoint, Clock::time_point deadline, std::string& diagnostic) {
   do {
 #ifdef _WIN32
     Connection result = CreateFileW(Wide(endpoint).c_str(), GENERIC_READ | GENERIC_WRITE,
@@ -273,21 +332,28 @@ Connection Connect(const std::string& endpoint, Clock::time_point deadline) {
     if (result != kInvalid) {
       DWORD mode = PIPE_READMODE_BYTE | PIPE_NOWAIT;
       if (SetNamedPipeHandleState(result, &mode, nullptr, nullptr)) return result;
+      diagnostic = NativeFailure("Cannot configure session connection", GetLastError());
       Close(result);
       return kInvalid;
     }
     DWORD error = GetLastError();
-    if (error != ERROR_PIPE_BUSY && error != ERROR_FILE_NOT_FOUND) return kInvalid;
+    if (error != ERROR_PIPE_BUSY && error != ERROR_FILE_NOT_FOUND) {
+      diagnostic = NativeFailure("Cannot connect to existing session", error);
+      return kInvalid;
+    }
 #else
     Connection result = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
-    if (result < 0) return kInvalid;
+    if (result < 0) { diagnostic = NativeFailure("Cannot create session connection", errno); return kInvalid; }
     sockaddr_un address{};
     address.sun_family = AF_UNIX;
     if (endpoint.size() >= sizeof(address.sun_path)) { Close(result); return kInvalid; }
     std::copy(endpoint.begin(), endpoint.end(), address.sun_path);
     if (!connect(result, reinterpret_cast<sockaddr*>(&address), sizeof(address))) return result;
+    const auto error = errno;
     Close(result);
-    if (errno != ECONNREFUSED && errno != ENOENT && errno != EAGAIN) return kInvalid;
+    if (error != ECONNREFUSED && error != ENOENT && error != EAGAIN) {
+      diagnostic = NativeFailure("Cannot connect to existing session", error); return kInvalid;
+    }
 #endif
     Pause();
   } while (Clock::now() < deadline);
@@ -296,11 +362,13 @@ Connection Connect(const std::string& endpoint, Clock::time_point deadline) {
 json Exchange(const json& record, const json& request, Clock::time_point deadline) {
   const std::string command = request.value("command", "request");
   const std::string name = record.value("session", "");
-  Connection connection = Connect(record.at("endpoint").get<std::string>(), deadline);
+  std::string diagnostic;
+  Connection connection = Connect(record.at("endpoint").get<std::string>(), deadline, diagnostic);
   if (connection == kInvalid) {
+    if (!diagnostic.empty()) return Error(command, "io_error", diagnostic, {}, name);
     if (Clock::now() >= deadline)
       return Error(command, "timeout", "Session connection did not become available within the timeout", {}, name);
-    return Error(command, "no_session", "Session is no longer reachable; open the project again", {}, name);
+    return Error(command, "io_error", "Existing session could not be reached; retain its registry and retry the same session", {}, name);
   }
   json authenticated = request;
   authenticated["sessionNonce"] = record.at("nonce");
@@ -332,8 +400,8 @@ std::vector<json> Records(const fs::path& root, bool includeUnreachable = false)
       if (record.at("protocolVersion") != 1 || !record.at("session").is_string() ||
           !record.at("projectPath").is_string() || !record.at("endpoint").is_string() ||
           !record.at("nonce").is_string()) continue;
-      auto identity = ProcessIdentity(record.at("pid").get<unsigned long>());
-      if (identity.empty() || identity != record.at("processIdentity").get<std::string>()) {
+      const auto probe = ProbeProcess(record.at("pid").get<unsigned long>());
+      if (ConfirmedStale(probe, record.at("processIdentity").get<std::string>())) {
         std::error_code ignored;
         fs::remove(entry.path(), ignored);
 #ifndef _WIN32
@@ -347,6 +415,9 @@ std::vector<json> Records(const fs::path& root, bool includeUnreachable = false)
       const bool reachable = ping.value("ok", false) && ping.value("session", "") == record.at("session");
       if (reachable || includeUnreachable) {
         record["reachable"] = reachable;
+        record["processStatus"] = probe.state == ProcessState::Alive ? "alive" : "unknown";
+        if (!probe.diagnostic.empty()) record["processDiagnostic"] = probe.diagnostic;
+        if (!reachable) record["connectionError"] = ping.value("error", json::object());
         records.push_back(record);
       }
     } catch (const std::exception&) { /* Ignore incomplete/unrelated registry entries. */ }
@@ -377,11 +448,12 @@ std::wstring Quote(const std::wstring& argument) {
 }
 #endif
 bool Spawn(const std::string& viewer, const std::string& session,
-           const std::string& project, bool hidden, unsigned long& pid, std::string& error) {
+           const std::string& project, bool hidden, unsigned long& pid, std::string& identity, std::string& error, int evaluationTimeoutMs) {
 #ifdef _WIN32
   std::wstring exe = Wide(viewer);
   std::wstring command = Quote(exe) + L" --agent-session " + Quote(Wide(session)) +
       L" --agent-project " + Quote(Wide(project));
+  if(evaluationTimeoutMs>0)command+=L" --agent-evaluation-timeout "+std::to_wstring(evaluationTimeoutMs);
   if (hidden) command += L" --agent-hidden";
   STARTUPINFOW startup{};
   startup.cb = sizeof(startup);
@@ -395,6 +467,9 @@ bool Spawn(const std::string& viewer, const std::string& session,
   }
   CloseHandle(process.hThread);
   pid = process.dwProcessId;
+  FILETIME created{}, exited{}, kernel{}, user{};
+  if (GetProcessTimes(process.hProcess, &created, &exited, &kernel, &user))
+    identity = std::to_string((uint64_t(created.dwHighDateTime) << 32) | created.dwLowDateTime);
   CloseHandle(process.hProcess);
   return true;
 #else
@@ -415,6 +490,7 @@ bool Spawn(const std::string& viewer, const std::string& session,
     int null = open("/dev/null", O_RDWR);
     if (null >= 0) { dup2(null, 0); dup2(null, 1); dup2(null, 2); if (null > 2) close(null); }
     std::vector<std::string> args = {viewer, "--agent-session", session, "--agent-project", project};
+    if(evaluationTimeoutMs>0){args.push_back("--agent-evaluation-timeout");args.push_back(std::to_string(evaluationTimeoutMs));}
     if (hidden) args.push_back("--agent-hidden");
     std::vector<char*> pointers;
     for (auto& arg : args) pointers.push_back(arg.data());
@@ -428,6 +504,7 @@ bool Spawn(const std::string& viewer, const std::string& session,
   int status = 0;
   while (waitpid(child, &status, 0) < 0 && errno == EINTR) {}
   if (!WIFEXITED(status) || WEXITSTATUS(status) || received != sizeof(pid)) { error = "Cannot detach viewer process"; return false; }
+  identity = ProbeProcess(pid).identity;
   return true;
 #endif
 }
@@ -521,9 +598,9 @@ bool SessionServer::Start(const std::string& session, const std::string& project
       std::ifstream input(recordPath);
       json previous;
       input >> previous;
-      std::string identity = ProcessIdentity(previous.value("pid", 0ul));
-      if (!identity.empty() && identity == previous.value("processIdentity", ""))
-        throw std::runtime_error("Session name is already in use: " + session);
+      const auto probe = ProbeProcess(previous.at("pid").get<unsigned long>());
+      if (!ConfirmedStale(probe, previous.at("processIdentity").get<std::string>()))
+        throw std::runtime_error("Session name is already in use or its process cannot be inspected: " + session + ". " + probe.diagnostic);
     }
     std::string nonce = Nonce();
     std::string endpoint;
@@ -546,7 +623,7 @@ bool SessionServer::Start(const std::string& session, const std::string& project
       throw std::runtime_error("Cannot create private session socket");
 #endif
     impl_->record = {{"protocolVersion", 1}, {"session", session}, {"projectPath", Canonical(projectPath)},
-        {"pid", ProcessId()}, {"processIdentity", ProcessIdentity(ProcessId())}, {"endpoint", endpoint}, {"nonce", nonce}};
+        {"pid", ProcessId()}, {"processIdentity", ProbeProcess(ProcessId()).identity}, {"endpoint", endpoint}, {"nonce", nonce}};
     impl_->recordPath = recordPath;
     impl_->handler = std::move(handler);
     impl_->stop.store(false);
@@ -594,7 +671,7 @@ void SessionServer::Stop() {
 json ListSessions() {
   try {
     json sessions = json::array();
-    for (const auto& record : Records(Root())) sessions.push_back(PublicRecord(record));
+    for (const auto& record : Records(Root(), true)) sessions.push_back(PublicRecord(record));
     return Success("sessions", {{"sessions", sessions}});
   } catch (const std::exception& error) { return Error("sessions", "io_error", error.what()); }
 }
@@ -614,7 +691,7 @@ json Request(const std::string& session, const json& request, int timeoutMs) {
       return Error(command, "invalid_argument", "Request timeout exceeds the command limit", {}, session);
     const auto deadline = Deadline(timeoutMs);
     auto records = Records(Root(), true);
-    if (records.empty()) return Error(command, "no_session", "No live session; run synthcad open PATH first");
+    if (records.empty()) return Error(command, "no_session", "No live session; run synthcad-cli open PATH first");
     json selected;
     if (session.empty()) {
       if (records.size() != 1) {
@@ -632,7 +709,7 @@ json Request(const std::string& session, const json& request, int timeoutMs) {
 }
 
 json OpenSession(const std::string& projectPath, const std::string& requestedName,
-                 bool hidden, const std::string& viewerExe, int timeoutMs) {
+                 bool hidden, const std::string& viewerExe, int timeoutMs, int evaluationTimeoutMs) {
   try {
     if (timeoutMs < 0 || timeoutMs > 300000)
       return Error("open", "invalid_argument", "Open timeout must be from 0 to 300000 milliseconds");
@@ -643,9 +720,13 @@ json OpenSession(const std::string& projectPath, const std::string& requestedNam
     OpenLock lock(root, deadline);
     for (const auto& record : Records(root, true)) {
       if (record.at("projectPath") == project) {
-        if (!record.value("reachable", false))
-          return Error("open", "busy", "An existing project process is not responding; retry after pending calls finish",
-                       {{"pid", record.at("pid")}}, record.at("session"));
+        if (!record.value("reachable", false)) {
+          const bool access = record.value("processStatus", "") == "unknown" ||
+              record.value("connectionError", json::object()).value("code", "") == "io_error";
+          return Error("open", access ? "io_error" : "busy",
+                       "An existing project session cannot currently be reached. Keep its registry and retry in the same execution context with the required access.",
+                       PublicRecord(record), record.at("session"));
+        }
         if (!requestedName.empty() && record.at("session") != requestedName)
           return Error("open", "invalid_argument", "Project is already open as session " + record.at("session").get<std::string>(),
                        {{"existingSession", record.at("session")}});
@@ -668,15 +749,16 @@ json OpenSession(const std::string& projectPath, const std::string& requestedNam
         input >> pending;
         launchedPid = pending.at("pid").get<unsigned long>();
         launchedIdentity = pending.at("processIdentity").get<std::string>();
-        alreadyLaunching = !launchedIdentity.empty() && ProcessIdentity(launchedPid) == launchedIdentity;
+        alreadyLaunching = !ConfirmedStale(ProbeProcess(launchedPid), launchedIdentity);
         if (alreadyLaunching && pending.at("session") != name)
           return Error("open", "busy", "Project is already opening as session " + pending.at("session").get<std::string>());
-      } catch (const std::exception&) {}
+      } catch (const std::exception& failure) {
+        return Error("open", "io_error", std::string("Cannot inspect pending viewer launch; retaining it to avoid a duplicate: ") + failure.what(), {}, name);
+      }
     }
     std::string error;
     if (!alreadyLaunching) {
-      if (!Spawn(viewerExe, name, project, hidden, launchedPid, error)) return Error("open", "io_error", error);
-      launchedIdentity = ProcessIdentity(launchedPid);
+      if (!Spawn(viewerExe, name, project, hidden, launchedPid, launchedIdentity, error, evaluationTimeoutMs)) return Error("open", "io_error", error);
       std::ofstream output(pendingPath, std::ios::binary | std::ios::trunc);
       output << json({{"pid", launchedPid}, {"processIdentity", launchedIdentity}, {"session", name}}).dump();
       output.close();
@@ -692,14 +774,17 @@ json OpenSession(const std::string& projectPath, const std::string& requestedNam
           return Success("open", data, name);
         }
       }
-      if (ProcessIdentity(launchedPid).empty()) {
+      if (ConfirmedStale(ProbeProcess(launchedPid), launchedIdentity)) {
         std::error_code ignored;
         fs::remove(pendingPath, ignored);
         return Error("open", "io_error", "Viewer exited before publishing its session", {}, name);
       }
       Pause();
     } while (Clock::now() < deadline);
-    return Error("open", "timeout", "Viewer did not publish its session before the timeout; check sessions before opening again", {}, name);
+    const auto probe = ProbeProcess(launchedPid);
+    return Error("open", probe.state == ProcessState::Unknown ? "io_error" : "timeout",
+                 "Viewer launch is still recorded; check sessions and retry the same project without changing its registry.",
+                 {{"pid", launchedPid}, {"processDiagnostic", probe.diagnostic}}, name);
   } catch (const std::exception& error) {
     const bool timeout = std::string(error.what()).find("Timed out") != std::string::npos;
     return Error("open", timeout ? "timeout" : "io_error", error.what());

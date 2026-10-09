@@ -55,6 +55,11 @@ json GuidedPickState::Begin(const json& args, const std::string& revision) {
   Emit("pick-started", requests_.at(id));
   return {{"created", true}, {"request", requests_.at(id)}, {"eventCursor", Cursor()}};
 }
+void GuidedPickState::LoadEvent(const std::string& type,const json& context){
+  ++sequence_;auto event=context;event["cursor"]=Cursor();event["type"]=type;
+  event["requestId"]=nullptr;event["revision"]=context.value("displayedRevision",std::string{});
+  events_.push_back(std::move(event));if(events_.size()>256)events_.pop_front();
+}
 void GuidedPickState::Emit(const std::string& type, const json& request) {
   ++sequence_;
   json event = {{"cursor", Cursor()}, {"type", type}, {"requestId", request.is_null() ? json(nullptr) : request.at("id")},

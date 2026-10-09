@@ -23,3 +23,6 @@ using MeshDependencyReader = std::function<std::optional<std::string>(const std:
 void RegisterBindings(JSContext *ctx, MeshDependencyReader meshReader = {});
 std::shared_ptr<manifold::Manifold> GetManifoldHandle(JSContext *ctx,
                                                       JSValueConst value);
+
+#include <functional>
+void SetBindingProgress(std::function<void(const char*)> callback);

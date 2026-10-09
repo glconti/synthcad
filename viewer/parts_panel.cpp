@@ -307,24 +307,26 @@ void ExportDialog::Draw(Font f,int w,int h,size_t count,bool valid) const{
 std::filesystem::path SuggestedExportPath(const std::filesystem::path &home,const std::filesystem::path &scene,bool threeMf){
  auto name=scene.empty()?std::filesystem::path("synthcad"):scene.stem();name+=threeMf?".3mf":".stl";return home/"Downloads"/name;
 }
-void WorkspaceUi::Loaded(){loadError.clear();details=false;detailScroll=0;}
-void WorkspaceUi::Failed(const std::string &s){if(loadError!=s){details=false;detailScroll=0;}loadError=s;}
+void WorkspaceUi::Loaded(){loading=false;loadError.clear();details=false;detailScroll=0;}
+void WorkspaceUi::Failed(const std::string &s){loading=false;if(loadError!=s){details=false;detailScroll=0;}loadError=s;}
 void WorkspaceUi::Saved(const std::string &s,double now){toast="Exported "+s;toastUntil=now+4;}
 bool WorkspaceUi::ToastVisible(double now) const{return !toast.empty()&&now<toastUntil;}
 Rectangle WorkspaceUi::ToastCard(int w,int h) const{return ToastRect(w,h,toastBottom);}
 Rectangle WorkspaceUi::Toolbar(int w) const{return {std::max(12.f,w-300.f),12,288,40};}
-Rectangle WorkspaceUi::ErrorCard(int w,int h) const{return {std::max(12.f,w-492.f),h-12-(details?std::min(310.f,h-84.f):112.f),std::min(480.f,w-24.f),details?std::min(310.f,h-84.f):112.f};}
+Rectangle WorkspaceUi::ErrorCard(int w,int h) const{return {std::max(12.f,w-492.f),h-12-(details?std::min(350.f,h-84.f):140.f),std::min(480.f,w-24.f),details?std::min(350.f,h-84.f):140.f};}
 bool WorkspaceUi::CapturesMouse(const PanelInput &i,int w,int h,double now) const{
- return gesture||CheckCollisionPointRec(i.mouse,Toolbar(w))||(help&&CheckCollisionPointRec(i.mouse,HelpRect(w)))||(!loadError.empty()&&CheckCollisionPointRec(i.mouse,ErrorCard(w,h)))||(ToastVisible(now)&&CheckCollisionPointRec(i.mouse,ToastCard(w,h)));
+ return gesture||CheckCollisionPointRec(i.mouse,Toolbar(w))||(help&&CheckCollisionPointRec(i.mouse,HelpRect(w)))||((loading||!loadError.empty())&&CheckCollisionPointRec(i.mouse,ErrorCard(w,h)))||(ToastVisible(now)&&CheckCollisionPointRec(i.mouse,ToastCard(w,h)));
 }
 PanelActions WorkspaceUi::Update(const PanelInput &i,int w,int h,double now){
  PanelActions a;if(i.pressed||i.rightPressed)gesture=CapturesMouse(i,w,h,now);if(!i.leftDown&&!i.rightDown&&!i.pressed&&!i.rightPressed)gesture=false;
  auto r=Toolbar(w);if(Hit(i,{r.x+4,r.y+4,65,32}))a.fitAll=true;if(Hit(i,{r.x+73,r.y+4,175,32}))a.dimensions=true;if(Hit(i,{r.x+252,r.y+4,32,32}))help=!help;
  if(i.escape)help=false;
- if(!loadError.empty()){
-  auto e=ErrorCard(w,h);if(Hit(i,{e.x+12,e.y+70,140,30})){details=!details;detailScroll=0;}
+ if(loading){auto e=ErrorCard(w,h);if(Hit(i,{e.x+e.width-92,e.y+16,80,32}))a.cancelLoad=true;}
+ else if(!loadError.empty()){
+  auto e=ErrorCard(w,h);if(Hit(i,{e.x+12,e.y+96,140,30})){details=!details;detailScroll=0;}
   if(Hit(i,{e.x+e.width-92,e.y+16,80,32}))a.reload=true;
-  Rectangle content{e.x+12,e.y+112,e.width-24,std::max(0.f,e.height-124)};
+  if(Hit(i,{e.x+160,e.y+96,120,30}))SetClipboardText(loadError.c_str());
+  Rectangle content{e.x+12,e.y+140,e.width-24,std::max(0.f,e.height-152)};
   if(details&&CheckCollisionPointRec(i.mouse,content)){detailScroll-=i.wheel*54;detailScroll=Clamp(detailScroll,0,std::max(0.f,DiagnosticLines(loadError,content.width).size()*18-content.height));}
  }
  auto t=ToastCard(w,h);if(ToastVisible(now)&&Hit(i,{t.x+t.width-36,t.y+8,28,32}))toast.clear();return a;
@@ -332,10 +334,11 @@ PanelActions WorkspaceUi::Update(const PanelInput &i,int w,int h,double now){
 void WorkspaceUi::Draw(Font f,int w,int h,DimensionMode mode,double now) const{
  auto r=Toolbar(w);Card(r);Button({r.x+4,r.y+4,65,32},"Fit all",f);std::string dim=std::string("Dimensions: ")+DimensionModeName(mode);Button({r.x+73,r.y+4,175,32},dim.c_str(),f);Button({r.x+252,r.y+4,32,32},"?",f);
  if(help){auto b=HelpRect(w);Card(b,paper);Label("Workspace shortcuts",f,b.x+14,b.y+14,b.width-28,18);const char *lines[]={"Drag: orbit  /  Right-drag: pan","Scroll: zoom  /  Space: fit all","W A S D Q E: move camera","Ctrl+F: search parts","P: export  /  R: reload","M: cycle dimensions"};for(int i=0;i<6;++i)Label(lines[i],f,b.x+14,b.y+48+i*26,b.width-28,15,muted);}
- if(!loadError.empty()){
-  auto e=ErrorCard(w,h);Card(e,{251,240,228,250});Label("Scene could not load",f,e.x+12,e.y+16,e.width-120,19,{123,65,34,255});Label("Export is disabled until the scene is corrected.",f,e.x+12,e.y+44,e.width-24,15,muted);
-  Button({e.x+e.width-92,e.y+16,80,32},"Reload",f);Button({e.x+12,e.y+70,140,30},details?"Hide details":"Show details",f);
-  if(details){Rectangle content{e.x+12,e.y+112,e.width-24,e.height-124};Clip(content);auto lines=DiagnosticLines(loadError,content.width);for(size_t n=0;n<lines.size();++n)DrawTextEx(f,lines[n].c_str(),{content.x,content.y+n*18-detailScroll},14,0,ink);EndScissorMode();if(lines.size()*18>content.height)Label("Scroll for more",f,e.x+e.width-120,e.y+76,108,13,muted);}
+ if(loading){auto e=ErrorCard(w,h);Card(e);Label("Updating model...",f,e.x+12,e.y+16,e.width-120,19);Label(retained?"Showing the last successful model":"Preparing your model",f,e.x+12,e.y+48,e.width-24,15,muted);Button({e.x+e.width-92,e.y+16,80,32},"Cancel",f);}
+ else if(!loadError.empty()){
+  auto e=ErrorCard(w,h);Card(e,{251,240,228,250});Label("Couldn't update this model",f,e.x+12,e.y+16,e.width-120,19,{123,65,34,255});Label(loadError.substr(0,loadError.find('\n')),f,e.x+12,e.y+44,e.width-24,15,muted);Label(retained?"Showing the last successful model. Export disabled.":"No model loaded. Export disabled.",f,e.x+12,e.y+70,e.width-24,15,muted);
+  Button({e.x+e.width-92,e.y+16,80,32},"Reload",f);Button({e.x+12,e.y+96,140,30},details?"Hide details":"Details",f);Button({e.x+160,e.y+96,120,30},"Copy details",f);
+  if(details){Rectangle content{e.x+12,e.y+140,e.width-24,e.height-152};Clip(content);auto lines=DiagnosticLines(loadError,content.width);for(size_t n=0;n<lines.size();++n)DrawTextEx(f,lines[n].c_str(),{content.x,content.y+n*18-detailScroll},14,0,ink);EndScissorMode();if(lines.size()*18>content.height)Label("Scroll for more",f,e.x+e.width-120,e.y+102,108,13,muted);}
  }else if(ToastVisible(now)){auto t=ToastCard(w,h);Card(t,{213,233,211,245});Label(toast,f,t.x+14,t.y+15,t.width-54,16);Cross({t.x+t.width-36,t.y+8,28,32});}
  std::string tip;if(Over({r.x+4,r.y+4,65,32}))tip="Fit all visible parts (Space)";if(Over({r.x+73,r.y+4,175,32}))tip="Cycle dimensions (M)";if(Over({r.x+252,r.y+4,32,32}))tip="Keyboard and mouse shortcuts";Tooltip(tip,f,w,h);
 }

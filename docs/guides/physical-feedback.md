@@ -1,6 +1,6 @@
 # Optional samples and physical feedback
 
-Run `synthcad docs physical-feedback` to read this guide. Samples are optional:
+Run `synthcad-cli docs physical-feedback` to read this guide. Samples are optional:
 users may proceed directly from design and plate review to a full export.
 Do not require a sample, printer profile or physical report just to export.
 
@@ -21,7 +21,7 @@ can matter for transferring a result to the full part. Use `print-design`,
 
 ## Preserve the user's report and its scope
 
-Agents edit the optional `evidence` array in `synthcad.json`; `synthcad overview`
+Agents edit the optional `evidence` array in `synthcad.json`; `synthcad-cli overview`
 and the Project card present it. Capture the basis from the loaded sample
 view's `modelRevision` in the overview, not a source or displayed revision.
 Set `profileRevision:null` when the note is independent of that context. If a
@@ -95,10 +95,10 @@ be a subset of affected IDs; `requires-reprint` needs at least one, while
 `compatible` needs an empty list. `unknown` is a decision still to resolve, not
 permission to assume that unlisted parts can be reused. Missing evidence links
 are shown as warnings. These are authored engineering decisions, not automatic
-compatibility certification. Run `synthcad docs overview` for exact limits and
+compatibility certification. Run `synthcad-cli docs overview` for exact limits and
 validation rules.
 
-Reload, review the changed full part and sample, and run `synthcad checks`.
-Use `synthcad export PATH --dry-run` before creating a new artifact and inspect
-`synthcad export-history` for older receipts. New digital evidence does not erase
+Reload, review the changed full part and sample, and run `synthcad-cli checks`.
+Use `synthcad-cli export PATH --dry-run` before creating a new artifact and inspect
+`synthcad-cli export-history` for older receipts. New digital evidence does not erase
 the earlier report or prove that the revised design was physically retested.

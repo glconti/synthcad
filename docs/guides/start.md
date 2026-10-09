@@ -1,12 +1,12 @@
 # Start a SynthCAD design
 
-Run `synthcad docs` to list topics or `synthcad docs start` to print this guide.
+Run `synthcad-cli docs` to list topics or `synthcad-cli docs start` to print this guide.
 
 ## Establish the project
 
-Work in the project directory chosen by the user. When working inside the SynthCAD repository, personal scenes and generated review or export files belong in the ignored `local-scenes/` directory. A standalone `.js` scene can be opened directly. Use a project manifest when the design needs named assembly, inspection or print-layout views.
+Work in the project directory chosen by the user. For a simple design, start with two authored files: `design.js` for shared geometry and `synthcad.json` for named views and project context. Put requested final outputs under `exports/`. When working inside the SynthCAD repository, personal projects belong in the ignored `local-scenes/` directory. Existing standalone `.js` scenes are also supported.
 
-For example, `synthcad.json` can map each view to its own JavaScript entry point:
+For example, both views in `synthcad.json` can use the same JavaScript entry point:
 
 ```json
 {
@@ -14,13 +14,15 @@ For example, `synthcad.json` can map each view to its own JavaScript entry point
   "name": "Small plate",
   "defaultView": "assembly",
   "views": {
-    "assembly": "assembly.js",
-    "plate-1": "plate-1.js"
+    "assembly": "design.js",
+    "plate-1": "design.js"
   }
 }
 ```
 
-Each view can use shared source files for dimensions and part geometry. Run `synthcad docs projects` for manifest and revision details and `synthcad docs api` for the complete model contract.
+Keep these named views in the shared design graph below. Split source files only when the model's complexity benefits from it. Run `synthcad-cli docs projects` for manifest and revision details and `synthcad-cli docs api` for the complete model contract.
+
+Read routine CLI responses directly or parse their JSON in memory. Do not save separate check reports, dry-run reviews or export-response dumps by default: the app already keeps export history in `.synthcad/`. Prefer a final 3MF under `exports/`; add STL when requested. Use OS temporary files for review screenshots and retain previews or print-note documents only when requested.
 
 ## Begin with a small parametric scene
 
@@ -36,15 +38,17 @@ const body = cube({
   center: false,
 });
 
-export const scene = body;
-export const displayParts = [{
-  id: 'body',
-  name: 'Body',
-  group: ['Designed object'],
-  solid: body,
-  color: '#628bb5',
-  exportable: true,
-}];
+export const design = {
+  schemaVersion: 1,
+  defaultView: 'assembly',
+  parts: [{id: 'body', name: 'Body', solid: body,
+    color: '#628bb5', exportable: true}],
+  instances: [{id: 'body-1', part: 'body'}],
+  views: [
+    {id: 'assembly', kind: 'assembly', members: [{instance: 'body-1'}]},
+    {id: 'plate-1', kind: 'plate', members: [{instance: 'body-1'}]},
+  ],
+};
 
 export const dimensions = [{
   type: 'linear',
@@ -62,19 +66,28 @@ Dimensions are authored annotations: the viewer does not infer them from the mes
 Open the standalone entry or project directory:
 
 ```text
-synthcad open ./my-design
-synthcad snapshot --json
+synthcad-cli open ./my-design
+synthcad-cli snapshot --json
 ```
+
+`open` returns the session name and whether an existing viewer was reused. Use that session for subsequent calls; edits hot-reload without another launch. If startup is slow, check `sessions` and retry the same project. If access is denied, use the required execution permissions with the same registry. Do not switch `SYNTHCAD_SESSION_DIR` or create a project-local session directory as a recovery workaround.
 
 After editing a source file, request the current revision, then pass the requested token from its JSON result to `wait`:
 
 ```text
-synthcad revision --json
-synthcad wait --revision REQUESTED_TOKEN --timeout 10000 --json
+synthcad-cli revision --json
+synthcad-cli wait --revision REQUESTED_TOKEN --timeout 10000 --json
 ```
 
-Replace `REQUESTED_TOKEN` with the revision returned by `revision`. Proceed only when `wait` succeeds. Its envelope `revision` / `data.displayedRevision` identifies the geometry actually displayed. Use that displayed revision with `--expect-revision` for later snapshot, highlight, frame or screenshot calls. If the files change again, capture and wait for a fresh revision. Run `synthcad docs cli` for full command behavior and failure states.
+Replace `REQUESTED_TOKEN` with the revision returned by `revision`. Proceed only when `wait` succeeds. Its envelope `revision` / `data.displayedRevision` identifies the geometry actually displayed. Use that displayed revision with `--expect-revision` for later snapshot, highlight, frame or screenshot calls. If the files change again, capture and wait for a fresh revision. Run `synthcad-cli docs cli` for full command behavior and failure states.
 
 Inspect the part tree, authored annotations, bounds, diagnostic and selected view. A screenshot is useful for shape and placement review, but it does not test clearances, wall thickness, bed fit, supports, toolpaths or strength. Record printer, nozzle and material details only when supplied for this project; unknown details can remain open during initial modeling.
 
-If the user wants a targeted sample before a full print, run `synthcad docs physical-feedback` for shared sample geometry, explicit user reports and revision-linked reprint decisions. This flow is optional; exporting a file never implies it was printed or tested.
+If the user wants a targeted sample before a full print, run `synthcad-cli docs physical-feedback` for shared sample geometry, explicit user reports and revision-linked reprint decisions. This flow is optional; exporting a file never implies it was printed or tested.
+
+
+If a model fails, read `state --json`: `loadFailure` explains the processing stage
+and available cause. The viewer retains its last successful model and disables
+export. Fix the source and wait for its new revision, or use `reload` to retry.
+Use `cancel-load` for stuck work; `reload --evaluation-timeout 240000` raises the
+session's two-minute default limit. A CLI wait timeout alone does not cancel it.

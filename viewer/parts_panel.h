@@ -21,7 +21,7 @@ struct TextEdit {
   void Update(std::string &text,const PanelInput &input);
   void Focus(const std::string &text,bool all=false);
 };
-struct PanelActions {bool frame=false,openExport=false,save=false,fitAll=false,dimensions=false,reload=false,selectionChanged=false,openOverview=false,openChecks=false;};
+struct PanelActions {bool cancelLoad=false,frame=false,openExport=false,save=false,fitAll=false,dimensions=false,reload=false,selectionChanged=false,openOverview=false,openChecks=false;};
 struct PartsLayout {
   Rectangle card,collapse,exportButton,file,overview,checks,search,clear,isolate,showAll,frame,list;
   float visibilityX=0,exportX=0;
@@ -49,7 +49,7 @@ struct ExportDialog {
   void Draw(Font font,int width,int height,size_t count,bool valid) const;
 };
 struct WorkspaceUi {
-  bool help=false,gesture=false,details=false;float detailScroll=0;
+  bool loading=false,retained=false,help=false,gesture=false,details=false;float detailScroll=0;
   std::string loadError,toast;double toastUntil=0;
   float toastBottom=128;
   void Loaded();void Failed(const std::string &message);void Saved(const std::string &name,double now);

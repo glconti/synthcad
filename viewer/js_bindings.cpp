@@ -14,6 +14,8 @@
 #include "manifold/manifold.h"
 #include "manifold/polygon.h"
 #include "manifold/meshIO.h"
+static std::function<void(const char*)> bindingProgress;
+void SetBindingProgress(std::function<void(const char*)> callback){bindingProgress=std::move(callback);}
 namespace {
 JSClassID g_meshReaderClassId=0;
 void MeshReaderFinalizer(JSRuntime *,JSValue value) {
@@ -1109,6 +1111,7 @@ JSValue JsLoadMeshTracked(JSContext *ctx,JSValueConst,int argc,JSValueConst *arg
 
 
 JSValue JsLevelSet(JSContext *ctx, JSValueConst, int argc, JSValueConst *argv) {
+  if(bindingProgress)bindingProgress("levelSet");
   if (argc < 1 || !JS_IsObject(argv[0])) {
     return JS_ThrowTypeError(ctx, "levelSet expects options object");
   }
@@ -1186,6 +1189,14 @@ JSValue JsLevelSet(JSContext *ctx, JSValueConst, int argc, JSValueConst *argv) {
                              "levelSet canParallel must be false when using JS SDF");
   }
 
+  const auto size=bounds.Size();
+  if(!std::isfinite(edgeLength)||edgeLength<=0||!std::isfinite(level)||!std::isfinite(tolerance)||
+     !std::isfinite(bounds.min.x)||!std::isfinite(bounds.min.y)||!std::isfinite(bounds.min.z)||
+     !std::isfinite(bounds.max.x)||!std::isfinite(bounds.max.y)||!std::isfinite(bounds.max.z)||
+     size.x<=0||size.y<=0||size.z<=0||size.x/edgeLength<1||size.y/edgeLength<1||size.z/edgeLength<1||
+     (size.x/edgeLength+3)*(size.y/edgeLength+3)*(size.z/edgeLength+3)>16000000){
+    JS_FreeValue(ctx,sdfVal);return JS_ThrowRangeError(ctx,"levelSet requires finite ordered bounds, positive edgeLength no larger than the smallest extent, and at most 16 million sampling cells");
+  }
   JSValue sdfFunc = JS_DupValue(ctx, sdfVal);
   JS_FreeValue(ctx, sdfVal);
 
@@ -1203,18 +1214,21 @@ JSValue JsLevelSet(JSContext *ctx, JSValueConst, int argc, JSValueConst *argv) {
     if (JS_IsException(result)) {
       JSValue exc = JS_GetException(ctx);
       JSValue stack = JS_GetPropertyStr(ctx, exc, "stack");
-      const char *msg = JS_ToCString(ctx, JS_IsUndefined(stack) ? exc : stack);
+      const char *msg = JS_ToCString(ctx, exc);
+      const char *trace = JS_IsUndefined(stack)?nullptr:JS_ToCString(ctx,stack);
       errorOccurred = true;
       errorMessage = msg ? msg : "levelSet SDF threw";
+      if(trace)errorMessage+=std::string("\n")+trace;
+      if(trace)JS_FreeCString(ctx,trace);
       if (msg) JS_FreeCString(ctx, msg);
       JS_FreeValue(ctx, stack);
       JS_FreeValue(ctx, exc);
       return 0.0;
     }
     double value = 0.0;
-    if (JS_ToFloat64(ctx, &value, result) < 0) {
+    if (!JS_IsNumber(result) || JS_ToFloat64(ctx, &value, result) < 0 || !std::isfinite(value)) {
       errorOccurred = true;
-      errorMessage = "levelSet SDF must return number";
+      errorMessage = "levelSet SDF must return a finite number";
       JS_FreeValue(ctx, result);
       return 0.0;
     }
@@ -1222,9 +1236,10 @@ JSValue JsLevelSet(JSContext *ctx, JSValueConst, int argc, JSValueConst *argv) {
     return value;
   };
 
-  auto manifoldPtr = std::make_shared<manifold::Manifold>(
-      manifold::Manifold::LevelSet(sdf, bounds, edgeLength, level, tolerance,
-                                   false));
+  std::shared_ptr<manifold::Manifold> manifoldPtr;
+  try {manifoldPtr = std::make_shared<manifold::Manifold>(
+      manifold::Manifold::LevelSet(sdf, bounds, edgeLength, level, tolerance,false));}
+  catch(const std::exception& error){JS_FreeValue(ctx,sdfFunc);return JS_ThrowInternalError(ctx,"levelSet: %s",error.what());}
   JS_FreeValue(ctx, sdfFunc);
   if (errorOccurred) {
     return JS_ThrowInternalError(ctx, "%s", errorMessage.c_str());

@@ -62,7 +62,7 @@ std::vector<std::string> ProcessArguments(int argc,char** argv){
 }
 bool IsAgentCommand(const std::vector<std::string>& arguments){
   if(arguments.size()<2)return false;
-  const std::set<std::string> commands={"docs","open","sessions","snapshot","overview","profile","checks","export","export-history","selection","reference","pick","pick-status","pick-cancel","events","state","revision","wait","highlight","frame","view","screenshot","capabilities","version","help","--help","-h","--version","--json","--session","-s"};
+  const std::set<std::string> commands={"docs","open","reload","cancel-load","sessions","snapshot","overview","profile","checks","export","export-history","selection","reference","pick","pick-status","pick-cancel","events","state","revision","wait","highlight","frame","view","screenshot","capabilities","version","help","--help","-h","--version","--json","--session","-s"};
   if(commands.count(arguments[1]))return true;
   return arguments[1].rfind("--",0)==0&&arguments[1]!="--render-scene"&&arguments[1]!="--profile-scene"&&arguments[1]!="--check-scene"&&arguments[1]!="--ui-preview"&&arguments[1]!="--agent-session";
 }
@@ -92,7 +92,11 @@ int RunAgentCli(const std::vector<std::string>& arguments,const std::string& exe
 #endif
       if(hostsViewer)viewer=std::filesystem::u8path(executable);
       if(const char* configured=std::getenv("SYNTHCAD_VIEWER"))viewer=std::filesystem::u8path(configured);
-      response=OpenSession(project.path.u8string(),options.session,options.arguments.value("hidden",false),std::filesystem::absolute(viewer).u8string(),options.timeoutMs);
+      response=OpenSession(project.path.u8string(),options.session,options.arguments.value("hidden",false),std::filesystem::absolute(viewer).u8string(),options.timeoutMs,options.arguments.value("evaluationTimeoutMs",0));
+      if(response.value("ok",false)&&options.arguments.contains("evaluationTimeoutMs")&&response.at("data").value("reused",false)){
+        auto configured=Request(response.at("session"),{{"command","configure-evaluation"},{"arguments",{{"evaluationTimeoutMs",options.arguments.at("evaluationTimeoutMs")}}}},options.timeoutMs);
+        if(!configured.value("ok",false))response=configured;
+      }
     }else{
       if(options.command=="screenshot"||options.command=="export")options.arguments["path"]=std::filesystem::absolute(std::filesystem::u8path(options.arguments.at("path").get<std::string>())).u8string();
       const int requestTimeout=options.command=="events"?

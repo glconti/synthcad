@@ -1,14 +1,14 @@
 # SynthCAD Release QA checklist
 
-Use a fresh project folder and the standalone `SynthCAD.exe`. The executable
+Use a fresh project folder and the standalone `synthcad-cli.exe`. The executable
 contains its CLI guides and viewer; no repository checkout or skill files are
 needed to begin. The agent edits JavaScript files, while CLI calls communicate
 with the persistent viewer. This is a Release QA snapshot, not a completed v1
 release or a slicer.
 
 For the current Windows QA snapshot, the clean destination is
-`D:\SynthCAD-QA\SynthCAD.exe`. Run `./SynthCAD.exe --help` for discovery,
-`./SynthCAD.exe open . --session qa` after creating a project, or pass a `.js`
+`D:\SynthCAD-QA\synthcad-cli.exe`. Run `./synthcad-cli.exe --help` for discovery,
+`./synthcad-cli.exe open . --session qa` after creating a project, or pass a `.js`
 path directly to open a legacy scene. No-argument execution prints CLI help.
 The existing development viewer's no-argument sample behavior is unchanged.
 
@@ -19,15 +19,15 @@ cmake --preset windows-x64-portable-release
 cmake --build --preset windows-x64-portable-release
 ```
 
-Copy `out/build/windows-x64-portable-release/viewer/dingcad_viewer.exe` as
-`SynthCAD.exe`. The portable preset links third-party libraries and the C/C++
+Copy `out/build/windows-x64-portable-release/viewer/synthcad-cli.exe` as
+`synthcad-cli.exe`. The portable preset links third-party libraries and the C/C++
 runtime statically; Windows system libraries and graphics drivers remain OS
 dependencies. Its viewer-hosting CLI launches this same executable, including
 after renaming or moving it.
 
 ## Agent discovery and first model
 
-- Run `./SynthCAD.exe`, `--help`, `capabilities --json` and `docs` from outside
+- Run `./synthcad-cli.exe`, `--help`, `capabilities --json` and `docs` from outside
   the repository. Help should group commands and guides by area.
 - Read `docs start`, `docs modeling`, `docs api`, `docs design` and
   `docs print-design` through stdout. No installed skill should be required.

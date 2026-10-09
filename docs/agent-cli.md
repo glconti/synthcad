@@ -1,6 +1,6 @@
 # SynthCAD local review CLI
 
-`synthcad` connects short shell calls to a persistent local viewer. Open a project
+`synthcad-cli` connects short shell calls to a persistent local viewer. Open a project
 once, edit its JavaScript files using your normal editor or agent, and inspect
 the resulting geometry in the same viewer session. This increment provides
 semantic review, geometric selection references, guided human selection and
@@ -10,15 +10,15 @@ Model creation and edits remain ordinary source-file edits.
 The existing `dingcad_viewer` executable, launch scripts, standalone scene
 arguments, `--check-scene`, `--profile-scene`, `--render-scene` and `--ui-preview`
 entry points remain available. The viewer also accepts the new review commands.
-Use the `synthcad` executable for discoverable command parsing.
+The standalone `synthcad-cli` executable bundles the CLI and viewer. Existing `synthcad` development builds accept the same commands. In the standalone build, a positional project or scene path uses the same session-reusing `open` operation.
 
 ## Export current geometry
 
 ```text
-synthcad export ./local-scenes/current-plate.3mf -s bracket --dry-run --json
-synthcad export ./local-scenes/current-plate.3mf -s bracket --expect-revision TOKEN --json
-synthcad export ./local-scenes/current-plate.stl -s bracket --visible-only --allow-warnings --replace --json
-synthcad export-history -s bracket --json
+synthcad-cli export ./local-scenes/current-plate.3mf -s bracket --dry-run --json
+synthcad-cli export ./local-scenes/current-plate.3mf -s bracket --expect-revision TOKEN --json
+synthcad-cli export ./local-scenes/current-plate.stl -s bracket --visible-only --allow-warnings --replace --json
+synthcad-cli export-history -s bracket --json
 ```
 
 The format defaults to the destination's case-insensitive `.3mf` or `.stl`
@@ -52,11 +52,11 @@ An optional `--expect-revision` rejects a stale displayed context for this read.
 ## Discover the interface
 
 ```text
-synthcad --help
-synthcad help wait
-synthcad screenshot --help
-synthcad --version --json
-synthcad capabilities --json
+synthcad-cli --help
+synthcad-cli help wait
+synthcad-cli screenshot --help
+synthcad-cli --version --json
+synthcad-cli capabilities --json
 ```
 
 Help, version and capability discovery run without opening a GUI. Capabilities
@@ -65,25 +65,25 @@ describe this implementation, including `geometryEditing: false` and
 
 ## Load guidance only when needed
 
-Running `synthcad` without arguments, or `synthcad --help`, groups commands and
+Running `synthcad-cli` without arguments, or `synthcad-cli --help`, groups commands and
 guidance by area. The instructions are bundled in the CLI: no checkout, network
 request, viewer session or skill installation is needed to read them.
 
 ```text
-synthcad docs                 # List available areas and bundle version
-synthcad docs start           # Start a new design/review workflow
-synthcad docs skill           # Full portable design workflow instructions
-synthcad docs modeling        # Structure parametric models and scenes
-synthcad docs api             # Implemented geometry API, from API.md
-synthcad docs print-design    # Printing constraints and orientation decisions
-synthcad docs profiles        # Printer, bed exclusions, nozzle and material setup
-synthcad docs fit-and-assembly
-synthcad docs build-plates
-synthcad docs checks          # Geometry/plate checks, evidence and limitations
-synthcad docs bambu-handoff
-synthcad docs cli             # This command reference
-synthcad docs projects        # Project files and revision semantics
-synthcad docs design          # Shared source parts, instances and layouts
+synthcad-cli docs                 # List available areas and bundle version
+synthcad-cli docs start           # Start a new design/review workflow
+synthcad-cli docs skill           # Full portable design workflow instructions
+synthcad-cli docs modeling        # Structure parametric models and scenes
+synthcad-cli docs api             # Implemented geometry API, from API.md
+synthcad-cli docs print-design    # Printing constraints and orientation decisions
+synthcad-cli docs profiles        # Printer, bed exclusions, nozzle and material setup
+synthcad-cli docs fit-and-assembly
+synthcad-cli docs build-plates
+synthcad-cli docs checks          # Geometry/plate checks, evidence and limitations
+synthcad-cli docs bambu-handoff
+synthcad-cli docs cli             # This command reference
+synthcad-cli docs projects        # Project files and revision semantics
+synthcad-cli docs design          # Shared source parts, instances and layouts
 ```
 
 `docs AREA` writes the complete guide as plain UTF-8 text to stdout, with no
@@ -105,47 +105,47 @@ artifacts in the repository's ignored `local-scenes/` directory.
 PowerShell, with the built executables on `PATH`:
 
 ```powershell
-$opened = synthcad open '.\local-scenes\Pièce\assembly.js' --session bracket --json | ConvertFrom-Json
+$opened = synthcad-cli open '.\local-scenes\Pièce\assembly.js' --session bracket --json | ConvertFrom-Json
 if (-not $opened.ok) { throw $opened.error.message }
-synthcad state -s bracket --json
-synthcad snapshot -s bracket --json
+synthcad-cli state -s bracket --json
+synthcad-cli snapshot -s bracket --json
 
 # Edit the entry or an imported source file using your editor, then capture
 # the desired disk revision. During initial startup, revision can return busy.
 do {
-    $desired = synthcad revision -s bracket --json | ConvertFrom-Json
+    $desired = synthcad-cli revision -s bracket --json | ConvertFrom-Json
     if (-not $desired.ok -and $desired.error.code -eq 'busy') {
         Start-Sleep -Milliseconds 100
     } else { break }
 } while ($true)
 if (-not $desired.ok) { throw $desired.error.message }
 
-$loaded = synthcad wait -s bracket --revision $desired.data.revision --timeout 10000 --json | ConvertFrom-Json
+$loaded = synthcad-cli wait -s bracket --revision $desired.data.revision --timeout 10000 --json | ConvertFrom-Json
 if (-not $loaded.ok) { throw $loaded.error.message }
-synthcad highlight base lid -s bracket --frame --expect-revision $loaded.revision --json
-synthcad screenshot '.\local-scenes\review.png' -s bracket --expect-revision $loaded.revision --json
+synthcad-cli highlight base lid -s bracket --frame --expect-revision $loaded.revision --json
+synthcad-cli screenshot '.\local-scenes\review.png' -s bracket --expect-revision $loaded.revision --json
 ```
 
 Linux shell, with `jq` available for extracting JSON fields:
 
 ```sh
-synthcad open './local-scenes/Pièce/assembly.js' --session bracket --json
+synthcad-cli open './local-scenes/Pièce/assembly.js' --session bracket --json
 # Edit the source files before requesting the revision.
 while true; do
-    desired=$(synthcad revision -s bracket --json)
+    desired=$(synthcad-cli revision -s bracket --json)
     status=$?
     if [ "$status" -eq 0 ]; then break; fi
     if [ "$status" -ne 11 ]; then printf '%s\n' "$desired" >&2; exit "$status"; fi
     sleep 0.1
 done
 token=$(printf '%s' "$desired" | jq -r '.data.revision')
-loaded=$(synthcad wait -s bracket --revision "$token" --timeout 10000 --json)
+loaded=$(synthcad-cli wait -s bracket --revision "$token" --timeout 10000 --json)
 status=$?
 if [ "$status" -ne 0 ]; then printf '%s\n' "$loaded" >&2; exit "$status"; fi
 displayed=$(printf '%s' "$loaded" | jq -r '.revision')
-synthcad selection -s bracket --json
-synthcad frame --selection -s bracket --expect-revision "$displayed" --json
-synthcad screenshot './local-scenes/review.png' -s bracket --json
+synthcad-cli selection -s bracket --json
+synthcad-cli frame --selection -s bracket --expect-revision "$displayed" --json
+synthcad-cli screenshot './local-scenes/review.png' -s bracket --json
 ```
 
 The `revision` command captures current bytes of the active view's known
@@ -174,7 +174,7 @@ legacy scenes). A shared-design graph supplies source-part IDs, physical
 instance IDs, groups, views and effective transforms. A tree alias references
 the same instance: it does not add another object to `parts` or exports. Each
 graph part includes `sourcePartId`, `instanceId` and `transform`; graph groups
-include their authored `sourceId`. Read `synthcad docs design` before authoring
+include their authored `sourceId`. Read `synthcad-cli docs design` before authoring
 an assembly and multiple print views from shared definitions.
 
 ## Commands and options
@@ -188,8 +188,8 @@ values, scoped validation errors, metadata readiness, and a deterministic
 context is project-local; previous projects and global defaults are never inherited.
 Slicer IDs are recorded as metadata and never reported as verified presets.
 
-Run `synthcad docs profiles` for setup questions and the manifest contract, or
-`synthcad profile --template` for an incomplete JSON fragment that can be reviewed
+Run `synthcad-cli docs profiles` for setup questions and the manifest contract, or
+`synthcad-cli profile --template` for an incomplete JSON fragment that can be reviewed
 before dimensions, nozzle, and material are known. Template output requires no
 viewer or session and cannot be combined with `--expect-revision`.
 
@@ -270,7 +270,7 @@ Copy the reference from the viewer's selection inspector or read
 `data.selection.geometry.reference` from `selection --json`, then resolve it:
 
 ```text
-synthcad reference scsel1.HEX_PAYLOAD -s bracket --json
+synthcad-cli reference scsel1.HEX_PAYLOAD -s bracket --json
 ```
 
 References are portable ASCII strings with prefix `scsel1.` and a hexadecimal
@@ -292,10 +292,10 @@ review action and does not change the human's selection.
 Use a caller-generated request ID when an agent needs a specific human choice:
 
 ```text
-synthcad pick --id choose-mount-1 --kind surface --question "Which surface should receive the mount?" -s bracket --expect-revision DISPLAYED_REVISION --json
-synthcad pick-status choose-mount-1 -s bracket --json
-synthcad events --after 0 --wait 30000 -s bracket --json
-synthcad pick-cancel choose-mount-1 -s bracket --json
+synthcad-cli pick --id choose-mount-1 --kind surface --question "Which surface should receive the mount?" -s bracket --expect-revision DISPLAYED_REVISION --json
+synthcad-cli pick-status choose-mount-1 -s bracket --json
+synthcad-cli events --after 0 --wait 30000 -s bracket --json
+synthcad-cli pick-cancel choose-mount-1 -s bracket --json
 ```
 
 `pick` accepts only `part`, `surface`, `edge` or `vertex`. A surface can resolve
@@ -385,12 +385,17 @@ current user with mode `0700`; socket permissions are `0600`. Registry records
 include process-start identity and an endpoint nonce checked by the server.
 There is no network service or cloud-account requirement.
 
-By default the CLI launches `dingcad_viewer` beside its own executable. Override
-that location with an absolute `SYNTHCAD_VIEWER` path when testing or using a
-custom installation. `SYNTHCAD_SESSION_DIR` overrides the per-user temporary
-registry directory for isolated tests; set it consistently for the CLI and
-viewer. The directory is secured for the current user. A spawned viewer inherits
-these environment settings.
+The standalone `synthcad-cli` launches itself in viewer mode. The separate
+development CLI launches `dingcad_viewer` beside its executable; an absolute
+`SYNTHCAD_VIEWER` can override that location for testing or custom installations.
+On Windows, the default registry uses the user's stable LocalAppData/Temp
+location, without per-call package redirection. Restricted callers may still
+need permission to access the owner's registry and named pipe. An access error
+retains the existing session; retry with the required execution permissions.
+`SYNTHCAD_SESSION_DIR` overrides the registry for isolated tests; keep it identical
+for the CLI and viewer, and do not change it as an ordinary recovery step.
+The directory is secured for the current user. A spawned viewer inherits these
+environment settings.
 
 ## Structured responses and errors
 
@@ -448,3 +453,72 @@ returned as acknowledgement of a failed current edit.
 Windows and Linux transport regression tests cover persistent process launch,
 simultaneous opens, Unicode paths, concurrency, timeouts and stale records.
 Linux socket testing does not establish full Linux GUI or rendering validation.
+
+## Session access and retry behavior
+
+The standalone delivery is `synthcad-cli.exe` on Windows. No arguments and
+`--help` describe the CLI without opening a window. `open PATH` and positional
+project/scene paths reuse the same registered project session.
+
+`sessions` includes recorded sessions that cannot currently be reached. Each
+record exposes `reachable` and `processStatus` (`alive` or `unknown`), plus
+`processDiagnostic` and `connectionError` when applicable. Process access denied
+is not proof of exit: the record is retained and an authenticated connection is
+attempted. Only confirmed exit or a known process-identity mismatch removes a
+stale record. An unknown or unreachable existing process cannot cause another
+viewer to be launched for that project.
+
+A launch timeout retains its pending process identity for retries. Check
+`sessions`, then retry the same project/session. Access errors return `io_error`
+with the native diagnostic; lock contention remains bounded by `--timeout`.
+Use the execution permissions needed to reach the same session. Do not switch
+`SYNTHCAD_SESSION_DIR` or create project-local registries as a recovery workaround;
+the override is for explicit isolated tests or custom installations.
+
+For routine modeling, parse JSON responses in memory and keep the project to
+`design.js`, `synthcad.json` and requested outputs in `exports/`. Export history
+is already managed by the app under `.synthcad/`.
+
+
+## Recoverable model processing
+
+Model evaluation, triangulation and load-time checks run in a hidden worker
+process. The viewer and session stay available while it runs. `state` exposes
+`loadProgress`, `evaluationTimeoutMs` and, on failure, `loadFailure` alongside
+existing status, diagnostic and attempted/displayed revision fields. The last
+successful model remains visible; export is disabled until the current source
+loads successfully. A failed first load shows an empty workspace.
+
+```text
+synthcad-cli open . --session review --evaluation-timeout 120000 --json
+synthcad-cli state --session review --json
+synthcad-cli reload --session review --evaluation-timeout 240000 --json
+synthcad-cli cancel-load --session review --json
+```
+
+The session evaluation limit defaults to 120000 ms and accepts 1..3600000 ms.
+`open` on an existing session updates the limit for subsequent evaluations;
+`reload` starts a new attempt using that limit. `cancel-load` is idempotent.
+A CLI `--timeout` limits that caller's wait; it does not cancel model work.
+New edits supersede older work. Correcting an imported file also triggers reload.
+
+`wait` retains its `load_failed` error code and snapshot details, including the
+structured `loadFailure`: category, stage, message/details, available source or
+part/operation context, attempted/displayed revisions and native exit code when
+applicable. Categories include `model_error`, `worker_crash`,
+`evaluation_timeout`, `cancelled`, `invalid_worker_result` and
+`preparation_error`. Native exit codes are platform-specific integers; a crash
+report identifies the last observed processing stage, not a proven cause.
+Do not repeatedly reopen the viewer or switch registries to recover a model error.
+
+The existing `events` stream also includes `load-loading`, `load-ready` and
+`load-failed`, with attempted/displayed revisions and available failure details.
+These events have no guided-pick request ID. Progress and dependency discovery
+can emit additional loading events. Consumers must filter by event type and
+revision rather than assume every event concerns a pick request.
+
+The UI provides Cancel, Reload, expandable details and Copy details. Inspection
+of retained geometry remains available. A native model-worker failure cannot
+close the viewer; GPU-driver failures and system-wide resource exhaustion are
+outside this guarantee. Existing headless scene diagnostics use the same worker
+supervision and print failure details before returning a normal nonzero exit.

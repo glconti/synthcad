@@ -35,6 +35,6 @@ nlohmann::json ReadDoc(const std::string& topic) {
         {"content", asset.content}, {"hash", Sha256(asset.content)}});
     return result;
   }
-  throw KnowledgeError("not_found", "Unknown documentation topic: " + topic + ". Run synthcad docs to list areas.");
+  throw KnowledgeError("not_found", "Unknown documentation topic: " + topic + ". Run synthcad-cli docs to list areas.");
 }
 }  // namespace synthcad

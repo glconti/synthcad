@@ -28,6 +28,7 @@ class GuidedPickState {
   void Close();
   nlohmann::json Events(const std::string& after) const;
   std::string Cursor() const;
+  void LoadEvent(const std::string& type,const nlohmann::json& context);
  private:
   void Emit(const std::string& type, const nlohmann::json& request);
   void Finish(const std::string& status, const std::string& type, const std::string& reason);

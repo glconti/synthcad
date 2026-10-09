@@ -218,7 +218,7 @@ int main() {
           guardRequest["expectRevision"]="r1";
           ErrorCode(picks.Handle(guardRequest),"invalid_argument");
         }
-        Check(eventData["events"].size()==1&&eventData["events"][0]["type"]=="pick-started","started event delivery");
+        Check(!eventData["events"].empty()&&eventData["events"].back()["type"]=="pick-started","started event delivery");
         auto eventCursor=eventData["cursor"].get<std::string>();
         auto timeoutEvents=picks.Handle(Request("events",{{"after",eventCursor},{"waitMs",20}}));
         ErrorCode(timeoutEvents,"timeout");

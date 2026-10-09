@@ -14,6 +14,10 @@ void CheckParsing() {
   Require(open.options.session == "bracket" && open.options.jsonOutput, "global values missing");
   Require(open.options.arguments.at("path") == "My Project/scene.js", "path must retain spaces");
   Require(open.options.arguments.at("hidden") == true, "hidden flag missing");
+  auto reload=ParseCli({"reload","--evaluation-timeout","120000"});
+  Require(bool(reload)&&reload.options.arguments.at("evaluationTimeoutMs")==120000,"evaluation limit missing");
+  Require(bool(ParseCli({"cancel-load"})),"cancel load missing");
+  Require(!ParseCli({"reload","--evaluation-timeout","0"})&&!ParseCli({"state","--evaluation-timeout","100"}),"invalid evaluation limit accepted");
   auto wait = ParseCli({"wait", "--revision=abc", "--timeout", "0", "--session=bracket"});
   Require(bool(wait) && wait.options.timeoutMs == 0, "zero-time wait must parse");
   Require(wait.options.arguments.at("revision") == "abc", "revision token missing");
@@ -79,7 +83,7 @@ void CheckResponses() {
   for (size_t i = 0; i < codes.size(); ++i)
     Require(synthcad::ExitCode(codes[i]) == int(i) + 2, "exit code contract changed");
   Require(synthcad::ExitCode("") == 0 && synthcad::ExitCode("unrecognized") != 0, "unknown error must fail");
-  Require(synthcad::Help().find("synthcad wait") != std::string::npos, "help needs wait example");
+  Require(synthcad::Help().find("synthcad-cli wait") != std::string::npos, "help needs wait example");
   Require(synthcad::Help("screenshot").find("--replace") != std::string::npos, "command help missing options");
   Require(synthcad::Capabilities().at("geometryEditing") == false, "discovery must not promise geometry edits");
   Require(synthcad::Capabilities().at("export") == true && synthcad::Capabilities().at("exportHistory") == true && synthcad::Capabilities().at("exportFormats") == nlohmann::json({"3mf","stl"}), "export discovery missing");

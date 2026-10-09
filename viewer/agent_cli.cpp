@@ -12,8 +12,8 @@ namespace {
 using nlohmann::json;
 const std::map<std::string, std::string> kUsage = {
     {"docs", "docs [AREA]"},
-    {"open", "open PATH [--session NAME] [--hidden]"},
-    {"sessions", "sessions"}, {"snapshot", "snapshot"},
+    {"open", "open PATH [--session NAME] [--hidden] [--evaluation-timeout MS]"},
+    {"reload", "reload [--evaluation-timeout MS]"}, {"cancel-load", "cancel-load"}, {"sessions", "sessions"}, {"snapshot", "snapshot"},
     {"overview", "overview"}, {"profile", "profile [--template]"}, {"checks", "checks"},
     {"selection", "selection"}, {"state", "state"},
     {"reference", "reference TOKEN"},
@@ -45,6 +45,8 @@ const std::map<std::string, std::string> kDescriptions = {
     {"events", "Read session events after an opaque cursor; 0 starts retained history. --wait is 0..300000 ms (default 0)."},
     {"state", "Read load state and attempted/displayed revisions."},
     {"revision", "Compute the desired revision from current files on disk."},
+    {"reload", "Retry model evaluation. --evaluation-timeout MS sets the session limit (default 120000, maximum 3600000). Request --timeout does not cancel evaluation."},
+    {"cancel-load", "Cancel the current model worker and retain the last successful model."},
     {"wait", "Wait for the requested revision; default timeout is 10000 ms."},
     {"highlight", "Replace agent highlights, or clear them. --frame also frames the result."},
     {"frame", "Frame the whole scene, given parts, or the current selection."},
@@ -84,7 +86,7 @@ CliParseResult ParseCli(const std::vector<std::string>& arguments) {
       if (flag == "-s") flag = "--session";
       if (flag == "-h") flag = "--help";
       if (!flags.insert(flag).second) return fail("Repeated option: " + flag);
-      const bool needsValue = flag == "--session" || flag == "--timeout" ||
+      const bool needsValue = flag == "--session" || flag == "--timeout" || flag == "--evaluation-timeout" ||
           flag == "--revision" || flag == "--expect-revision" || flag == "--id" ||
           flag == "--kind" || flag == "--question" || flag == "--after" || flag == "--wait" || flag == "--format";
       std::string value;
@@ -107,6 +109,10 @@ CliParseResult ParseCli(const std::vector<std::string>& arguments) {
         if (parsed.ec != std::errc() || parsed.ptr != value.data() + value.size() || timeout < 0 || timeout > 300000)
           return fail("--timeout must be an integer from 0 to 300000 milliseconds");
         options.timeoutMs = timeout;
+      } else if (flag == "--evaluation-timeout") {
+        int ms=0;auto parsed=std::from_chars(value.data(),value.data()+value.size(),ms);
+        if(parsed.ec!=std::errc()||parsed.ptr!=value.data()+value.size()||ms<1||ms>3600000)return fail("--evaluation-timeout must be 1..3600000 milliseconds");
+        options.arguments["evaluationTimeoutMs"]=ms;
       } else if (flag == "--revision") options.arguments["revision"] = value;
       else if (flag == "--id") options.arguments["id"] = value;
       else if (flag == "--kind") options.arguments["kind"] = value;
@@ -137,7 +143,7 @@ CliParseResult ParseCli(const std::vector<std::string>& arguments) {
   }
   if (options.command == "help") {
     options.help = true;
-    if (positional.size() > 1) return fail("Usage: synthcad help [COMMAND]");
+    if (positional.size() > 1) return fail("Usage: synthcad-cli help [COMMAND]");
     options.command = positional.empty() ? "" : positional.front();
     positional.clear();
   }
@@ -169,17 +175,18 @@ CliParseResult ParseCli(const std::vector<std::string>& arguments) {
     return fail("--expect-revision is only valid for review commands");
   if (options.arguments.value("template", false) && !options.expectRevision.empty())
     return fail("--template does not read a displayed revision; omit --expect-revision");
+  if(flags.count("--evaluation-timeout")&&options.command!="open"&&options.command!="reload")return fail("--evaluation-timeout is only valid for open or reload");
   if (options.help) return result;
   if (options.command == "open" || options.command == "view" || options.command == "screenshot" || options.command == "reference" || options.command == "export") {
     if (positional.size() != 1 || positional.front().empty())
-      return fail("Usage: synthcad " + kUsage.at(options.command));
+      return fail("Usage: synthcad-cli " + kUsage.at(options.command));
     options.arguments[options.command == "view" ? "name" : options.command == "reference" ? "reference" : "path"] = positional.front();
   } else if (options.command == "pick-status" || options.command == "pick-cancel") {
-    if (positional.size() != 1) return fail("Usage: synthcad " + kUsage.at(options.command));
+    if (positional.size() != 1) return fail("Usage: synthcad-cli " + kUsage.at(options.command));
     options.arguments["id"] = positional.front();
   } else if (options.command == "docs") {
     if (positional.size() > 1 || (!positional.empty() && positional.front().empty()))
-      return fail("Usage: synthcad docs [AREA]");
+      return fail("Usage: synthcad-cli docs [AREA]");
     if (!positional.empty()) options.arguments["topic"] = positional.front();
   } else if (options.command == "highlight" || options.command == "frame") {
     if (options.command == "highlight" && options.arguments.value("clear", false) && !positional.empty())
@@ -233,19 +240,19 @@ CliParseResult ParseCli(const std::vector<std::string>& arguments) {
 std::string Help(const std::string& command) {
   std::ostringstream out;
   const auto guidance = [&]() {
-    out << "Guidance on demand: synthcad docs AREA\n"
+    out << "Guidance on demand: synthcad-cli docs AREA\n"
         << "  Getting started     start, skill\n"
         << "  Modeling            modeling, api, design\n"
         << "  Printing & assembly profiles, checks, print-design, fit-and-assembly, physical-feedback\n"
         << "  Plates & handoff     build-plates, bambu-handoff\n"
         << "  Agent review        cli, projects, overview\n"
         << "Prints complete instructions to stdout; no skill files to install.\n"
-        << "Use synthcad docs to list guides and their current bundle version.\n";
+        << "Use synthcad-cli docs to list guides and their current bundle version.\n";
   };
   if (!command.empty()) {
     auto usage = kUsage.find(command);
     if (usage == kUsage.end()) return "Unknown command: " + command + "\n";
-    out << "Usage: synthcad " << usage->second << "\n\n" << kDescriptions.at(command) << "\n";
+    out << "Usage: synthcad-cli " << usage->second << "\n\n" << kDescriptions.at(command) << "\n";
     if (command == "docs") { out << "\n"; guidance(); }
     if (kReview.count(command)) out << "  --expect-revision TOKEN  Reject a stale displayed revision.\n";
     if (command == "events") out << "The session retains 256 events. Cursors reset with the session; stale_cursor exits 13.\n"
@@ -254,11 +261,14 @@ std::string Help(const std::string& command) {
     if (command == "pick") out << "ID: 1..128 bytes; question: 1..4096 bytes; neither permits NUL.\n"
         << "Repeat the same ID and payload to replay the receipt without another UI event.\n";
   } else {
-    out << "SynthCAD — design with an agent, review in a persistent local viewer\n\nUsage: synthcad COMMAND [OPTIONS]\n\n";
+    out << "SynthCAD CLI — command-line interface controlling a persistent local viewer\n\nUsage: synthcad-cli COMMAND [OPTIONS]\n\n"
+        << "Start here: synthcad-cli docs start. Edit model files with your agent/editor.\n"
+        << "Use open PATH once; later commands reuse the same viewer session.\n"
+        << "The legacy synthcad executable accepts the same commands.\n\n";
     guidance();
     for (const auto& area : std::vector<std::pair<std::string, std::vector<std::string>>>{
         {"Discovery", {"docs", "capabilities", "version"}},
-        {"Projects & sessions", {"open", "sessions", "view"}},
+        {"Projects & sessions", {"open", "reload", "cancel-load", "sessions", "view"}},
         {"Reload & revision checks", {"state", "revision", "wait"}},
         {"Project context", {"overview", "profile", "checks"}},
         {"Shared review", {"snapshot", "selection", "reference", "highlight", "frame", "screenshot"}},
@@ -268,17 +278,17 @@ std::string Help(const std::string& command) {
       for (const auto& name : area.second) out << "  " << kUsage.at(name) << "\n";
     }
     out << "\n  help [COMMAND]\n\nExamples:\n"
-        << "  synthcad docs start\n"
-        << "  synthcad docs print-design\n"
-        << "  synthcad profile --template\n"
-        << "  synthcad overview -s bracket --json\n"
-        << "  synthcad open \"My Project/assembly.js\" --session bracket\n"
-        << "  synthcad --session bracket --json snapshot\n"
-        << "  synthcad revision -s bracket --json\n"
-        << "  synthcad wait -s bracket --revision TOKEN --timeout 10000\n"
-        << "  synthcad highlight base lid -s bracket --frame --expect-revision TOKEN\n"
-        << "  synthcad pick --id mount-1 --kind surface --question \"Which surface?\" -s bracket\n"
-        << "  synthcad events --after 0 --wait 30000 -s bracket --json\n";
+        << "  synthcad-cli docs start\n"
+        << "  synthcad-cli docs print-design\n"
+        << "  synthcad-cli profile --template\n"
+        << "  synthcad-cli overview -s bracket --json\n"
+        << "  synthcad-cli open \"My Project/assembly.js\" --session bracket\n"
+        << "  synthcad-cli --session bracket --json snapshot\n"
+        << "  synthcad-cli revision -s bracket --json\n"
+        << "  synthcad-cli wait -s bracket --revision TOKEN --timeout 10000\n"
+        << "  synthcad-cli highlight base lid -s bracket --frame --expect-revision TOKEN\n"
+        << "  synthcad-cli pick --id mount-1 --kind surface --question \"Which surface?\" -s bracket\n"
+        << "  synthcad-cli events --after 0 --wait 30000 -s bracket --json\n";
   }
   out << "\nGlobal options (before or after the command):\n"
       << "  --session, -s NAME  Address a session; required when several are running.\n"
@@ -298,7 +308,7 @@ json Capabilities() {
   json commands = json::array();
   for (const auto& entry : kUsage) commands.push_back(entry.first);
   return {{"protocolVersion", 1}, {"commands", commands},
-          {"persistentSessions", true}, {"semanticSnapshots", true},
+          {"isolatedModelEvaluation",true},{"evaluationTimeoutDefaultMs",120000},{"loadDiagnostics",true},{"persistentSessions", true}, {"semanticSnapshots", true},
           {"revisionWait", true}, {"agentHighlights", true},
           {"screenshots", true}, {"bundledGuidance", true}, {"selectionReferences", true},
           {"projectOverview", true}, {"printerProfiles", true}, {"manufacturingChecks", true}, {"automaticPacking", false}, {"slicerPresetVerification", false},
@@ -345,7 +355,7 @@ std::string FormatResponse(const json& response, bool jsonOutput) {
   if (response.value("command", "") == "docs" && data != response.end()) {
     if (data->contains("content")) return data->at("content").get<std::string>();
     std::ostringstream docs;
-    docs << "SynthCAD guidance — print an area with synthcad docs AREA\n\n";
+    docs << "SynthCAD guidance — print an area with synthcad-cli docs AREA\n\n";
     for (const auto& topic : data->at("topics"))
       docs << "  " << topic.at("topic").get<std::string>() << " — " << topic.at("title").get<std::string>() << "\n";
     docs << "\nBundle: " << data->at("bundleVersion").get<std::string>() << "\n";

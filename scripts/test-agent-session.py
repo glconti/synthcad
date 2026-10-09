@@ -206,6 +206,15 @@ def _terminate_owned_pid(pid: int) -> bool:
             return True
         except OSError:
             return True
+        # A container's PID 1 may leave an exited detached viewer unreaped.
+        # kill(pid, 0) still succeeds for zombies; they are no longer running.
+        if sys.platform.startswith("linux"):
+            try:
+                status = Path(f"/proc/{pid}/stat").read_text()
+                if status.rsplit(")", 1)[1].split()[0] in ("Z", "X"):
+                    return True
+            except FileNotFoundError:
+                return True
         time.sleep(0.05)
     raise OSError(f"test-owned viewer PID {pid} did not stop after SIGTERM")
 
@@ -214,7 +223,7 @@ def discover_executable(explicit: str | None) -> Path:
     if explicit:
         candidate = Path(explicit).expanduser()
         if candidate.is_dir():
-            names = ("synthcad.exe", "dingcad_viewer.exe", "synthcad", "dingcad_viewer")
+            names = ("synthcad-cli.exe", "synthcad.exe", "dingcad_viewer.exe", "synthcad-cli", "synthcad", "dingcad_viewer")
             for name in names:
                 match = candidate / name
                 if match.is_file():

@@ -36,12 +36,12 @@ Several view names may map to the same entry file when that file exports a
 shared `design` graph. The active manifest name selects the matching graph view;
 missing graph views fail rather than silently showing the default. Standalone
 files keep their `scene` alias and select the graph's `defaultView`. Run
-`synthcad docs design` for source parts, instances and reference-based layouts.
+`synthcad-cli docs design` for source parts, instances and reference-based layouts.
 
 Unknown root fields are permitted for future metadata. `profiles` and
-`activeProfile` now supply project-local printer context (`synthcad docs profiles`).
+`activeProfile` now supply project-local printer context (`synthcad-cli docs profiles`).
 `measurements`, `assumptions`, `checks`, `evidence` and `exports` supply the
-overview (`synthcad docs overview`). Their validation errors are reported
+overview (`synthcad-cli docs overview`). Their validation errors are reported
 separately and do not reject otherwise valid geometry. Malformed JSON,
 unsupported schema versions and invalid required fields produce actionable
 errors including the manifest path. Loading never rewrites project files.

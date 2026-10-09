@@ -26,7 +26,7 @@ class SessionServer {
 nlohmann::json ListSessions();
 nlohmann::json OpenSession(const std::string& projectPath,
                           const std::string& requestedName, bool hidden,
-                          const std::string& viewerExe, int timeoutMs = 10000);
+                          const std::string& viewerExe, int timeoutMs = 10000, int evaluationTimeoutMs = 0);
 nlohmann::json Request(const std::string& session, const nlohmann::json& request,
                        int timeoutMs = 10000);
 

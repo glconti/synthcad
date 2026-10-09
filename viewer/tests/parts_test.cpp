@@ -164,8 +164,8 @@ int main(){try{
     const auto toast=ui.ToastCard(1280,720);
     ui.gesture=false;ui.Update(Click(toast.x+toast.width-22,toast.y+24),1280,720,11);Require(!ui.ToastVisible(11),"Toast can be dismissed");
   ui.Failed(std::string(3000,'W'));auto errorBounds=ui.ErrorCard(640,400);
-  ui.Update(Click(errorBounds.x+30,errorBounds.y+85),640,400,20);Require(ui.details,"Diagnostics expand");
-  PanelInput errorScroll;auto expandedError=ui.ErrorCard(640,400);errorScroll.mouse={expandedError.x+30,expandedError.y+130};errorScroll.wheel=-100;
+  ui.Update(Click(errorBounds.x+30,errorBounds.y+108),640,400,20);Require(ui.details,"Diagnostics expand");
+  PanelInput errorScroll;auto expandedError=ui.ErrorCard(640,400);errorScroll.mouse={expandedError.x+30,expandedError.y+160};errorScroll.wheel=-100;
   ui.Update(errorScroll,640,400,20);Require(ui.detailScroll>0&&ui.CapturesMouse(errorScroll,640,400,20),"Long diagnostics scroll and capture input");
   PartTree longTree;std::vector<DisplayPart> many;for(int n=0;n<100;++n){auto part=a;part.id="long"+std::to_string(n);part.name=part.id;many.push_back(part);}longTree.Reload(many);
   PartsPanel longPanel;auto longLayout=longPanel.Layout(longTree,640,400);PanelInput wheel;wheel.mouse={longLayout.list.x+30,longLayout.list.y+20};wheel.wheel=-100;

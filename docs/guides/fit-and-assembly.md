@@ -1,6 +1,6 @@
 # Fit and assembly
 
-Run `synthcad docs fit-and-assembly` to print this guide.
+Run `synthcad-cli docs fit-and-assembly` to print this guide.
 
 ## Model the mating conditions
 
@@ -34,7 +34,7 @@ or guarantee this project's joint strength.
 ## Report what was checked
 
 The viewer displays authored dimensions and computes manufacturing review
-against placed solids and supplied profile metadata. `synthcad checks --json`
+against placed solids and supplied profile metadata. `synthcad-cli checks --json`
 can identify overlap, bounds and layout concerns; each result states its
 method, evidence and scope. These checks do not establish a workable insertion
 path, printed fit, retention force or load capacity. A geometric overlap may

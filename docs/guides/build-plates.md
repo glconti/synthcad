@@ -1,6 +1,6 @@
 # Build-plate layouts
 
-Run `synthcad docs build-plates` to print this guide. Plate layouts are authored
+Run `synthcad-cli docs build-plates` to print this guide. Plate layouts are authored
 views of a shared design graph. A known `buildVolume` is enough to check model
 bounds against a rectangular bed; printer identity, a catalog profile, nozzle
 and material are not prerequisites for authoring or reviewing placements.
@@ -21,7 +21,7 @@ one instance in a second review group should not create another printable copy.
 For new multi-view projects, export a shared `design` graph: define source parts
 once, give each physical copy a distinct instance ID, and reference those IDs
 from groups and view members. A plate's `placements` override assembly poses
-without changing the source or other views. Run `synthcad docs design` for the
+without changing the source or other views. Run `synthcad-cli docs design` for the
 schema. Manufacturing quantity review compares physical instances and declared
 source quantities across plate views. Group aliases remain a single copy;
 assigning one instance to multiple plates is a review concern.
@@ -47,7 +47,7 @@ Leave margins for the actual slicer's brim, supports, skirt/raft, purge or prime
 ## Review placement limits
 
 Inspect each transformed part and the combined layout in the viewer. Run
-`synthcad checks --session NAME --json` for bounds, bed contact, overlap,
+`synthcad-cli checks --session NAME --json` for bounds, bed contact, overlap,
 allowance and quantity review against the current placed solids and supplied
 profile. Read each check's method, scope and evidence: deterministic geometry
 calculations and conservative warnings support different conclusions. Unknown
@@ -57,19 +57,19 @@ After editing the source files, wait for the normal reload, switch to each plate
 view and run the CLI check. For example:
 
 ```text
-synthcad view plate-a --session NAME --json
-synthcad checks --session NAME --json
+synthcad-cli view plate-a --session NAME --json
+synthcad-cli checks --session NAME --json
 ```
 
 Read `profileStatus`, the report basis, each check's result/method/evidence, and
 the quantity rows before acting on a warning. Repeat after any placement,
 geometry or supplied-limit change; the old report describes its recorded
-revisions only. `synthcad docs checks` prints the full report guide to stdout.
+revisions only. `synthcad-cli docs checks` prints the full report guide to stdout.
 
 Set per-view `plateSettings` for known `partGap`, `brim` and `support`
 allowances; omitted values remain unknown. Explicit zero is an authored choice,
 not a default prediction about slicing. `contactTolerance` is a numerical
-comparison tolerance, not a fit allowance. Run `synthcad docs profiles` for
+comparison tolerance, not a fit allowance. Run `synthcad-cli docs profiles` for
 project metadata and see [manufacturing checks](../manufacturing-checks.md)
 for the report contract. Verify actual support/brim geometry and accessibility
 in the target slicer before describing a layout as ready to print.
@@ -82,4 +82,4 @@ toolhead/frame collisions. Use real slicer settings to inspect those structures
 and their headroom, the first layer, and the toolpaths for every part. A layout
 can pass geometric checks and still be unsuitable to slice or print.
 
-The GUI exports standard 3MF (selected by default) or STL and preserves the selected model solids' current coordinates. Exporting an assembly view therefore preserves assembly placement; exporting a manually authored plate view preserves its plate placement. A plate scene is the authored geometry itself, not proof that parts fit or slice correctly. Run `synthcad docs bambu-handoff` for the complete export and slicer-review workflow; the repository's [standard 3MF export note](../three-mf-export.md) describes the package contents in more detail.
+The GUI exports standard 3MF (selected by default) or STL and preserves the selected model solids' current coordinates. Exporting an assembly view therefore preserves assembly placement; exporting a manually authored plate view preserves its plate placement. A plate scene is the authored geometry itself, not proof that parts fit or slice correctly. Run `synthcad-cli docs bambu-handoff` for the complete export and slicer-review workflow; the repository's [standard 3MF export note](../three-mf-export.md) describes the package contents in more detail.

@@ -48,6 +48,8 @@ void AgentBridge::Publish(json snapshot,FileSnapshot files){
       if(snapshot.value("status","")=="failed")picks_.Invalidate("load_failed");
       else if(snapshot.value("status","")=="ready"&&snapshot.value("displayedRevision","")!=active.value("revision",""))picks_.Invalidate("revision_changed");
     }
+    if(snapshot.value("status","")!=snapshot_.value("status","")||snapshot.value("attemptedRevision","")!=snapshot_.value("attemptedRevision",""))
+      picks_.LoadEvent("load-"+snapshot.value("status",std::string("loading")),{{"attemptedRevision",snapshot.value("attemptedRevision","")},{"displayedRevision",snapshot.value("displayedRevision","")},{"failure",snapshot.value("loadFailure",json(nullptr))}});
     snapshot_=std::move(snapshot);files_=std::move(files);UpdatePickSnapshot();}
   changed_.notify_all();
 }

@@ -60,6 +60,7 @@ endif()
 
 add_executable(dingcad_viewer
   main.cpp
+  model_worker.cpp
   geometry_picker.cpp
   feature_topology.cpp
   selection_reference.cpp
@@ -98,6 +99,7 @@ target_link_libraries(dingcad_viewer
 
 option(SYNTHCAD_SINGLE_EXECUTABLE "Use the viewer as a standalone CLI and GUI executable" OFF)
 if(SYNTHCAD_SINGLE_EXECUTABLE)
+  set_target_properties(dingcad_viewer PROPERTIES OUTPUT_NAME "synthcad-cli")
   target_compile_definitions(dingcad_viewer PRIVATE SYNTHCAD_SINGLE_EXECUTABLE)
   if(WIN32)
     # The vcpkg static raylib package does not carry its external GLFW link.
@@ -292,3 +294,14 @@ foreach(target IN LISTS synthcad_viewer_targets)
   endif()
 endforeach()
 add_custom_target(synthcad_tests DEPENDS dingcad_viewer synthcad ${synthcad_test_targets})
+
+add_executable(synthcad_model_worker_tests EXCLUDE_FROM_ALL tests/model_worker_test.cpp model_worker.cpp js_bindings.cpp appearance.cpp dimensions.cpp manufacturing_checks.cpp)
+target_include_directories(synthcad_model_worker_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(synthcad_model_worker_tests PRIVATE manifold raylib dingcad_quickjs synthcad_agent synthcad_design_graph)
+if(MSVC)
+  target_compile_options(synthcad_model_worker_tests PRIVATE /utf-8 /UNDEBUG)
+else()
+  target_compile_options(synthcad_model_worker_tests PRIVATE -UNDEBUG)
+endif()
+add_test(NAME synthcad_model_worker_tests COMMAND synthcad_model_worker_tests)
+add_dependencies(synthcad_tests synthcad_model_worker_tests)

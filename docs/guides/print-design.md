@@ -1,6 +1,6 @@
 # Design for printing
 
-Run `synthcad docs print-design` to print this guide. It frames design choices; it does not supply printer-validated settings.
+Run `synthcad-cli docs print-design` to print this guide. It frames design choices; it does not supply printer-validated settings.
 
 ## Gather project-specific constraints
 
@@ -48,7 +48,7 @@ Compare a monolithic print with a split design when the one-piece orientation ca
 
 ## State the evidence honestly
 
-`synthcad checks --session NAME --json` reports engine calculations for placed-part bounds,
+`synthcad-cli checks --session NAME --json` reports engine calculations for placed-part bounds,
 bed contact, overlap, specified allowances and plate quantities. Read the
 method and scope: a deterministic bounds calculation is different from a
 conservative heuristic warning. Authored overview records remain authored

@@ -30,6 +30,8 @@ def main():
 
         help_text = call('--help')
         assert call() == help_text
+        assert 'command-line interface controlling a persistent local viewer' in help_text
+        assert 'synthcad-cli' in help_text
         for area in ('Getting started', 'Modeling', 'Printing & assembly', 'Plates & handoff', 'Agent review'):
             assert area in help_text, area
         assert 'docs [AREA]' in call('help', 'docs')
@@ -57,9 +59,15 @@ def main():
             assert data['hash'] == hashlib.sha256(data['content'].encode('utf-8')).hexdigest()
             assert call('docs', topic) == data['content'], topic
             assert not Path(data['source']).is_absolute()
+        start = call('docs', 'start')
+        for convention in ('design.js', 'synthcad.json', 'exports/', 'memory', 'temporary'):
+            assert convention in start, convention
+        skill = call('docs', 'skill')
+        assert 'cannot export' not in skill.lower()
+        assert '.sessions/' in skill and 'do not change' in skill
         error = json.loads(call('docs', 'not-a-topic', '--json', exit_code=12))
         assert not error['ok'] and error['error']['code'] == 'not_found'
-        assert 'synthcad docs' in error['error']['message']
+        assert 'synthcad-cli docs' in error['error']['message']
         call('docs', 'start', 'extra', exit_code=2)
         assert sorted(path.name for path in root.iterdir()) == [executable.name], 'Discovery wrote files'
         print(f'PASS stdout-only guides: standalone CLI, grouped help, {len(topics)} complete topics, UTF-8, hashes, errors, no writes')
